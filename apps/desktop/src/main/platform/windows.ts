@@ -177,6 +177,9 @@ function createInstanceWindow(instance: InstanceConfig, replace?: BrowserWindow)
       nodeIntegration: false,
       webviewTag: false,
       spellcheck: false,
+      // 窗口最小化/被遮挡时不节流定时器：终端输出 ACK（16ms 合并）、心跳与断线恢复都靠定时器，
+      // 被长时间节流可能触发服务端 60s 无 ACK 断开（output_backlog_closed）
+      backgroundThrottling: false,
     },
   });
   window.setMenuBarVisibility(configStore.preferences.showMenuBar);

@@ -59,13 +59,19 @@ function configureSession(ses: Session): void {
     return ALLOWED_PERMISSIONS.has(permission) && isFromInstance(ses, requestingOrigin);
   });
 
-  // SFTP 下载、终端日志导出、审计导出都走 <a download>：弹出系统保存对话框，默认目录为“下载”
+  // SFTP 下载、终端日志导出、审计导出都走 <a download>：弹出系统保存对话框，默认目录为“下载”。
+  // 设置 CLOUDSSH_DOWNLOAD_DIR 时直接保存到该目录、不弹对话框（自动化测试/批量下载用）。
+  const downloadDir = process.env.CLOUDSSH_DOWNLOAD_DIR;
   ses.on('will-download', (_event, item) => {
-    item.setSaveDialogOptions({
-      title: '保存文件',
-      defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
-    });
-    item.once('done', (_e, state) => log.info('下载结束', item.getFilename(), state));
+    if (downloadDir) {
+      item.setSavePath(path.join(path.resolve(downloadDir), path.basename(item.getFilename())));
+    } else {
+      item.setSaveDialogOptions({
+        title: '保存文件',
+        defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
+      });
+    }
+    item.once('done', (_e, state) => log.info('下载结束', item.getFilename(), state, item.getReceivedBytes(), 'bytes'));
   });
 
   if (isDebug) {

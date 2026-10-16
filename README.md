@@ -161,6 +161,7 @@ UI 层（任意静态站点，跑在 Worker origin 下）
 | `CLOUDSSH_DEBUG=1` | 打开调试日志，包括 WebSocket 握手状态码 |
 | `CLOUDSSH_UI_DIR=<目录>` | 临时让所有非 remote 实例使用该目录下的 UI |
 | `CLOUDSSH_UI_DEV_SERVER=http://127.0.0.1:5173` | 临时让所有非 remote 实例使用 UI 开发服务器 |
+| `CLOUDSSH_DOWNLOAD_DIR=<目录>` | 下载直接保存到该目录，不弹保存对话框（自动化测试、批量下载用） |
 
 日志位于 `%APPDATA%\CloudSSH\logs\main.log`。
 
