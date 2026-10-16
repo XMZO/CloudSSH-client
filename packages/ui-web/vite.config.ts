@@ -37,6 +37,45 @@ function desktopOverrides(): Plugin {
   };
 }
 
+/**
+ * 桌面端扩展钩子：构建时（不改 upstream 文件）在两处构造函数里登记实例，
+ * 供 overrides（如左侧节点侧栏）调用网页版自身的连接/编辑/切换标签逻辑。
+ *   globalThis.__cloudsshServerList  —— ServerList（connectServer / showModal / servers）
+ *   globalThis.__cloudsshTabManager  —— TabManager（tabs / switchTab / getActiveTab）
+ * 锚点找不到时只告警不失败：侧栏会自动降级（不显示或提示）。
+ */
+const DESKTOP_HOOKS: { file: string; anchor: string; inject: string }[] = [
+  {
+    file: '/upstream/frontend/src/server-list.ts',
+    anchor: '    this.onConnect = onConnect;\n',
+    inject:
+      "    (globalThis as any).__cloudsshServerList = this;\n    globalThis.dispatchEvent?.(new CustomEvent('cloudssh:server-list'));\n",
+  },
+  {
+    file: '/upstream/frontend/src/tab-manager.ts',
+    anchor: '  constructor(tabBarId: string, terminalAreaId: string) {\n',
+    inject: '    (globalThis as any).__cloudsshTabManager = this;\n',
+  },
+];
+
+function desktopHooks(): Plugin {
+  return {
+    name: 'cloudssh-desktop-hooks',
+    enforce: 'pre',
+    transform(code, id) {
+      const normalized = id.replace(/\\/g, '/').split('?')[0];
+      const hook = DESKTOP_HOOKS.find((item) => normalized.endsWith(item.file));
+      if (!hook) return null;
+      const source = code.replace(/\r\n/g, '\n');
+      if (!source.includes(hook.anchor)) {
+        this.warn(`桌面钩子锚点未找到（上游代码可能已变化）：${hook.file}`);
+        return null;
+      }
+      return { code: source.replace(hook.anchor, hook.anchor + hook.inject), map: null };
+    },
+  };
+}
+
 /** 构建产物附带 UI 清单，桌面端据此展示内置 UI 的来源版本 */
 function uiManifest(): Plugin {
   return {
@@ -73,7 +112,7 @@ export default defineConfig(({ command }) => ({
   esbuild: {
     minifySyntax: false,
   },
-  plugins: [desktopOverrides(), uiManifest()],
+  plugins: [desktopHooks(), desktopOverrides(), uiManifest()],
   server: {
     // 显式用 IPv4 回环：部分 Windows 环境 localhost 只解析/监听到 ::1，Electron 侧会连不上
     host: '127.0.0.1',

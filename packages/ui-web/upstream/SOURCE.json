@@ -4,7 +4,7 @@
   "describe": "9078c91 release: 发布 v2.6.8 语言切换按钮美化与爱发电赞助渠道版本 (#167)",
   "remote": "https://github.com/XMZO/CloudSSH.git",
   "dirty": false,
-  "syncedAt": "2026-10-16T11:15:04.679Z",
+  "syncedAt": "2026-10-16T11:46:09.095Z",
   "sharedFiles": [
     "src/ai-endpoint.ts",
     "src/mobile-shortcuts-schema.ts",

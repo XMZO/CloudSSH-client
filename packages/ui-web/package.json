@@ -7,7 +7,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "typecheck": "tsc --noEmit -p upstream/frontend/tsconfig.json"
+    "typecheck": "tsc --noEmit -p upstream/frontend/tsconfig.json && tsc --noEmit -p overrides/tsconfig.json"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.0",
@@ -40,6 +40,7 @@
     "postcss": "8.5.23",
     "tailwindcss": "3.4.19",
     "typescript": "5.7.2",
-    "vite": "6.4.3"
+    "vite": "6.4.3",
+    "@cloudssh/core": "workspace:*"
   }
 }

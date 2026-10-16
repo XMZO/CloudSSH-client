@@ -174,8 +174,11 @@ for (const section of ['dependencies', 'devDependencies']) {
     next[name] = exact;
     if (uiPkg[section]?.[name] !== exact) changes.push(`${section}.${name}: ${uiPkg[section]?.[name] ?? '(无)'} → ${exact}`);
   }
-  for (const name of Object.keys(uiPkg[section] ?? {})) {
-    if (!(name in next)) changes.push(`${section}.${name}: 已从上游移除`);
+  for (const [name, range] of Object.entries(uiPkg[section] ?? {})) {
+    if (name in next) continue;
+    // 客户端自己的 workspace 依赖（如 @cloudssh/core，供 overrides 使用）不属于上游，保留
+    if (String(range).startsWith('workspace:')) next[name] = range;
+    else changes.push(`${section}.${name}: 已从上游移除`);
   }
   uiPkg[section] = next;
 }

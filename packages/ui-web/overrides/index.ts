@@ -5,20 +5,12 @@
  * - 引入额外样式：import './desktop.css';
  * - 读取桌面桥接信息：window.cloudsshDesktop（由客户端 preload 注入，网页环境下不存在）
  * - 监听/增强 DOM（尽量做成可选、失败无害，避免上游改版后报错）
+ *
+ * 已有定制：
+ * - sidebar/：左侧节点侧栏（按标签分组、搜索、双击连接、会话指示）
  */
 import './desktop.css';
-
-interface DesktopBridgeInfo {
-  platform: string;
-  appVersion: string;
-  instance: { id: string; name: string; baseUrl: string };
-}
-
-declare global {
-  interface Window {
-    cloudsshDesktop?: { info(): Promise<DesktopBridgeInfo> };
-  }
-}
+import { mountSidebar } from './sidebar/sidebar';
 
 document.documentElement.dataset.cloudsshClient = 'desktop';
 
@@ -31,4 +23,4 @@ window.cloudsshDesktop
     // 桥接不可用时保持网页版原样
   });
 
-export {};
+mountSidebar();

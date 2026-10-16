@@ -8,6 +8,7 @@
  * 命令行参数：--instance=<id> 启动时打开指定实例
  */
 import { app, BrowserWindow } from 'electron';
+import path from 'node:path';
 import { configStore } from './config/store';
 import { createLogger } from './logger';
 import { registerIpc } from './platform/ipc';
@@ -26,6 +27,11 @@ const log = createLogger('main');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.xmzo.cloudssh');
+}
+
+// 独立配置目录（调试/测试用）：与正在运行的客户端互不影响，单实例锁也按此目录区分
+if (process.env.CLOUDSSH_USER_DATA_DIR) {
+  app.setPath('userData', path.resolve(process.env.CLOUDSSH_USER_DATA_DIR));
 }
 
 function instanceFromArgv(argv: string[]): string | undefined {
