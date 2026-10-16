@@ -51,6 +51,19 @@ export function isPostLoginLanding(url: string, baseUrl: string): boolean {
   return !parsed.pathname.startsWith('/api/auth/');
 }
 
+/**
+ * 从 /api/auth/github 的 302 Location 中解析服务端实际使用的 OAuth 回调地址。
+ * 它必须与 GitHub OAuth App 登记的回调一致，否则 GitHub 会拒绝授权。
+ */
+export function parseOAuthRedirectUri(authorizeLocation: string): string | null {
+  try {
+    const url = new URL(authorizeLocation);
+    return url.searchParams.get('redirect_uri');
+  } catch {
+    return null;
+  }
+}
+
 /** 从 Set-Cookie 头里取出 session 值（原生平台自行管理 Cookie 时使用）；删除 Cookie 时返回空串 */
 export function extractSessionFromSetCookie(setCookie: string | string[]): string | null {
   const values = Array.isArray(setCookie) ? setCookie : [setCookie];

@@ -17,6 +17,7 @@ import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
 import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
 import { refreshMenus } from './menus';
+import { probeOAuthRedirectUri } from './oauth';
 import { clearInstanceData } from './session';
 import { getUpdater } from './updater';
 import {
@@ -160,7 +161,9 @@ export function registerIpc(): void {
         transport: { fetch: (input, init) => net.fetch(input, { ...init, credentials: 'omit' }) },
       });
       const [config, health] = await Promise.all([client.getConfig(), client.health()]);
-      return { ok: true, latencyMs: Date.now() - started, config, health };
+      const latencyMs = Date.now() - started;
+      const oauthRedirectUri = config.githubAuthEnabled ? await probeOAuthRedirectUri(client.baseUrl) : null;
+      return { ok: true, latencyMs, config, health, oauthRedirectUri };
     } catch (error) {
       return { ok: false, latencyMs: Date.now() - started, error: (error as Error).message };
     }

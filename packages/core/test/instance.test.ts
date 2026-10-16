@@ -10,7 +10,8 @@ import {
 
 describe('normalizeWorkerUrl', () => {
   it('只保留 origin 并补全 https', () => {
-    expect(normalizeWorkerUrl('cloudssh.example.workers.dev')).toBe(DEFAULT_WORKER_URL);
+    expect(normalizeWorkerUrl('bash.al')).toBe(DEFAULT_WORKER_URL);
+    expect(normalizeWorkerUrl('cloudssh.example.workers.dev')).toBe('https://cloudssh.example.workers.dev');
     expect(normalizeWorkerUrl(' https://Example.Workers.dev/ ')).toBe('https://example.workers.dev');
   });
 

@@ -6,8 +6,14 @@
  * 移动端/自研 UI 可直接复用这里的类型与校验逻辑。
  */
 
-/** 默认 Worker 地址（可在实例管理中修改或新增其他实例） */
-export const DEFAULT_WORKER_URL = 'https://cloudssh.example.workers.dev';
+/**
+ * 默认 Worker 地址（可在实例管理中修改或新增其他实例）。
+ *
+ * 必须使用 GitHub OAuth App 里登记回调地址的那个域名：Worker 未设置 BASE_URL 时，
+ * OAuth 回调地址取自请求 origin，用 *.workers.dev 访问会被 GitHub 以
+ * “redirect_uri is not associated with this application” 拒绝。
+ */
+export const DEFAULT_WORKER_URL = 'https://bash.al';
 
 /**
  * UI 来源。UI 层与连接层解耦：无论哪种来源，页面都运行在 Worker 的 origin 下，

@@ -7,6 +7,7 @@ import {
   isGitHubLoginStart,
   isPostLoginLanding,
   isSameInstanceOrigin,
+  parseOAuthRedirectUri,
   webSocketHandshakeHeaders,
 } from '../src';
 
@@ -47,6 +48,15 @@ describe('oauth', () => {
     expect(isPostLoginLanding(`${BASE}/`, BASE)).toBe(true);
     expect(isPostLoginLanding(`${BASE}/api/auth/callback?code=1`, BASE)).toBe(false);
     expect(isPostLoginLanding('https://github.com/login', BASE)).toBe(false);
+  });
+
+  it('解析服务端实际使用的 OAuth 回调地址', () => {
+    expect(
+      parseOAuthRedirectUri(
+        'https://github.com/login/oauth/authorize?client_id=x&redirect_uri=https%3A%2F%2Fbash.al%2Fapi%2Fauth%2Fcallback&state=s'
+      )
+    ).toBe('https://bash.al/api/auth/callback');
+    expect(parseOAuthRedirectUri('not a url')).toBeNull();
   });
 
   it('从 Set-Cookie 中提取 session', () => {

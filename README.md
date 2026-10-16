@@ -1,6 +1,6 @@
 # CloudSSH 桌面客户端
 
-CloudSSH 的 Windows 桌面客户端（Electron）。它直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://cloudssh.example.workers.dev`），**无需修改 Worker**。
+CloudSSH 的 Windows 桌面客户端（Electron）。它直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://bash.al`，即路由到 Worker 的自定义域名），**无需修改 Worker**。
 
 第一版界面“照搬”网页版：GitHub 登录、服务器列表、SSH 终端、SFTP、Agent、分享、主题等功能与网页版一致。架构上把连接配置、平台适配和 UI 拆成独立的层，之后可以换成自研 UI，也可以复用核心包去做移动 App。
 
@@ -139,7 +139,7 @@ UI 层（任意静态站点，跑在 Worker origin 下）
     {
       "id": "default",
       "name": "CloudSSH",
-      "baseUrl": "https://cloudssh.example.workers.dev",
+      "baseUrl": "https://bash.al",
       "ui": { "kind": "bundled", "id": "web" }
     }
   ],
@@ -148,6 +148,7 @@ UI 层（任意静态站点，跑在 Worker origin 下）
 }
 ```
 
+- `baseUrl` 必须是 **GitHub OAuth App 登记回调地址的那个域名**（Worker 设置了 `BASE_URL` 时即该地址）。Worker 未设 `BASE_URL` 时，回调地址取自请求 origin；如果改用 `*.workers.dev` 访问，GitHub 授权页会提示 “redirect_uri is not associated with this application”。实例管理里点“测试连接”会显示服务端实际使用的回调地址
 - `baseUrl` 只能填根地址，必须是 https；只有 `localhost` / `127.0.0.1` / `[::1]` 允许 http，方便对接 `wrangler dev`
 - `id` 决定会话分区名（`persist:instance-<id>`），改了会丢失登录状态
 
@@ -295,6 +296,7 @@ pnpm install && pnpm build:ui
 ## 故障排查
 
 - **一直显示未登录**：在实例管理里点“GitHub 登录”重新登录，或者“清除登录数据”后再登录。检查 Worker 的 `GITHUB_ALLOWED_USER_IDS` 是否包含你的账号
+- **GitHub 授权页提示 redirect_uri is not associated with this application**：实例地址和 OAuth App 登记的回调域名不一致，把实例地址改成回调域名（本项目即 `https://bash.al`）
 - **终端连不上**：用 `CLOUDSSH_DEBUG=1 pnpm dev` 启动，看日志里的 WebSocket 握手状态码。401 表示未登录或会话已过期；403 表示 Origin 被拒（不应出现，请反馈）
 - **界面和服务端行为不一致**：可能是版本漂移，参考上文“同步上游网页版”，或者把实例切到 `remote`
 - **依赖安装报 `ERR_PNPM_TRUST_DOWNGRADE` 或 `minimumReleaseAge`**：`pnpm-workspace.yaml` 沿用了主仓库的供应链策略，详见文件注释

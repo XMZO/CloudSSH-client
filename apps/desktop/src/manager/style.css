@@ -230,6 +230,7 @@ select:focus {
   color: var(--muted);
   font-size: 12px;
   min-height: 1em;
+  white-space: pre-line;
 }
 
 .hint.ok {

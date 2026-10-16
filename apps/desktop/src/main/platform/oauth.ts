@@ -13,13 +13,48 @@ import {
   type InstanceConfig,
   isPostLoginLanding,
   originOf,
+  parseOAuthRedirectUri,
   SESSION_COOKIE_NAME,
 } from '@cloudssh/core';
-import { BrowserWindow, type Cookie, session, shell } from 'electron';
+import { BrowserWindow, type Cookie, net, session, shell } from 'electron';
 import { createLogger } from '../logger';
 import { getInstanceSession, oauthPartition } from './session';
 
 const log = createLogger('oauth');
+
+/**
+ * 探测服务端实际使用的 OAuth 回调地址（读取 /api/auth/github 的 302，不跟随、不带 Cookie）。
+ * 未开启 GitHub 登录或请求失败时返回 null。
+ */
+export function probeOAuthRedirectUri(baseUrl: string, timeoutMs = 10_000): Promise<string | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value: string | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const request = net.request({ url: githubLoginUrl(baseUrl), redirect: 'manual', credentials: 'omit' });
+    const timer = setTimeout(() => {
+      finish(null);
+      request.abort();
+    }, timeoutMs);
+    request.on('redirect', (_status, _method, redirectUrl) => {
+      // 先记录结果再中止：abort 会同步触发 'abort' 事件
+      finish(parseOAuthRedirectUri(redirectUrl));
+      request.abort();
+    });
+    request.on('response', (response) => {
+      response.on('data', () => undefined);
+      response.on('end', () => finish(null));
+      response.on('error', () => finish(null));
+    });
+    request.on('error', () => finish(null));
+    request.on('abort', () => finish(null));
+    request.end();
+  });
+}
 
 const inFlight = new Map<string, Promise<boolean>>();
 const loginWindows = new Map<string, BrowserWindow>();

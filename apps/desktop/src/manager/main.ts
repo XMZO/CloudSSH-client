@@ -22,6 +22,7 @@ interface TestResult {
   ok: boolean;
   latencyMs: number;
   error?: string;
+  oauthRedirectUri?: string | null;
   config?: { authMode: string; githubAuthRequired: boolean; sshSharingEnabled: boolean; turnstileEnabled: boolean };
 }
 
@@ -234,10 +235,24 @@ $('test-instance').addEventListener('click', () => {
           : result.config.authMode === 'password'
             ? '管理员密码登录'
             : '匿名';
-      testResult.className = 'hint ok';
-      testResult.textContent = `连接正常（${result.latencyMs} ms）· 认证模式：${auth}${
-        result.config.githubAuthRequired ? '（强制登录）' : ''
-      } · 分享：${result.config.sshSharingEnabled ? '开启' : '关闭'}`;
+      const lines = [
+        `连接正常（${result.latencyMs} ms）· 认证模式：${auth}${
+          result.config.githubAuthRequired ? '（强制登录）' : ''
+        } · 分享：${result.config.sshSharingEnabled ? '开启' : '关闭'}`,
+      ];
+      let warn = false;
+      if (result.oauthRedirectUri) {
+        lines.push(
+          `OAuth 回调地址：${result.oauthRedirectUri}（必须与 GitHub OAuth App 登记的回调一致，否则授权页会提示 redirect_uri 不匹配）`
+        );
+        const callbackOrigin = new URL(result.oauthRedirectUri).origin;
+        if (callbackOrigin !== baseUrl) {
+          warn = true;
+          lines.push(`⚠ 回调域名与实例地址不同，登录 Cookie 会写到 ${callbackOrigin}，请把实例地址改为该域名`);
+        }
+      }
+      testResult.className = warn ? 'hint bad' : 'hint ok';
+      testResult.textContent = lines.join('\n');
     } else {
       testResult.className = 'hint bad';
       testResult.textContent = `连接失败：${result.error ?? '未知错误'}`;
