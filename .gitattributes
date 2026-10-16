@@ -1,1 +1,5 @@
 packages/ui-web/upstream/** -text
+apps/android/gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary
