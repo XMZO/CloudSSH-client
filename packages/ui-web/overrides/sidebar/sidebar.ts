@@ -25,6 +25,8 @@ import {
 } from './hooks';
 import { onLocaleChange, st } from './i18n';
 import { getServers, installFetchObserver, reloadServers, subscribe } from './store';
+import { NodeOrder } from '../shared/order';
+import { dragHandle, installSortable } from '../shared/sortable';
 import './sidebar.css';
 
 const KEYS = {
@@ -32,7 +34,15 @@ const KEYS = {
   collapsed: 'cloudssh_desktop_sidebar_collapsed',
   groups: 'cloudssh_desktop_sidebar_collapsed_groups',
   sort: 'cloudssh_desktop_sidebar_sort',
+  order: 'cloudssh_desktop_node_order',
 };
+
+/** 排序方式：core 提供的三种 + 拖动产生的手动排序 */
+type SidebarSort = ServerGroupSort | 'custom';
+const SIDEBAR_SORTS: readonly SidebarSort[] = [...SERVER_GROUP_SORTS, 'custom'];
+const UNGROUPED_KEY = '__ungrouped__';
+/** 页面就在实例 origin 下，localStorage 天然按实例隔离 */
+const nodeOrder = new NodeOrder(KEYS.order);
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 480;
 const DEFAULT_WIDTH = 280;
@@ -61,9 +71,9 @@ const state = {
   width: Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Number(load(KEYS.width, DEFAULT_WIDTH)) || DEFAULT_WIDTH)),
   collapsed: load<unknown>(KEYS.collapsed, false) === true,
   collapsedGroups: new Set<string>(load<string[]>(KEYS.groups, [])),
-  sort: ((): ServerGroupSort => {
+  sort: ((): SidebarSort => {
     const value = load<string>(KEYS.sort, 'name');
-    return (SERVER_GROUP_SORTS as readonly string[]).includes(value) ? (value as ServerGroupSort) : 'name';
+    return (SIDEBAR_SORTS as readonly string[]).includes(value) ? (value as SidebarSort) : 'name';
   })(),
   query: '',
   selectedId: null as number | null,
@@ -126,6 +136,7 @@ searchInput.autocomplete = 'off';
 searchBox.append(icon('search'), searchInput);
 
 const list = el('div', 'cs-sb-list');
+list.dataset.sortScope = 'groups';
 list.tabIndex = 0;
 list.setAttribute('role', 'tree');
 
@@ -226,9 +237,10 @@ function hostLabel(server: ServerConfig): string {
   return `${server.username}@${host}:${server.port}`;
 }
 
-function renderItem(server: ServerConfig, sessions: Map<number, string[]>, activeId: number | null): HTMLElement {
+function renderItem(server: ServerConfig, sessions: Map<number, string[]>, activeId: number | null, sortable: boolean): HTMLElement {
   const item = el('div', 'cs-sb-item');
   item.dataset.id = String(server.id);
+  if (sortable) item.dataset.sortKey = String(server.id);
   item.setAttribute('role', 'treeitem');
   item.title = `${server.name}\n${hostLabel(server)}`;
   if (server.id === state.selectedId) item.classList.add('is-selected');
@@ -256,16 +268,18 @@ function renderItem(server: ServerConfig, sessions: Map<number, string[]>, activ
   });
   go.classList.add('cs-sb-go');
   item.append(go);
+  if (sortable) item.append(dragHandle('cs-sb-drag', st('dragToSort')));
   return item;
 }
 
-function renderGroupHeader(key: string, label: string, count: number): HTMLElement {
+function renderGroupHeader(key: string, label: string, count: number, sortable: boolean): HTMLElement {
   const collapsed = state.collapsedGroups.has(key) && !state.query;
   const row = el('div', 'cs-sb-group');
   row.dataset.group = key;
   row.setAttribute('role', 'treeitem');
   row.setAttribute('aria-expanded', String(!collapsed));
   row.append(icon(collapsed ? 'chevron_right' : 'expand_more'), el('span', 'cs-sb-group-label', label), el('span', 'cs-sb-group-count', String(count)));
+  if (sortable) row.append(dragHandle('cs-sb-drag', st('dragToSort')));
   return row;
 }
 
@@ -275,28 +289,66 @@ function render(): void {
   if (!servers) return;
   const sessions = sessionsByServer();
   const activeId = activeServerId();
-  const { groups, ungrouped, total } = groupServersByTag(servers, { sort: state.sort, query: state.query });
+  const custom = state.sort === 'custom';
+  const result = groupServersByTag(servers, { sort: state.sort === 'custom' ? 'name' : state.sort, query: state.query });
+  const { ungrouped, total } = result;
+  // 搜索结果不参与拖动排序
+  const sortable = !state.query;
+  const groups = custom && sortable ? nodeOrder.sortGroups(result.groups) : result.groups;
+  const ordered = (key: string, items: ServerConfig[]) => (custom && sortable ? nodeOrder.sortServers(key, items) : items);
   titleCount.textContent = String(state.query ? `${total}/${servers.length}` : servers.length);
 
   const scrollTop = list.scrollTop;
   const fragment = document.createDocumentFragment();
   for (const group of groups) {
-    fragment.append(renderGroupHeader(group.key, group.label, group.servers.length));
+    // 分组标题与内容包在一起，整组拖动
+    const section = el('div', 'cs-sb-section');
+    if (sortable) section.dataset.sortKey = group.key;
+    section.append(renderGroupHeader(group.key, group.label, group.servers.length, sortable));
+    fragment.append(section);
     if (state.collapsedGroups.has(group.key) && !state.query) continue;
     const body = el('div', 'cs-sb-group-body');
     body.setAttribute('role', 'group');
-    for (const server of group.servers) body.append(renderItem(server, sessions, activeId));
-    fragment.append(body);
+    if (sortable) body.dataset.sortScope = `group:${group.key}`;
+    for (const server of ordered(group.key, group.servers)) body.append(renderItem(server, sessions, activeId, sortable));
+    section.append(body);
   }
   if (ungrouped.length) {
     const body = el('div', 'cs-sb-group-body cs-sb-ungrouped');
-    for (const server of ungrouped) body.append(renderItem(server, sessions, activeId));
+    if (sortable) body.dataset.sortScope = `group:${UNGROUPED_KEY}`;
+    for (const server of ordered(UNGROUPED_KEY, ungrouped)) body.append(renderItem(server, sessions, activeId, sortable));
     fragment.append(body);
   }
   if (total === 0) fragment.append(el('div', 'cs-sb-empty', servers.length ? st('noMatch') : st('empty')));
   list.replaceChildren(fragment);
   list.scrollTop = scrollTop;
 }
+
+// ---------- 拖动排序 ----------
+
+/** 把当前看到的顺序整体记下来（从按名称/数量/最近切到手动排序时，其余分组保持原样） */
+function snapshotOrder(): void {
+  const sections = [...list.querySelectorAll<HTMLElement>(':scope > .cs-sb-section[data-sort-key]')];
+  nodeOrder.setGroups(sections.map((section) => section.dataset.sortKey as string));
+  for (const body of list.querySelectorAll<HTMLElement>('.cs-sb-group-body[data-sort-scope]')) {
+    const ids = [...body.querySelectorAll<HTMLElement>(':scope > [data-sort-key]')].map((item) => Number(item.dataset.sortKey));
+    nodeOrder.setServers((body.dataset.sortScope as string).slice('group:'.length), ids);
+  }
+}
+
+installSortable({
+  root: list,
+  scroller: () => list,
+  compactClass: (scope) => (scope === 'groups' ? 'cs-sb-compact' : null),
+  onSort: () => {
+    snapshotOrder();
+    if (state.sort !== 'custom') {
+      state.sort = 'custom';
+      save(KEYS.sort, 'custom');
+    }
+    render();
+  },
+});
 
 // ---------- 动作 ----------
 
@@ -358,11 +410,11 @@ function showMenu(x: number, y: number, entries: { label: string; icon: string; 
 function toggleSortMenu(anchor: HTMLElement): void {
   if (!menu.hidden) return closeMenu();
   const rect = anchor.getBoundingClientRect();
-  const labels: Record<ServerGroupSort, string> = { name: st('sortName'), count: st('sortCount'), recent: st('sortRecent') };
+  const labels: Record<SidebarSort, string> = { name: st('sortName'), count: st('sortCount'), recent: st('sortRecent'), custom: st('sortCustom') };
   showMenu(
     rect.left,
     rect.bottom + 4,
-    SERVER_GROUP_SORTS.map((sort) => ({
+    SIDEBAR_SORTS.map((sort) => ({
       label: labels[sort],
       icon: 'radio_button_unchecked',
       checked: state.sort === sort,
@@ -411,6 +463,7 @@ list.addEventListener('click', (event) => {
 });
 
 list.addEventListener('dblclick', (event) => {
+  if ((event.target as Element).closest('[data-drag-handle]')) return;
   const server = serverFromEvent(event);
   if (server) connect(server.id);
 });

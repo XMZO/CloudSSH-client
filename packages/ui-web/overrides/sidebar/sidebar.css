@@ -387,3 +387,50 @@ html.cs-sb-resizing .cs-sb-resizer {
   font-size: 16px;
   color: var(--on-surface-variant);
 }
+
+/* ---------- 拖动排序 ---------- */
+
+.cs-sb-drag {
+  flex: none;
+  width: 18px;
+  margin-right: -4px;
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+  color: var(--on-surface-variant);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  visibility: hidden;
+}
+
+.cs-sb-item:hover .cs-sb-drag,
+.cs-sb-group:hover .cs-sb-drag,
+.is-dragging .cs-sb-drag {
+  visibility: visible;
+}
+
+.cs-sb-section.is-dragging,
+.cs-sb-item.is-dragging {
+  position: relative;
+  z-index: 2;
+  border-radius: 6px;
+  background: var(--bg-surface-variant, var(--bg-surface));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  outline: 1px solid var(--accent);
+}
+
+.is-dragging .cs-sb-drag {
+  color: var(--accent);
+}
+
+/* 拖动分组时暂时收起分组内容 */
+.cs-sb-compact .cs-sb-group-body {
+  display: none;
+}
+
+html.cs-sorting,
+html.cs-sorting * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

@@ -496,3 +496,55 @@ html.cs-nodes-on .cs-m-nodes {
   font-size: 15px;
   line-height: 1.5;
 }
+
+/* ---------- 拖动排序 ---------- */
+
+.cs-m-drag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 40px;
+  margin: -8px -6px -8px 0;
+  font-size: 22px;
+  color: var(--on-surface-variant);
+  opacity: 0.7;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.cs-m-group-header .cs-m-drag {
+  margin-left: 2px;
+}
+
+.cs-m-group.is-dragging,
+.cs-m-row-item.is-dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-surface-variant, var(--bg-surface));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  outline: 1px solid var(--accent);
+  border-radius: 12px;
+}
+
+.cs-m-group.is-dragging .cs-m-drag,
+.cs-m-row-item.is-dragging .cs-m-drag {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* 拖动分组时暂时收起分组内容，方便在分组之间移动 */
+.cs-m-compact .cs-m-group-body {
+  display: none;
+}
+
+html.cs-sorting,
+html.cs-sorting * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
