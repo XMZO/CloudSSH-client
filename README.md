@@ -43,7 +43,7 @@ pnpm dist:win
 
 ```bash
 pnpm android:build     # 调试版：apps/android/release/CloudSSH-<版本>-debug.apk
-pnpm android:release   # 正式版（R8 压缩，约 300KB）：apps/android/release/CloudSSH-<版本>-release.apk
+pnpm android:release   # 正式版（R8 压缩，约 135KB）：apps/android/release/CloudSSH-<版本>-release.apk
 ```
 
 把 APK 传到手机上安装即可，系统会提示允许安装未知来源的应用。打开后点“使用 GitHub 登录”，在应用内完成授权。
@@ -322,6 +322,17 @@ pnpm install && pnpm build:ui
 | 实例管理 | 原生页面：新增、编辑、删除、设为默认、清除登录数据；“测试连接”会显示服务端实际使用的 OAuth 回调地址 |
 
 页面桥接只在实例 origin 上注入（`addDocumentStartJavaScript` 与 `addWebMessageListener` 都限定了 origin），GitHub 等第三方页面拿不到。网页里可以通过 `window.cloudsshAndroid` 读取实例信息、打开实例管理；它和桌面端的 `window.cloudsshDesktop` 相对应。
+
+**体积与缓存**：
+
+| 项目 | 大小 | 做法 |
+|---|---|---|
+| 安装包（release） | 约 135KB | 只依赖 `androidx.webkit`，Activity 与系统栏适配用框架 API；R8 压缩；图标是矢量；排除 Kotlin 元数据；只保留中英文资源 |
+| 安装后本体 | 约 150KB 加少量编译产物 | WebView 用系统自带的，不打包浏览器内核 |
+| 应用数据 | 约 0.3MB 加缓存 | 关闭 WebView 统计埋点，并阻止它生成约 4MB 的 `BrowserMetrics-spare.pma` 预分配文件 |
+| 缓存 | 通常约 2MB，上限 16MB | 主要是 Worker 约 2MB 的内联页面。超过 16MB 时下次启动自动清空；实例管理页底部显示当前占用，也可以手动“清除缓存” |
+
+缓存放在系统的 cache 目录，手机存储紧张时系统也会自动清理。清掉缓存后，下次打开需要重新下载约 600KB（压缩后）的页面。
 
 **定制安卓界面**：修改 `apps/android/app/src/main/assets/bridge.js`，例如注入样式或增强 DOM。它在网页版任何脚本之前执行，选择器可以用 `html[data-cloudssh-client='android']` 限定范围。
 

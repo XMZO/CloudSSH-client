@@ -16,9 +16,6 @@ import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewFeature
 import com.xmzo.cloudssh.R
@@ -27,6 +24,8 @@ import com.xmzo.cloudssh.config.InstanceConfigException
 import com.xmzo.cloudssh.config.InstanceRules
 import com.xmzo.cloudssh.config.InstanceStore
 import com.xmzo.cloudssh.web.ShellActivity
+import com.xmzo.cloudssh.web.StorageTrimmer
+import com.xmzo.cloudssh.web.SystemBars
 
 /**
  * 实例管理：新增/编辑/删除 Worker 地址、设为默认、清除登录数据、测试连接。
@@ -39,14 +38,8 @@ class InstanceManagerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_manager)
-        val root = findViewById<View>(R.id.manager_root)
-        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
+        SystemBars.install(this, findViewById(R.id.manager_root))
         store = InstanceStore(this)
         adapter = InstanceAdapter()
         val list = findViewById<ListView>(R.id.instance_list)
@@ -58,7 +51,34 @@ class InstanceManagerActivity : Activity() {
         }
         findViewById<Button>(R.id.add_button).setOnClickListener { showEditor(null) }
         findViewById<Button>(R.id.back_button).setOnClickListener { finish() }
+        findViewById<Button>(R.id.clear_cache_button).setOnClickListener {
+            ShellActivity.clearWebCache(this)
+            updateStorage()
+            Toast.makeText(this, R.string.cache_cleared, Toast.LENGTH_SHORT).show()
+        }
         refresh()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateStorage()
+    }
+
+    /** 统计放到后台线程：遍历 WebView 目录可能有几百个文件 */
+    private fun updateStorage() {
+        val label = findViewById<TextView>(R.id.storage_info)
+        Thread {
+            val cache = StorageTrimmer.cacheSize(this)
+            val data = StorageTrimmer.dataSize(this)
+            runOnUiThread {
+                label.text = getString(
+                    R.string.storage_info,
+                    StorageTrimmer.format(cache),
+                    StorageTrimmer.format(data),
+                    StorageTrimmer.format(StorageTrimmer.CACHE_LIMIT_BYTES),
+                )
+            }
+        }.start()
     }
 
     private fun refresh() {

@@ -24,6 +24,8 @@ android {
         versionName = "0.1.0"
         // 默认实例地址：必须是 GitHub OAuth App 登记回调的域名（与桌面端 DEFAULT_WORKER_URL 一致）
         buildConfigField("String", "DEFAULT_WORKER_URL", "\"https://bash.al\"")
+        // 只保留中文与英文资源（依赖库自带的几十种语言翻译不打进包）
+        resourceConfigurations += listOf("zh", "en")
     }
 
     signingConfigs {
@@ -61,11 +63,31 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    packaging {
+        resources {
+            // Kotlin 反射元数据与调试探针运行时用不到
+            excludes += setOf(
+                "kotlin/**",
+                "DebugProbesKt.bin",
+                "META-INF/*.version",
+                "META-INF/*.kotlin_module",
+                "META-INF/com.android.tools/**",
+                "kotlin-tooling-metadata.json",
+            )
+        }
+    }
+
+    // 不在 APK 里附带依赖清单（Play 商店才需要）
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
 }
 
+// 只依赖 androidx.webkit（多 Profile、document-start 注入、WebMessageListener）；
+// Activity / insets 全部用框架 API，不引入 androidx.activity / lifecycle，release 包更小
 dependencies {
-    implementation("androidx.core:core:1.16.0")
-    implementation("androidx.activity:activity:1.9.3")
     implementation("androidx.webkit:webkit:1.14.0")
     testImplementation("junit:junit:4.13.2")
 }

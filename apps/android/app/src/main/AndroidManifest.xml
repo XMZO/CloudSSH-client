@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -12,6 +13,17 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CloudSSH">
+
+        <!-- 关闭 WebView 统计埋点：不上报，也不再生成约 4MB 的 BrowserMetrics 预分配文件 -->
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
+
+        <!-- 依赖传递进来的 androidx.startup（ProfileInstaller 等）对这个小应用没有收益，移除以减小体积 -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="remove" />
 
         <!-- configChanges：旋转/键盘/深色模式等变化不重建 Activity，否则 WebView 重载会断开所有 SSH 会话 -->
         <activity

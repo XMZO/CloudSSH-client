@@ -46,5 +46,9 @@
     <string name="action_delete">Delete</string>
     <string name="clear_data_message">Clear login state and web data of \"%1$s\"?</string>
     <string name="clear_data_done">Login data cleared</string>
+    <string name="storage_info">Cache %1$s · Total data (incl. cache) %2$s
+Cache over %3$s is cleared automatically on next launch</string>
+    <string name="clear_cache">Clear cache</string>
+    <string name="cache_cleared">Cache cleared</string>
     <string name="delete_message">Delete instance \"%1$s\"? Its login data will be cleared too.</string>
 </resources>

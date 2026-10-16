@@ -1,16 +1,19 @@
 package com.xmzo.cloudssh.web
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
 import android.view.ViewGroup
+import android.window.OnBackInvokedDispatcher
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.URLUtil
@@ -23,13 +26,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -39,7 +35,7 @@ import com.xmzo.cloudssh.config.Instance
 import com.xmzo.cloudssh.config.InstanceRules
 import com.xmzo.cloudssh.config.InstanceStore
 import com.xmzo.cloudssh.manager.InstanceManagerActivity
-import kotlin.math.max
+import java.lang.ref.WeakReference
 
 /**
  * 平台适配层：承载网页版 UI 的主界面。
@@ -48,8 +44,9 @@ import kotlin.math.max
  * - 每个实例一个 WebView Profile（系统 WebView 支持时），Cookie 与本地存储互相隔离
  * - bridge.js 只注入实例 origin：blob 下载、剪贴板、实例信息
  * - 横竖屏/键盘/深色模式变化不重建 Activity（见 Manifest configChanges），避免重载页面断开 SSH
+ * - 只用框架 Activity API（不依赖 androidx.activity），release 包更小
  */
-class ShellActivity : ComponentActivity() {
+class ShellActivity : Activity() {
 
     private lateinit var store: InstanceStore
     private lateinit var container: FrameLayout
@@ -60,53 +57,54 @@ class ShellActivity : ComponentActivity() {
 
     private val bridgeScript by lazy { assets.open("bridge.js").bufferedReader().use { it.readText() } }
 
-    private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val data = result.data
-        val uris = when {
-            result.resultCode != RESULT_OK || data == null -> null
-            data.clipData != null -> Array(data.clipData!!.itemCount) { data.clipData!!.getItemAt(it).uri }
-            data.data != null -> arrayOf(data.data!!)
-            else -> null
-        }
-        fileCallback?.onReceiveValue(uris)
-        fileCallback = null
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        StorageTrimmer.trimOnStartup(this)
         store = InstanceStore(this)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         container = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.background)) }
         setContentView(container)
-        WindowInsetsControllerCompat(window, container).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
-        }
-        // 全面屏：系统栏与键盘占位都用 padding 让出，键盘弹出时 WebView 随之变矮（网页版据此调整终端行数）
-        ViewCompat.setOnApplyWindowInsetsListener(container) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            view.setPadding(bars.left, bars.top, bars.right, max(bars.bottom, ime.bottom))
-            WindowInsetsCompat.CONSUMED
-        }
+        SystemBars.install(this, container)
 
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                val view = webView ?: return showMainMenu()
-                // 先让页面关闭最上层浮层（抽屉/弹窗/编辑器），没有再走 WebView 历史，最后弹出原生菜单
-                view.evaluateJavascript(HANDLE_BACK_JS) { handled ->
-                    if (handled == "true") return@evaluateJavascript
-                    if (view.canGoBack()) view.goBack() else showMainMenu()
-                }
-            }
-        })
+        // Android 13+ 走 OnBackInvokedCallback（Manifest 已启用），更早的版本走 onBackPressed
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) { handleBack() }
+        }
 
         if (!handleIntent(intent)) {
             val snapshot = store.load()
             openInstance(snapshot.lastId ?: snapshot.defaultId)
         }
+    }
+
+    @Deprecated("Android 12 及以下的返回键入口")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() = handleBack()
+
+    /** 先让页面关闭最上层浮层（抽屉/弹窗/编辑器），没有再走 WebView 历史，最后弹出原生菜单 */
+    private fun handleBack() {
+        val view = webView ?: return showMainMenu()
+        view.evaluateJavascript(HANDLE_BACK_JS) { handled ->
+            if (handled == "true") return@evaluateJavascript
+            if (view.canGoBack()) view.goBack() else showMainMenu()
+        }
+    }
+
+    @Deprecated("框架 Activity 的结果回调")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_FILE) return
+        val clip = data?.clipData
+        val uris = when {
+            resultCode != RESULT_OK || data == null -> null
+            clip != null -> Array(clip.itemCount) { clip.getItemAt(it).uri }
+            data.data != null -> arrayOf(data.data!!)
+            else -> null
+        }
+        fileCallback?.onReceiveValue(uris)
+        fileCallback = null
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -191,6 +189,8 @@ class ShellActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(instance: Instance): WebView {
         val view = WebView(this)
+        StorageTrimmer.markWebViewCreated()
+        activeWebView = WeakReference(view)
         if (usesProfiles()) {
             // 必须在 WebView 的其他任何调用之前设置
             ProfileStore.getInstance().getOrCreateProfile(profileName(instance))
@@ -390,7 +390,8 @@ class ShellActivity : ComponentActivity() {
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
             }
             return try {
-                fileChooser.launch(intent)
+                @Suppress("DEPRECATION")
+                startActivityForResult(intent, REQUEST_FILE)
                 true
             } catch (e: ActivityNotFoundException) {
                 fileCallback = null
@@ -410,5 +411,14 @@ class ShellActivity : ComponentActivity() {
         private const val HANDLE_BACK_JS =
             "(function(){try{return !!(window.cloudsshAndroid&&window.cloudsshAndroid.handleBack());}catch(e){return false;}})()"
         private const val TAG = "CloudSSH"
+        private const val REQUEST_FILE = 1001
+
+        private var activeWebView: WeakReference<WebView>? = null
+
+        /** 实例管理“清除缓存”：有活动 WebView 时用官方 API 清 HTTP 缓存，再清空 cacheDir 其余内容 */
+        fun clearWebCache(context: android.content.Context) {
+            activeWebView?.get()?.clearCache(true)
+            StorageTrimmer.clearCacheDir(context)
+        }
     }
 }
