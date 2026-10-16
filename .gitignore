@@ -10,3 +10,12 @@ Thumbs.db
 # 本地覆盖配置（不提交）
 .env
 .env.local
+
+# Android
+apps/android/.gradle/
+apps/android/build/
+apps/android/app/build/
+apps/android/local.properties
+apps/android/keystore.properties
+*.jks
+*.keystore

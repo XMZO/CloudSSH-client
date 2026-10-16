@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与网页版默认 Cyberpunk 主题一致 -->
+    <color name="background">#FF131313</color>
+    <color name="surface">#FF1A1A1A</color>
+    <color name="border">#FF2C2C2C</color>
+    <color name="text">#FFE5E2E1</color>
+    <color name="muted">#FF8A8A8A</color>
+    <color name="accent">#FF4AF626</color>
+    <color name="launcher_background">#FF1A1A1A</color>
+</resources>

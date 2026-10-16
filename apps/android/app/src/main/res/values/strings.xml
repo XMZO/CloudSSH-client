@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CloudSSH</string>
+
+    <string name="menu_switch">切换实例</string>
+    <string name="menu_manager">实例管理</string>
+    <string name="menu_reload">重新加载</string>
+    <string name="menu_background">退到后台（保持会话）</string>
+    <string name="menu_exit">退出</string>
+
+    <string name="switch_title">切换实例</string>
+    <string name="switch_message">切换到「%1$s」？当前的终端与 SFTP 会话将被关闭。</string>
+    <string name="switch_confirm">切换</string>
+
+    <string name="load_failed_title">无法打开实例</string>
+    <string name="load_failed_message">无法加载 %1$s：%2$s\n\n请检查网络或 Worker 地址。</string>
+    <string name="retry">重试</string>
+    <string name="no_app_for_link">没有可以打开此链接的应用</string>
+    <string name="download_started">开始下载：%1$s</string>
+    <string name="download_saved">已保存到“下载”：%1$s</string>
+
+    <string name="manager_title">实例管理</string>
+    <string name="manager_hint">点按打开实例，长按查看更多操作。实例地址必须是 GitHub OAuth App 登记回调的域名。</string>
+    <string name="back">返回</string>
+    <string name="add_instance">新增实例</string>
+    <string name="add_instance_title">新增实例</string>
+    <string name="edit_instance">编辑实例</string>
+    <string name="default_badge">默认</string>
+    <string name="field_name">名称</string>
+    <string name="field_name_hint">例如：我的 CloudSSH</string>
+    <string name="field_url">Worker 地址</string>
+    <string name="field_url_hint">https://bash.al</string>
+    <string name="test_connection">测试连接</string>
+    <string name="test_running">正在连接…</string>
+    <string name="test_ok">连接正常（%1$d ms）· 认证模式：%2$s</string>
+    <string name="test_failed">连接失败：%1$s</string>
+    <string name="test_oauth">OAuth 回调地址：%1$s（必须与 GitHub OAuth App 登记的回调一致）</string>
+    <string name="test_oauth_mismatch">⚠ 回调域名与实例地址不同，请把实例地址改为 %1$s</string>
+    <string name="auth_github">GitHub 登录</string>
+    <string name="auth_password">管理员密码登录</string>
+    <string name="auth_anonymous">匿名</string>
+    <string name="auth_required">（强制登录）</string>
+    <string name="save">保存</string>
+
+    <string name="action_open">打开</string>
+    <string name="action_edit">编辑</string>
+    <string name="action_set_default">设为默认</string>
+    <string name="action_clear_data">清除登录数据</string>
+    <string name="action_delete">删除</string>
+    <string name="clear_data_message">清除「%1$s」的登录状态与网页数据？</string>
+    <string name="clear_data_done">已清除登录数据</string>
+    <string name="delete_message">删除实例「%1$s」？其登录数据也会被清除。</string>
+</resources>

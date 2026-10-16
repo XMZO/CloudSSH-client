@@ -2,7 +2,7 @@
   "name": "cloudssh-client",
   "version": "0.1.0",
   "private": true,
-  "description": "CloudSSH 桌面客户端（对接已部署的 CloudSSH Worker）",
+  "description": "CloudSSH 客户端（桌面 Electron + Android），对接已部署的 CloudSSH Worker",
   "packageManager": "pnpm@11.8.0",
   "license": "Apache-2.0",
   "scripts": {
@@ -13,6 +13,10 @@
     "dist:win": "pnpm run build:ui && pnpm --filter @cloudssh/desktop dist:win",
     "sync:web-ui": "node scripts/sync-web-ui.mjs",
     "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test"
+    "test": "pnpm -r run test",
+    "android:build": "node scripts/android.mjs build",
+    "android:release": "node scripts/android.mjs release",
+    "android:install": "node scripts/android.mjs install",
+    "android:test": "node scripts/android.mjs test"
   }
 }

@@ -1,8 +1,8 @@
-# CloudSSH 桌面客户端
+# CloudSSH 客户端（桌面 + Android）
 
-CloudSSH 的 Windows 桌面客户端（Electron）。它直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://bash.al`，即路由到 Worker 的自定义域名），**无需修改 Worker**。
+CloudSSH 的 Windows 桌面客户端（Electron）和 Android 客户端（原生 WebView 外壳）。两者都直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://bash.al`，即路由到 Worker 的自定义域名），**无需修改 Worker**。
 
-第一版界面“照搬”网页版：GitHub 登录、服务器列表、SSH 终端、SFTP、Agent、分享、主题等功能与网页版一致。架构上把连接配置、平台适配和 UI 拆成独立的层，之后可以换成自研 UI，也可以复用核心包去做移动 App。
+第一版界面“照搬”网页版：GitHub 登录、服务器列表、SSH 终端、SFTP、Agent、分享、主题等功能与网页版一致。架构上把连接配置、平台适配和 UI 拆成独立的层，之后可以换成自研 UI。Android 版见下文“[Android 客户端](#android-客户端)”。
 
 ---
 
@@ -37,6 +37,17 @@ pnpm dist:win
 
 安装包未签名，首次运行时 Windows SmartScreen 可能提示“未知发布者”。
 
+### 构建 Android APK
+
+需要 Android Studio（自带 JDK 与 SDK）。脚本会自动找到它们，并把 `HTTPS_PROXY` 转成 Gradle 能用的代理参数：
+
+```bash
+pnpm android:build     # 调试版：apps/android/release/CloudSSH-<版本>-debug.apk
+pnpm android:release   # 正式版（R8 压缩，约 300KB）：apps/android/release/CloudSSH-<版本>-release.apk
+```
+
+把 APK 传到手机上安装即可，系统会提示允许安装未知来源的应用。打开后点“使用 GitHub 登录”，在应用内完成授权。
+
 ---
 
 ## 架构分层
@@ -57,6 +68,13 @@ CloudSSH-client/
 │       ├── overrides/         桌面端定制入口（构建时注入，不改 upstream）
 │       └── vite.config.ts
 ├── apps/
+│   ├── android/           Android 客户端（Kotlin + 系统 WebView，Gradle 工程）
+│   │   └── app/src/main/
+│   │       ├── java/com/xmzo/cloudssh/
+│   │       │   ├── config/        连接与配置层：实例模型与规则（对齐 core/instance.ts）、SharedPreferences 存储
+│   │       │   ├── web/           平台适配层：ShellActivity（WebView 外壳）、导航规则、页面桥接、下载落盘
+│   │       │   └── manager/       实例管理界面、测试连接
+│   │       └── assets/bridge.js   注入页面的桥接脚本（只对实例 origin 生效）
 │   └── desktop/           @cloudssh/desktop —— Electron 应用
 │       └── src/
 │           ├── main/
@@ -282,7 +300,51 @@ pnpm install && pnpm build:ui
 
 ---
 
-## 移动 App 路线（暂不实现）
+## Android 客户端
+
+代码在 `apps/android/`，是原生 Kotlin + 系统 WebView 的外壳，直接加载 Worker 的页面。网页版本身已经做了完整的移动端适配（快捷键栏、输入法、触控滚动等），所以 SSH、SFTP、Agent、分享等功能都和网页版一致。
+
+**为什么不像桌面端那样内置 UI**：Android WebView 拦截请求时拿不到 POST 请求体，没法把本地 UI 挂到 Worker origin 下、再透传 `/api`。所以安卓始终使用 Worker 返回的页面（相当于桌面端的 remote 模式），界面永远和服务端同版本；定制通过注入脚本完成。
+
+**不改 Worker 的原因与桌面端相同**：页面就在 Worker origin 下，WebSocket 的 Origin 天然正确，HttpOnly session Cookie 存在 WebView 的 Cookie 罐里。GitHub 登录直接在 WebView 内完成，只放行 `github.com` 的登录和授权路径，其他外部链接用系统浏览器打开，避免离开页面导致会话断开。
+
+原生补齐的能力：
+
+| 能力 | 实现 |
+|---|---|
+| SFTP 上传、导入私钥 | `<input type=file>` 走系统文件选择器，支持多选 |
+| SFTP 下载、终端日志导出 | WebView 处理不了 `blob:` 下载。`bridge.js` 截获后分块交给原生，写入系统“下载”目录（Android 10+ 不需要存储权限）；网页 click 后立刻 revoke 也能拿到内容 |
+| 剪贴板 | `navigator.clipboard.readText/writeText` 由原生剪贴板实现（WebView 默认禁止读取） |
+| 返回键 | 先关闭页面里最上层的浮层（对话框、弹窗、抽屉）；没有浮层时走 WebView 历史；在根页面弹出菜单（切换实例、实例管理、重新加载、退到后台、退出） |
+| 键盘与全面屏 | 系统栏和键盘的空间由原生用 padding 让出，键盘弹出时终端行数自动变化 |
+| 旋转与深色模式切换 | 不重建 Activity，否则页面重载会断开所有 SSH 会话 |
+| 多实例 | 每个实例使用独立的 WebView Profile（需要系统 WebView 支持多 Profile，旧版 WebView 会退回共用 Cookie 罐） |
+| 实例管理 | 原生页面：新增、编辑、删除、设为默认、清除登录数据；“测试连接”会显示服务端实际使用的 OAuth 回调地址 |
+
+页面桥接只在实例 origin 上注入（`addDocumentStartJavaScript` 与 `addWebMessageListener` 都限定了 origin），GitHub 等第三方页面拿不到。网页里可以通过 `window.cloudsshAndroid` 读取实例信息、打开实例管理；它和桌面端的 `window.cloudsshDesktop` 相对应。
+
+**定制安卓界面**：修改 `apps/android/app/src/main/assets/bridge.js`，例如注入样式或增强 DOM。它在网页版任何脚本之前执行，选择器可以用 `html[data-cloudssh-client='android']` 限定范围。
+
+**正式签名**：在 `apps/android/` 下新建 `keystore.properties`（已加入 .gitignore）：
+
+```properties
+storeFile=release.jks
+storePassword=******
+keyAlias=cloudssh
+keyPassword=******
+```
+
+没有这个文件时，release 包使用 debug 证书签名，可以直接安装自用，但不能上架应用商店。
+
+**已知限制**：
+
+- 应用退到后台后，系统可能回收进程，SSH 会话随之断开。服务端会保留 60 秒的断线恢复窗口，但进程被回收后无法自动恢复。需要长时间后台保持时，可以以后加一个前台服务
+- 需要 Android 10 及以上，并建议保持“Android System WebView”为最新版本
+- 地址同样必须是 GitHub OAuth App 登记回调的域名（默认 `https://bash.al`）
+
+## 移动 App 路线
+
+Android 客户端目前采用下面第 2 条路线（WebView 加载 Worker 页面），只是用原生 Kotlin 实现而不是 Capacitor。iOS 可以用同样的方式基于 WKWebView 实现。
 
 1. **复用 `@cloudssh/core`**：实例模型、路由、OAuth 规则、协议类型和 API 客户端都是平台无关的。移动端只需实现 `PlatformTransport`：
    - fetch 请求手动带 `Cookie: session=...`，并设置 `sendOriginHeader: true`
@@ -312,6 +374,10 @@ pnpm install && pnpm build:ui
 | `pnpm build` | 构建内置 UI 和桌面端 |
 | `pnpm dist:win` | 打包 Windows 安装包和 zip |
 | `pnpm sync:web-ui` | 从 CloudSSH 主仓库同步网页版前端 |
+| `pnpm android:build` | 构建 Android 调试版 APK |
+| `pnpm android:release` | 构建 Android 正式版 APK |
+| `pnpm android:install` | 把调试版安装到已连接的设备或模拟器 |
+| `pnpm android:test` | Android 单元测试（实例地址规则） |
 | `pnpm typecheck` | 类型检查（core / ui-web / desktop） |
 | `pnpm test` | 单元测试（core） |
 
