@@ -12,11 +12,13 @@ trustPolicy: no-downgrade
 trustPolicyExclude:
   - semver@5.7.2 || 6.3.1
 
-# pnpm 11 默认不执行依赖的安装脚本，只放行确实需要的：esbuild 需要校验平台二进制；
-# electron-winstaller 只服务 Squirrel 安装包，本项目用 NSIS，不需要它的脚本。
-# 注：Electron 44 起没有 postinstall，二进制在第一次运行 electron 时自动下载
-# （网络不通时设置 ELECTRON_GET_USE_PROXY=1 与 GLOBAL_AGENT_HTTPS_PROXY，或 ELECTRON_MIRROR）。
+# pnpm 11 默认不执行依赖的安装脚本，未声明的会让 pnpm install 直接报 ERR_PNPM_IGNORED_BUILDS。
+# - esbuild：校验平台二进制
+# - electron：registry 元数据标记了安装脚本，需显式放行；但 Electron 44 实际已无 postinstall，
+#   二进制在第一次运行 electron 时自动下载（网络不通时设置 ELECTRON_GET_USE_PROXY=1 与
+#   GLOBAL_AGENT_HTTPS_PROXY，或 ELECTRON_MIRROR）
+# - electron-winstaller：只服务 Squirrel 安装包，本项目用 NSIS，不需要
 allowBuilds:
-  electron: set this to true or false
+  electron: true
   electron-winstaller: false
   esbuild: true
