@@ -21,8 +21,8 @@ pnpm dev
 2. 弹出独立的登录窗口，在里面登录 GitHub 并授权
 3. 授权完成后登录窗口自动关闭，主窗口刷新为已登录状态，此时可以连接服务器、打开 SFTP
 
-> 安装依赖时 Electron 会下载约 100MB 的二进制。网络不通时可设置代理：
-> `ELECTRON_GET_USE_PROXY=1 GLOBAL_AGENT_HTTPS_PROXY=http://127.0.0.1:7890 pnpm install`
+> Electron 44 没有安装脚本，**第一次运行**时才会自动下载约 100MB 的二进制，所以首次 `pnpm dev` 会稍慢。网络不通时可设置代理：
+> `ELECTRON_GET_USE_PROXY=1 GLOBAL_AGENT_HTTPS_PROXY=http://127.0.0.1:7890 pnpm dev`
 
 ### 打包 Windows 安装包
 
