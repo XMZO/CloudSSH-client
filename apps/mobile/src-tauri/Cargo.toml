@@ -1,0 +1,47 @@
+[package]
+name = "cloudssh-mobile"
+version = "0.1.0"
+description = "CloudSSH 移动客户端（Tauri 2）"
+authors = ["XMZO"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+# 移动端以动态库形式被 Android 壳加载
+name = "cloudssh_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+# 只要 WebView 运行时与资源压缩；dynamic-acl、桌面 Linux/Windows 专用特性都不要（压缩体积）
+tauri = { version = "2.12", default-features = false, features = ["wry", "compression"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time", "io-util"] }
+# TLS 统一走 rustls + ring + 内置 Mozilla 根证书：纯 Rust，交叉编译安卓无需 cmake/NASM
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "__rustls-tls"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+# 不带公共后缀表：只和当前实例通信，Worker 下发的都是 host-only Cookie
+cookie_store = { version = "0.22", default-features = false, features = ["serde_json"] }
+cookie = "0.18"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+url = "2"
+base64 = "0.22"
+log = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+
+[profile.release]
+# 移动端安装包体积优先
+codegen-units = 1
+lto = true
+opt-level = "z"
+panic = "abort"
+strip = true

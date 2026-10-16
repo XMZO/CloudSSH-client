@@ -1,6 +1,6 @@
 # CloudSSH 客户端（桌面 + Android）
 
-CloudSSH 的 Windows 桌面客户端（Electron）和 Android 客户端（原生 WebView 外壳）。两者都直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://bash.al`，即路由到 Worker 的自定义域名），**无需修改 Worker**。
+CloudSSH 的 Windows 桌面客户端（Electron）和 Android 客户端（Tauri 2 + Rust）。两者都直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://bash.al`，即路由到 Worker 的自定义域名），**无需修改 Worker**。
 
 第一版界面“照搬”网页版：GitHub 登录、服务器列表、SSH 终端、SFTP、Agent、分享、主题等功能与网页版一致。架构上把连接配置、平台适配和 UI 拆成独立的层，之后可以换成自研 UI。Android 版见下文“[Android 客户端](#android-客户端)”。
 
@@ -39,11 +39,11 @@ pnpm dist:win
 
 ### 构建 Android APK
 
-需要 Android Studio（自带 JDK 与 SDK）。脚本会自动找到它们，并把 `HTTPS_PROXY` 转成 Gradle 能用的代理参数：
+需要 Rust（`rustup target add aarch64-linux-android x86_64-linux-android`）和 Android Studio（自带 JDK 与 SDK，另在 SDK Manager 里装 NDK）。脚本会自动找到它们，并把 `HTTPS_PROXY` 转成 Gradle 能用的代理：
 
 ```bash
-pnpm android:build     # 调试版：apps/android/release/CloudSSH-<版本>-debug.apk
-pnpm android:release   # 正式版（R8 压缩，约 135KB）：apps/android/release/CloudSSH-<版本>-release.apk
+pnpm android:build         # 正式版（arm64，手机用）：apps/mobile/release/CloudSSH-<版本>-release.apk
+pnpm android:build:debug   # 调试版（arm64 + x86_64，可装模拟器）
 ```
 
 把 APK 传到手机上安装即可，系统会提示允许安装未知来源的应用。打开后点“使用 GitHub 登录”，在应用内完成授权。
@@ -65,16 +65,22 @@ CloudSSH-client/
 │   │       └── api-client.ts  CloudSSHApiClient
 │   └── ui-web/            @cloudssh/ui-web —— 内置 UI 包（网页版前端）
 │       ├── upstream/          从 CloudSSH 主仓库同步的源码（逐字节一致，勿手改）
-│       ├── overrides/         桌面端定制入口（构建时注入，不改 upstream）
+│       ├── overrides/         定制入口（构建时注入，不改 upstream）：桌面侧栏 + mobile/ 移动端
 │       └── vite.config.ts
 ├── apps/
-│   ├── android/           Android 客户端（Kotlin + 系统 WebView，Gradle 工程）
-│   │   └── app/src/main/
-│   │       ├── java/com/xmzo/cloudssh/
-│   │       │   ├── config/        连接与配置层：实例模型与规则（对齐 core/instance.ts）、SharedPreferences 存储
-│   │       │   ├── web/           平台适配层：ShellActivity（WebView 外壳）、导航规则、页面桥接、下载落盘
-│   │       │   └── manager/       实例管理界面、测试连接
-│   │       └── assets/bridge.js   注入页面的桥接脚本（只对实例 origin 生效）
+│   ├── mobile/            @cloudssh/mobile —— Android 客户端（Tauri 2 + Rust）
+│   │   └── src-tauri/
+│   │       ├── src/
+│   │       │   ├── settings.rs    连接与配置层：实例、当前实例、代理（规则与 core/instance.ts 一致）
+│   │       │   ├── net.rs         网络层：代理 /api 与 SSH/SFTP WebSocket，按实例保存 Cookie、补同源 Origin
+│   │       │   ├── oauth.rs       GitHub 登录：拦截 OAuth 回调，session 只存在 Rust 侧
+│   │       │   ├── native.rs      平台能力（调用下面的 Kotlin 插件）
+│   │       │   └── lib.rs         命令注册与装配
+│   │       └── gen/android/       Android 工程（Tauri 生成，含少量 Kotlin）
+│   │           └── app/src/main/java/com/xmzo/cloudssh/
+│   │               ├── NativePlugin.kt      保活、下载、剪贴板、外链、系统栏、电池优化
+│   │               ├── KeepAliveService.kt  前台服务 + 唤醒锁
+│   │               └── MainActivity.kt      全面屏、键盘避让
 │   └── desktop/           @cloudssh/desktop —— Electron 应用
 │       └── src/
 │           ├── main/
@@ -93,7 +99,8 @@ CloudSSH-client/
 │           └── manager/                   实例管理页面（本地 HTML）
 └── scripts/
     ├── sync-web-ui.mjs    从 CloudSSH 主仓库同步网页版前端
-    └── dev-ui.mjs         UI 热更新开发（Vite + 客户端）
+    ├── dev-ui.mjs         UI 热更新开发（Vite + 客户端）
+    └── mobile.mjs         Android 构建（定位 JDK/SDK/NDK、Gradle 代理、复制 APK）
 ```
 
 各层之间的依赖是单向的：
@@ -302,41 +309,57 @@ pnpm install && pnpm build:ui
 
 ## Android 客户端
 
-代码在 `apps/android/`，是原生 Kotlin + 系统 WebView 的外壳，直接加载 Worker 的页面。网页版本身已经做了完整的移动端适配（快捷键栏、输入法、触控滚动等），所以 SSH、SFTP、Agent、分享等功能都和网页版一致。
+代码在 `apps/mobile/`（Tauri 2 + Rust，界面在 `packages/ui-web/overrides/mobile/`）。它不是“套个 WebView 打开网站”：
 
-**为什么不像桌面端那样内置 UI**：Android WebView 拦截请求时拿不到 POST 请求体，没法把本地 UI 挂到 Worker origin 下、再透传 `/api`。所以安卓始终使用 Worker 返回的页面（相当于桌面端的 remote 模式），界面永远和服务端同版本；定制通过注入脚本完成。
+- **界面打包在 APK 里**：用的是 `packages/ui-web` 的移动端构建，即网页版全部功能（终端、SFTP、Agent、分享、主题、移动端快捷键栏……）加上移动端专属的节点首页和设置
+- **网络全部走 Rust**：页面的 `/api` 请求和 SSH/SFTP WebSocket 都交给 Rust（reqwest + tokio-tungstenite + rustls），由 Rust 保存 Cookie、补 Origin；HttpOnly 的 `session` 只存在 Rust 侧，页面脚本拿不到
+- **少量 Kotlin 只做 Rust 做不了的事**：前台服务保活、写入系统“下载”目录、剪贴板、系统栏配色
 
-**不改 Worker 的原因与桌面端相同**：页面就在 Worker origin 下，WebSocket 的 Origin 天然正确，HttpOnly session Cookie 存在 WebView 的 Cookie 罐里。GitHub 登录直接在 WebView 内完成，只放行 `github.com` 的登录和授权路径，其他外部链接用系统浏览器打开，避免离开页面导致会话断开。
+### 不改 Worker 是怎么做到的
 
-原生补齐的能力：
+页面运行在 `https://tauri.localhost`，和 Worker 不同源，所以由 Rust 代为请求：
 
-| 能力 | 实现 |
+| 约束 | 移动端的处理 |
 |---|---|
-| SFTP 上传、导入私钥 | `<input type=file>` 走系统文件选择器，支持多选 |
-| SFTP 下载、终端日志导出 | WebView 处理不了 `blob:` 下载。`bridge.js` 截获后分块交给原生，写入系统“下载”目录（Android 10+ 不需要存储权限）；网页 click 后立刻 revoke 也能拿到内容 |
-| 剪贴板 | `navigator.clipboard.readText/writeText` 由原生剪贴板实现（WebView 默认禁止读取） |
-| 返回键 | 先关闭页面里最上层的浮层（对话框、弹窗、抽屉）；没有浮层时走 WebView 历史；在根页面弹出菜单（切换实例、实例管理、重新加载、退到后台、退出） |
-| 键盘与全面屏 | 系统栏和键盘的空间由原生用 padding 让出，键盘弹出时终端行数自动变化 |
-| 旋转与深色模式切换 | 不重建 Activity，否则页面重载会断开所有 SSH 会话 |
-| 多实例 | 每个实例使用独立的 WebView Profile（需要系统 WebView 支持多 Profile，旧版 WebView 会退回共用 Cookie 罐） |
-| 实例管理 | 原生页面：新增、编辑、删除、设为默认、清除登录数据；“测试连接”会显示服务端实际使用的 OAuth 回调地址 |
+| WebSocket 必须带同源 `Origin` | `early.ts` 把 `/api/ssh*` 的 `WebSocket` 换成走 Rust 的实现，Rust 握手时带 `Origin: <Worker origin>` 和 Cookie |
+| 写接口校验同源 `Origin` | `fetch('/api/...')` 由 Rust 转发，统一补 `Origin`；只允许 `/api` 路径，不跟随重定向 |
+| HttpOnly `session` Cookie | Rust 按实例保存 Cookie 罐（应用私有目录），响应里的 `Set-Cookie` 不交给页面 |
+| OAuth 回调地址是 Worker 域名 | 点击登录时 Rust 先请求 `/api/auth/github`（`oauth_state` 进 Rust 的 Cookie 罐），WebView 打开 GitHub 授权页；跳回 `<Worker>/api/auth/callback` 时被拦下，由 Rust 带着 `oauth_state` 完成回调，再回到应用首页 |
+| 网页版校验 wsUrl 必须同源 | 构建时给 `validateWsUrl` 加一个扩展判断，放行当前实例的 `/api/ssh*`（只影响移动端构建） |
 
-页面桥接只在实例 origin 上注入（`addDocumentStartJavaScript` 与 `addWebMessageListener` 都限定了 origin），GitHub 等第三方页面拿不到。网页里可以通过 `window.cloudsshAndroid` 读取实例信息、打开实例管理；它和桌面端的 `window.cloudsshDesktop` 相对应。
+### 功能
 
-**体积与缓存**：
+| 功能 | 说明 |
+|---|---|
+| 节点首页 | 代替网页版每页 3 张卡片的分页：搜索（名称、地址、标签），“最近连接”置顶，按标签分组并可折叠，显示系统图标与在线会话数 |
+| 多会话终端 | 网页版的标签页；节点页顶部显示“N 个会话进行中”一键回终端。点节点时已有会话就切过去，长按可“新建连接 / 切换会话 / 编辑 / 克隆 / 复制地址” |
+| SFTP | 上传走系统文件选择器；下载与日志导出写入系统“下载”目录（Android 10+ 不需要存储权限），重名自动改名 |
+| 后台保活 | 有会话时启动前台服务（通知栏显示会话数），持有 CPU 与 Wi-Fi 唤醒锁，WebView 渲染进程保持重要优先级；设置里可一键申请“不受电池优化限制”。全部会话关闭后自动停止 |
+| 返回键 | 先关最上层的浮层（设置、对话框、抽屉、更多菜单）；在终端时回到节点页（会话保留）；在节点页时退到后台而不是退出 |
+| 多实例与代理 | 设置里新增/编辑/删除/切换实例（“测试连接”显示延迟、登录方式与 OAuth 回调地址），每个实例独立 Cookie；可设 HTTP 代理 |
+| 剪贴板 | `navigator.clipboard` 由原生剪贴板实现，终端粘贴可用 |
+| 全面屏与键盘 | 系统栏和键盘的空间由原生让出，键盘弹出时终端行数自动变化；系统栏颜色跟随网页主题 |
+
+### 体积
 
 | 项目 | 大小 | 做法 |
 |---|---|---|
-| 安装包（release） | 约 135KB | 只依赖 `androidx.webkit`，Activity 与系统栏适配用框架 API；R8 压缩；图标是矢量；排除 Kotlin 元数据；只保留中英文资源 |
-| 安装后本体 | 约 150KB 加少量编译产物 | WebView 用系统自带的，不打包浏览器内核 |
-| 应用数据 | 约 0.3MB 加缓存 | 关闭 WebView 统计埋点，并阻止它生成约 4MB 的 `BrowserMetrics-spare.pma` 预分配文件 |
-| 缓存 | 通常约 2MB，上限 16MB | 主要是 Worker 约 2MB 的内联页面。超过 16MB 时下次启动自动清空；实例管理页底部显示当前占用，也可以手动“清除缓存” |
+| 安装包（release，arm64） | 约 7.5MB | 其中 Rust 动态库约 5.7MB（含打包的界面，Brotli 压缩），其余主要是 Tauri 运行时依赖的 Jackson 等 Java 库 |
+| 安装后本体 | 与安装包相当 | 动态库在 APK 里不压缩、按 16KB 页对齐，系统直接映射，不再解压出第二份 |
+| 应用数据 | 通常 2～5MB | 主要是 WebView 的数据目录；关闭 WebView 统计埋点，并阻止它生成约 4MB 的 `BrowserMetrics-spare.pma` 预分配文件 |
+| 缓存 | 上限 16MB | 界面在 APK 里，不靠 HTTP 缓存。超过 16MB 时下次启动自动清空；“设置 → 存储”显示占用，也可以手动清除 |
 
-缓存放在系统的 cache 目录，手机存储紧张时系统也会自动清理。清掉缓存后，下次打开需要重新下载约 600KB（压缩后）的页面。
+Rust 侧的压缩手段：`opt-level="z"`、LTO、`codegen-units=1`、`panic=abort`、strip；TLS 用 rustls + ring（不带 aws-lc）；reqwest 只用 HTTP/1.1；Tauri 关掉默认特性（dynamic-acl 与桌面平台专用部分）；Cookie 罐不带公共后缀表；链接时用 RELR 压缩动态重定位表（`build.rs`）。Kotlin 侧 R8 压缩、去掉 Kotlin 元数据与许可证文本、只保留中英文资源。
 
-**定制安卓界面**：修改 `apps/android/app/src/main/assets/bridge.js`，例如注入样式或增强 DOM。它在网页版任何脚本之前执行，选择器可以用 `html[data-cloudssh-client='android']` 限定范围。
+### 开发与调试
 
-**正式签名**：在 `apps/android/` 下新建 `keystore.properties`（已加入 .gitignore）：
+- `pnpm mobile:dev`：在电脑上以窗口形式运行移动端（Tauri dev + Vite 热更新），网络层、登录流程与手机上相同，适合迭代界面
+- `pnpm android:dev`：在已连接的手机或模拟器上热更新运行
+- Windows 调试构建可设 `CLOUDSSH_WEBVIEW_DEBUG_PORT=9555` 打开 WebView2 远程调试端口，便于自动化测试
+- 模拟器联网需要代理时，在应用“设置 → 网络代理”填 `http://10.0.2.2:7890`（`10.0.2.2` 是模拟器访问宿主机的固定地址）
+- 调试版 APK 可用 `chrome://inspect` 或 `adb forward tcp:9556 localabstract:webview_devtools_remote_<pid>` 连接 WebView 调试
+
+**正式签名**：在 `apps/mobile/src-tauri/gen/android/` 下新建 `keystore.properties`（已加入 .gitignore）：
 
 ```properties
 storeFile=release.jks
@@ -349,20 +372,10 @@ keyPassword=******
 
 **已知限制**：
 
-- 应用退到后台后，系统可能回收进程，SSH 会话随之断开。服务端会保留 60 秒的断线恢复窗口，但进程被回收后无法自动恢复。需要长时间后台保持时，可以以后加一个前台服务
 - 需要 Android 10 及以上，并建议保持“Android System WebView”为最新版本
-- 地址同样必须是 GitHub OAuth App 登记回调的域名（默认 `https://bash.al`）
-
-## 移动 App 路线
-
-Android 客户端目前采用下面第 2 条路线（WebView 加载 Worker 页面），只是用原生 Kotlin 实现而不是 Capacitor。iOS 可以用同样的方式基于 WKWebView 实现。
-
-1. **复用 `@cloudssh/core`**：实例模型、路由、OAuth 规则、协议类型和 API 客户端都是平台无关的。移动端只需实现 `PlatformTransport`：
-   - fetch 请求手动带 `Cookie: session=...`，并设置 `sendOriginHeader: true`
-   - WebSocket 握手头使用 `webSocketHandshakeHeaders()`，带上 `Origin` 和 `Cookie`
-   - 登录可以在 `ASWebAuthenticationSession` 或 Custom Tabs/WebView 中完成，再用 `extractSessionFromSetCookie()` 或 Cookie 存储取出 `session`
-2. **复用网页版 UI**：用 Capacitor 或 Tauri mobile 让 WebView 直接加载 Worker origin（相当于 remote 模式），改动最小
-3. **原生/自研 UI**：React Native 等直接基于 core 开发，终端和 SFTP 协议按需补进 core
+- 地址必须是 GitHub OAuth App 登记回调的域名（默认 `https://bash.al`）
+- 从最近任务里划掉应用会结束全部会话；Worker 的空闲超时（默认 30 分钟无操作）照常生效
+- iOS 未做：Tauri 支持 iOS，`overrides/mobile` 与 Rust 网络层可直接复用，只需补 Swift 侧的保活与下载
 
 ---
 
@@ -385,10 +398,11 @@ Android 客户端目前采用下面第 2 条路线（WebView 加载 Worker 页�
 | `pnpm build` | 构建内置 UI 和桌面端 |
 | `pnpm dist:win` | 打包 Windows 安装包和 zip |
 | `pnpm sync:web-ui` | 从 CloudSSH 主仓库同步网页版前端 |
-| `pnpm android:build` | 构建 Android 调试版 APK |
-| `pnpm android:release` | 构建 Android 正式版 APK |
-| `pnpm android:install` | 把调试版安装到已连接的设备或模拟器 |
-| `pnpm android:test` | Android 单元测试（实例地址规则） |
+| `pnpm android:build` | 构建 Android 正式版 APK（arm64） |
+| `pnpm android:build:debug` | 构建 Android 调试版 APK（arm64 + x86_64） |
+| `pnpm android:install` | 把最近构建的 APK 安装到已连接的设备或模拟器 |
+| `pnpm android:dev` | 在手机/模拟器上热更新运行 |
+| `pnpm mobile:dev` | 在电脑窗口里运行移动端（界面迭代） |
 | `pnpm typecheck` | 类型检查（core / ui-web / desktop） |
 | `pnpm test` | 单元测试（core） |
 

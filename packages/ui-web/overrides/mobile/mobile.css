@@ -1,0 +1,498 @@
+/*
+ * 移动端界面样式：颜色、字体全部取网页版主题变量，切换主题自动跟随。
+ */
+
+/* 节点首页接管后，隐藏网页版的分页卡片网格与筛选栏（新增/导出等工具栏保留） */
+html.cs-nodes-on :is(#server-search-wrapper, #server-tag-filter-wrapper, #server-sort-wrapper, #server-grid, #server-pagination, #server-search-empty) {
+  display: none !important;
+}
+
+html.cs-nodes-on #user-space-section .user-space-main {
+  padding: 12px 12px 24px;
+}
+
+.cs-m-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* ---------- 节点首页 ---------- */
+
+.cs-m-nodes {
+  display: none;
+  font-family: var(--font-ui);
+  color: var(--on-surface);
+}
+
+html.cs-nodes-on .cs-m-nodes {
+  display: block;
+}
+
+.cs-m-nodes-bar {
+  position: sticky;
+  top: -12px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  background: var(--bg-elevated);
+}
+
+.cs-m-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--on-surface-variant);
+}
+
+.cs-m-search:focus-within {
+  border-color: var(--accent);
+}
+
+.cs-m-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 15px;
+  padding: 0;
+}
+
+.cs-m-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--on-surface-variant);
+}
+
+.cs-m-iconbtn:active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.cs-m-iconbtn:disabled {
+  opacity: 0.35;
+}
+
+.cs-m-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+
+.cs-m-banner[hidden] {
+  display: none;
+}
+
+.cs-m-banner-go {
+  margin-left: auto;
+  font-weight: 400;
+}
+
+.cs-m-group {
+  margin-top: 6px;
+}
+
+.cs-m-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.cs-m-group-header .cs-m-icon {
+  color: var(--on-surface-variant);
+}
+
+.cs-m-group-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-m-group-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-group-body {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+
+.cs-m-row-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  text-align: left;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cs-m-row-item:last-child {
+  border-bottom: 0;
+}
+
+.cs-m-row-item:active {
+  background: var(--accent-bg);
+}
+
+.cs-m-row-item.is-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.cs-m-row-item > .cs-m-icon {
+  color: var(--on-surface-variant);
+}
+
+.cs-m-avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.cs-m-row-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.cs-m-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cs-m-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-badge {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+}
+
+.cs-m-empty {
+  padding: 40px 12px;
+  text-align: center;
+  color: var(--on-surface-variant);
+}
+
+/* ---------- 底部面板 ---------- */
+
+.cs-m-sheet-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  font-family: var(--font-ui);
+}
+
+.cs-m-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--modal-overlay, rgba(0, 0, 0, 0.6));
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.cs-m-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 6px 16px calc(16px + env(safe-area-inset-bottom));
+  border-radius: 18px 18px 0 0;
+  background: var(--bg-elevated);
+  color: var(--on-surface);
+  transform: translateY(100%);
+  transition: transform 200ms ease;
+}
+
+.cs-m-sheet.is-tall {
+  max-height: 88vh;
+}
+
+.cs-m-sheet-root.is-open .cs-m-sheet-backdrop {
+  opacity: 1;
+}
+
+.cs-m-sheet-root.is-open .cs-m-sheet {
+  transform: translateY(0);
+}
+
+.cs-m-sheet-handle {
+  width: 40px;
+  height: 4px;
+  margin: 4px auto 10px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.cs-m-sheet-title {
+  margin-bottom: 8px;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.cs-m-sheet-title:empty {
+  display: none;
+}
+
+.cs-m-actions {
+  display: grid;
+  gap: 4px;
+}
+
+.cs-m-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+
+.cs-m-action:active {
+  background: var(--accent-bg);
+}
+
+.cs-m-action.is-danger {
+  color: var(--error);
+}
+
+.cs-m-action.is-cancel {
+  justify-content: center;
+  margin-top: 4px;
+  border: 1px solid var(--border-strong);
+}
+
+/* ---------- 表单 ---------- */
+
+.cs-m-form {
+  display: grid;
+  gap: 16px;
+}
+
+.cs-m-section {
+  display: grid;
+  gap: 8px;
+}
+
+.cs-m-section-title {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-field {
+  display: grid;
+  gap: 6px;
+}
+
+.cs-m-field-label {
+  font-size: 13px;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 15px;
+}
+
+.cs-m-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cs-m-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  white-space: pre-line;
+}
+
+.cs-m-result.is-ok {
+  color: var(--accent);
+}
+
+.cs-m-result.is-bad {
+  color: var(--error);
+}
+
+.cs-m-row {
+  display: flex;
+  gap: 8px;
+}
+
+.cs-m-row > * {
+  flex: 1;
+}
+
+.cs-m-inline {
+  display: flex;
+  gap: 8px;
+}
+
+.cs-m-inline .cs-m-input {
+  flex: 1;
+}
+
+.cs-m-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 14px;
+}
+
+.cs-m-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+.cs-m-btn.is-danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.cs-m-instance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-m-instance-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  text-align: left;
+}
+
+.cs-m-instance-main > .cs-m-icon {
+  color: var(--accent);
+}
+
+.cs-m-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-switch input {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+  /* Tailwind forms 插件把复选框改成 appearance:none，选中底色取 currentColor */
+  color: var(--accent);
+  border-radius: 6px;
+}
+
+.cs-m-confirm-text {
+  margin: 4px 0 16px;
+  font-size: 15px;
+  line-height: 1.5;
+}

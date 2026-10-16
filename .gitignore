@@ -11,11 +11,9 @@ Thumbs.db
 .env
 .env.local
 
-# Android
-apps/android/.gradle/
-apps/android/build/
-apps/android/app/build/
-apps/android/local.properties
-apps/android/keystore.properties
+# 移动端（Tauri）
+dist-mobile/
+target/
+apps/mobile/src-tauri/gen/schemas/
 *.jks
 *.keystore

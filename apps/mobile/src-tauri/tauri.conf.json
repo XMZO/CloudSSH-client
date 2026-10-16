@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CloudSSH",
+  "version": "0.1.0",
+  "identifier": "com.xmzo.cloudssh",
+  "build": {
+    "frontendDist": "../../../packages/ui-web/dist-mobile",
+    "devUrl": "http://127.0.0.1:5174",
+    "beforeDevCommand": "pnpm --dir ../../packages/ui-web dev:mobile",
+    "beforeBuildCommand": "pnpm --dir ../../packages/ui-web build:mobile"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CloudSSH",
+        "width": 420,
+        "height": 860,
+        "create": false,
+        "useHttpsScheme": true,
+        "backgroundColor": "#131313"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "minSdkVersion": 26
+    }
+  }
+}

@@ -7,7 +7,9 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "typecheck": "tsc --noEmit -p upstream/frontend/tsconfig.json && tsc --noEmit -p overrides/tsconfig.json"
+    "typecheck": "tsc --noEmit -p upstream/frontend/tsconfig.json && tsc --noEmit -p overrides/tsconfig.json",
+    "build:mobile": "vite build --mode mobile",
+    "dev:mobile": "vite --mode mobile"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.0",
@@ -41,6 +43,7 @@
     "tailwindcss": "3.4.19",
     "typescript": "5.7.2",
     "vite": "6.4.3",
-    "@cloudssh/core": "workspace:*"
+    "@cloudssh/core": "workspace:*",
+    "@tauri-apps/api": "^2.12.1"
   }
 }

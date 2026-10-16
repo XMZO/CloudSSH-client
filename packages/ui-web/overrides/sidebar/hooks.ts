@@ -69,6 +69,17 @@ export function sessionsByServer(): Map<number, string[]> {
   return result;
 }
 
+/** 当前打开的终端标签总数（含匿名连接） */
+export function tabCount(): number {
+  const tabs = tabManager()?.tabs;
+  return tabs instanceof Map ? tabs.size : document.querySelectorAll('#tab-bar .tab-close').length;
+}
+
+export function terminalVisible(): boolean {
+  const section = document.getElementById('terminal-section');
+  return !!section && !section.classList.contains('hidden');
+}
+
 export function activeServerId(): number | null {
   const terminalVisible = !document.getElementById('terminal-section')?.classList.contains('hidden');
   if (!terminalVisible) return null;
