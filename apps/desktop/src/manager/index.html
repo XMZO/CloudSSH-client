@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CloudSSH 实例管理</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <header class="sidebar-header">
+          <h1>实例</h1>
+          <button id="add-instance" class="btn btn-small" type="button">＋ 新增</button>
+        </header>
+        <ul id="instance-list" class="instance-list" aria-label="实例列表"></ul>
+        <section class="prefs">
+          <h2>偏好设置</h2>
+          <label class="check"><input type="checkbox" id="pref-close-to-tray" /> 关闭窗口时最小化到托盘</label>
+          <label class="check"><input type="checkbox" id="pref-show-menubar" /> 显示菜单栏</label>
+        </section>
+        <footer class="sidebar-footer">
+          <div id="app-meta" class="muted"></div>
+          <div class="footer-actions">
+            <button id="open-config" class="link" type="button">配置目录</button>
+            <button id="open-logs" class="link" type="button">日志</button>
+          </div>
+        </footer>
+      </aside>
+
+      <main class="detail">
+        <form id="instance-form" autocomplete="off">
+          <h2 id="form-title">编辑实例</h2>
+
+          <label class="field">
+            <span>名称</span>
+            <input id="field-name" type="text" maxlength="64" required placeholder="例如：我的 CloudSSH" />
+          </label>
+
+          <label class="field">
+            <span>Worker 地址</span>
+            <div class="row">
+              <input id="field-url" type="text" required placeholder="https://xxx.workers.dev" />
+              <button id="test-instance" class="btn" type="button">测试连接</button>
+            </div>
+            <small id="test-result" class="hint"></small>
+          </label>
+
+          <fieldset class="field">
+            <legend>UI 来源</legend>
+            <label class="radio"><input type="radio" name="ui-kind" value="bundled" /> 内置 UI（网页版前端副本，可定制）</label>
+            <div class="sub" data-for="bundled">
+              <select id="field-bundled-id"></select>
+              <small id="bundled-meta" class="hint"></small>
+            </div>
+            <label class="radio"><input type="radio" name="ui-kind" value="remote" /> 跟随 Worker（直接使用 Worker 返回的页面，始终与服务端同版本）</label>
+            <label class="radio"><input type="radio" name="ui-kind" value="directory" /> 本地目录（自研 UI，入口 index.html）</label>
+            <div class="sub row" data-for="directory">
+              <input id="field-directory" type="text" placeholder="D:\\my-cloudssh-ui\\dist" />
+              <button id="pick-directory" class="btn" type="button">选择…</button>
+            </div>
+            <label class="radio"><input type="radio" name="ui-kind" value="dev-server" /> 开发服务器（UI 热更新调试）</label>
+            <div class="sub" data-for="dev-server">
+              <input id="field-dev-server" type="text" placeholder="http://127.0.0.1:5173" />
+            </div>
+          </fieldset>
+
+          <p id="form-error" class="error" role="alert"></p>
+
+          <div class="actions">
+            <button id="save-instance" class="btn btn-primary" type="submit">保存</button>
+            <button id="open-here" class="btn" type="button">打开</button>
+            <button id="open-new" class="btn" type="button">新窗口打开</button>
+            <button id="login" class="btn" type="button">GitHub 登录</button>
+            <button id="set-default" class="btn" type="button">设为默认</button>
+            <span class="spacer"></span>
+            <button id="clear-data" class="btn btn-warn" type="button">清除登录数据</button>
+            <button id="delete-instance" class="btn btn-danger" type="button">删除</button>
+          </div>
+        </form>
+      </main>
+    </div>
+    <script src="./main.js"></script>
+  </body>
+</html>

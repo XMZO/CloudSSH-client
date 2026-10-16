@@ -1,0 +1,18 @@
+{
+  "version": "2.6.8",
+  "commit": "9078c91f86caf669c1c15af18b10e1a2153ea7f1",
+  "describe": "9078c91 release: 发布 v2.6.8 语言切换按钮美化与爱发电赞助渠道版本 (#167)",
+  "remote": "https://github.com/XMZO/CloudSSH.git",
+  "dirty": false,
+  "syncedAt": "2026-10-16T11:15:04.679Z",
+  "sharedFiles": [
+    "src/ai-endpoint.ts",
+    "src/mobile-shortcuts-schema.ts",
+    "src/server-memory-schema.ts",
+    "src/sftp-upload-policy.ts",
+    "src/share-resume-schema.ts",
+    "src/snippet-schema.ts",
+    "src/terminal-output-policy.ts",
+    "src/theme-schema.ts"
+  ]
+}

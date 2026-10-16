@@ -1,0 +1,54 @@
+# CloudSSH 桌面客户端打包配置（electron-builder）
+# 打包：在仓库根目录运行 pnpm dist:win（会先构建内置 UI 与桌面端）
+appId: com.xmzo.cloudssh
+productName: CloudSSH
+copyright: Copyright © 2026 XMZO
+
+directories:
+  output: release
+  buildResources: resources
+
+# 主进程/preload/管理页都已由 esbuild 打成单文件，运行时不需要 node_modules
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+npmRebuild: false
+asar: true
+
+extraResources:
+  # 内置 UI 包：运行时从 resources/ui/<id>/ 读取（见 src/main/ui/providers.ts）
+  - from: ../../packages/ui-web/dist
+    to: ui/web
+  - from: resources
+    to: .
+    filter:
+      - icon.png
+      - tray.png
+      - tray@2x.png
+  # 许可与上游署名（内置 UI 来自 CloudSSH，Apache-2.0）
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../NOTICE
+    to: NOTICE.txt
+
+win:
+  icon: resources/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CloudSSH
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+
+# 自动更新预留：接入 electron-updater 时在这里配置发布源（见 src/main/platform/updater.ts）
+publish: null

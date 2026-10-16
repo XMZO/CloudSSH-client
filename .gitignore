@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+out/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+# 本地覆盖配置（不提交）
+.env
+.env.local

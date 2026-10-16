@@ -1,0 +1,21 @@
+packages:
+  - packages/*
+  - apps/*
+
+# 与 CloudSSH 主仓库保持一致的供应链策略：
+# 新发布不足 7 天的版本不会被安装（升级依赖时若报 minimumReleaseAge 错误，等版本成熟或手动放宽）。
+minimumReleaseAge: 10080
+blockExoticSubdeps: true
+trustPolicy: no-downgrade
+# semver 5.7.2 / 6.3.1 是旧版本线的安全补丁（ReDoS 修复），发布时间晚于带 provenance 的 7.x，
+# 会被 no-downgrade 误判为“信任降级”（electron-builder 的传递依赖需要它们）。仅豁免这两个确切版本。
+trustPolicyExclude:
+  - semver@5.7.2 || 6.3.1
+
+# pnpm 11 默认不执行依赖的安装脚本，只放行确实需要的：
+# electron 需要下载自身二进制，esbuild 需要校验平台二进制；
+# electron-winstaller 只服务 Squirrel 安装包，本项目用 NSIS，不需要它的脚本。
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+  esbuild: true

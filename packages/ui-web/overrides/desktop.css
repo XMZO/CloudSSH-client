@@ -1,0 +1,7 @@
+/*
+ * 桌面端样式覆盖（在上游样式之后加载）。
+ * 选择器建议加上 html[data-cloudssh-client='desktop'] 前缀，只在客户端里生效。
+ *
+ * 示例：
+ * html[data-cloudssh-client='desktop'] body { user-select: none; }
+ */
