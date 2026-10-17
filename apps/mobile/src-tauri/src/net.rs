@@ -60,6 +60,8 @@ pub struct Net {
     client: RwLock<reqwest::Client>,
     sockets: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<WsCommand>>>>,
     next_socket: AtomicU32,
+    /// 页面代数：每次页面重新加载加一，在 sockets 锁内读写
+    page_generation: AtomicU32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,6 +108,7 @@ impl Net {
             client: RwLock::new(client),
             sockets: Arc::new(Mutex::new(HashMap::new())),
             next_socket: AtomicU32::new(1),
+            page_generation: AtomicU32::new(0),
         }
     }
 
@@ -272,6 +275,7 @@ impl Net {
         if !path.starts_with("/api/ssh") {
             return Err("只允许连接 /api/ssh 与 /api/ssh/sftp".into());
         }
+        let generation = self.page_generation.load(Ordering::Relaxed);
         let instance = self.current();
         let mut url = Url::parse(&instance.base_url).and_then(|base| base.join(&path)).map_err(|e| e.to_string())?;
         let cookie_url = url.clone();
@@ -306,7 +310,21 @@ impl Net {
 
         let id = self.next_socket.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel::<WsCommand>();
-        self.sockets.lock().unwrap().insert(id, tx);
+        let stale = {
+            let mut registry = self.sockets.lock().unwrap();
+            let stale = self.page_generation.load(Ordering::Relaxed) != generation;
+            if !stale {
+                registry.insert(id, tx);
+            }
+            stale
+        };
+        if stale {
+            // 握手期间页面已经重新加载，发起它的页面不在了
+            let mut stream = stream;
+            let frame = CloseFrame { code: CloseCode::Away, reason: PAGE_RELOADED.into() };
+            let _ = tokio::time::timeout(WS_CLOSE_GRACE, stream.close(Some(frame))).await;
+            return Err("页面已重新加载".into());
+        }
         let _ = events.send(json_event(&WsEvent::Open { protocol }));
 
         let registry = self.sockets.clone();
@@ -335,7 +353,23 @@ impl Net {
             let _ = tx.send(WsCommand::Close(code, reason));
         }
     }
+
+    /// 页面开始重新加载（刷新、登录跳转、渲染进程崩溃后重建）：旧页面的连接已经没人接收，全部关掉，
+    /// 免得 SSH 会话在服务端空挂；正在握手的连接完成后也会立即关闭。返回关掉的数量。
+    pub fn ws_close_page(&self) -> usize {
+        let closing: Vec<_> = {
+            let mut registry = self.sockets.lock().unwrap();
+            self.page_generation.fetch_add(1, Ordering::Relaxed);
+            registry.drain().map(|(_, tx)| tx).collect()
+        };
+        for tx in &closing {
+            let _ = tx.send(WsCommand::Close(CloseCode::Away.into(), PAGE_RELOADED.into()));
+        }
+        closing.len()
+    }
 }
+
+const PAGE_RELOADED: &str = "page reloaded";
 
 /// 单写操作的上限：网络卡死时不要无限等待，按断线处理让网页版重连
 const WS_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -451,4 +485,35 @@ async fn connect_via_proxy(proxy: &str, host: &str, port: u16) -> Result<TcpStre
         return Err(format!("代理拒绝了隧道：{}", status_line.lines().next().unwrap_or_default()));
     }
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_reload_closes_every_socket_of_the_previous_page() {
+        let net = Net::new(std::env::temp_dir().join("cloudssh-net-test-missing"));
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        net.sockets.lock().unwrap().insert(1, tx1);
+        net.sockets.lock().unwrap().insert(2, tx2);
+
+        assert_eq!(net.ws_close_page(), 2);
+        assert!(net.sockets.lock().unwrap().is_empty());
+        assert_eq!(net.page_generation.load(Ordering::Relaxed), 1);
+        for rx in [&mut rx1, &mut rx2] {
+            match rx.try_recv() {
+                Ok(WsCommand::Close(code, reason)) => {
+                    assert_eq!(code, 1001);
+                    assert_eq!(reason, PAGE_RELOADED);
+                }
+                _ => panic!("expected a close command"),
+            }
+        }
+        assert!(net.ws_send_text(1, "x".into()).is_err());
+        // 没有连接时也推进页面代数，让握手中的连接作废
+        assert_eq!(net.ws_close_page(), 0);
+        assert_eq!(net.page_generation.load(Ordering::Relaxed), 2);
+    }
 }

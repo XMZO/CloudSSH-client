@@ -17,6 +17,7 @@ use serde::Serialize;
 use settings::{create_id, normalize_proxy, normalize_worker_url, Instance};
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
 use tauri::plugin::TauriPlugin;
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Manager, Runtime, State, WebviewWindowBuilder};
 
 #[derive(Serialize)]
@@ -308,6 +309,16 @@ fn sanitize_file_name(name: &str) -> String {
 fn cloudssh_plugin<R: Runtime>() -> TauriPlugin<R> {
     tauri::plugin::Builder::new("cloudssh")
         .on_navigation(|webview, url| oauth::on_navigation(webview, url))
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                if let Some(net) = webview.try_state::<Net>() {
+                    let closed = net.ws_close_page();
+                    if closed > 0 {
+                        log::info!("page reloaded, closed {closed} websocket(s) left by the previous page");
+                    }
+                }
+            }
+        })
         .setup(|_app, _api| {
             #[cfg(target_os = "android")]
             {
