@@ -1,0 +1,73 @@
+/* ========== 对网页版界面的通用修正（桌面端与手机端都加载） ========== */
+
+/* 网页版有两处用到 --warning（AI 助手“自动”模式的选中态、自动确认的倒计时进度条），但没有任何主题定义它，
+   结果都是透明的：选中“自动”看不出来，倒计时进度条也不显示。这里补默认值；:where() 的特异性为 0，
+   以后主题自己定义了 --warning 就以主题为准 */
+:where(:root) {
+  --warning: #b45309;
+}
+
+:where(:root.dark) {
+  --warning: #f0a92a;
+}
+
+/* AI 助手头部的“交互 / 自动”切换：网页版用 --bg-elevated 当选中项底色，深色主题下它和外框底色几乎一样
+   （甚至更暗），看不出当前是哪种模式。改成强调色描边 + 浅底；自动模式沿用网页版的警示色 */
+.agent-mode-segmented .agent-mode-btn.is-active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.agent-mode-segmented[data-active-mode="auto"] .agent-mode-btn[data-mode="auto"].is-active {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent);
+}
+
+/* ---------- 语言选择菜单（电脑端；手机端用底部操作面板） ---------- */
+
+.cs-lang-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.cs-lang-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cs-lang-item:hover,
+.cs-lang-item:focus-visible {
+  background: var(--accent-bg);
+  outline: none;
+}
+
+.cs-lang-item[aria-checked="true"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cs-lang-item .material-symbols-outlined {
+  width: 16px;
+  font-size: 16px;
+  line-height: 1;
+}

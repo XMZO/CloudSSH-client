@@ -39,6 +39,7 @@ export const BASE_UI: Record<string, string> = {
   '--border-strong': 'rgba(255, 255, 255, 0.13)',
   '--error': '#ff6b7a',
   '--error-bg': 'rgba(255, 107, 122, 0.14)',
+  '--warning': '#f4c062',
   '--on-accent': BG,
   '--surface-dot': '#2a2f39',
   '--on-surface': '#e7eaf0',

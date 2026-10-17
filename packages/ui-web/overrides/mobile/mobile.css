@@ -352,6 +352,16 @@ html.cs-nodes-on .cs-m-nodes {
   color: var(--error);
 }
 
+/* 当前选中的一项（例如当前语言） */
+.cs-m-action.is-current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cs-m-action.is-current .cs-m-icon {
+  color: var(--accent);
+}
+
 .cs-m-action.is-cancel {
   justify-content: center;
   margin-top: 4px;

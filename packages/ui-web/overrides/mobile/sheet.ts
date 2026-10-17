@@ -4,6 +4,8 @@ export interface SheetAction {
   label: string;
   icon?: string;
   danger?: boolean;
+  /** 当前选中的一项（强调色显示） */
+  current?: boolean;
   action: () => void;
 }
 
@@ -59,6 +61,10 @@ export function showActions(title: string, actions: SheetAction[], cancelLabel: 
   for (const item of actions) {
     const button = el('button', item.danger ? 'cs-m-action is-danger' : 'cs-m-action');
     button.type = 'button';
+    if (item.current) {
+      button.classList.add('is-current');
+      button.setAttribute('aria-current', 'true');
+    }
     if (item.icon) button.append(icon(item.icon));
     button.append(el('span', '', item.label));
     button.addEventListener('click', () => {

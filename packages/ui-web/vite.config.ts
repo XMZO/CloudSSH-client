@@ -132,6 +132,13 @@ const COMMON_HOOKS: Hook[] = [
     anchor: '      if (returnedFromBackground) {\n',
     inject: '        if ((globalThis as any).__cloudsshAnnounceResume === true)\n',
   },
+  {
+    // 语言按钮显示当前语言（网页版显示的是下一个语言）：网页版每次刷新按钮后交给
+    // overrides/shared/language-picker.ts 改写文字，点击后弹出语言列表
+    file: '/upstream/frontend/src/i18n/index.ts',
+    anchor: '    if (label) label.textContent = targetName;\n',
+    inject: '    (globalThis as any).__cloudsshLanguageLabel?.(button);\n',
+  },
 ];
 
 /**

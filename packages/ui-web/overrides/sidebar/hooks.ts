@@ -7,6 +7,8 @@ interface TerminalLike {
   insertSnippet?: (command: string, run: boolean) => boolean;
   focus?: () => void;
   blur?: () => void;
+  /** 网页版 SSHTerminal 的私有字段：当前的终端 WebSocket（断开或等待重连时为 null） */
+  ws?: { readyState?: number } | null;
 }
 
 interface TabInfoLike {
@@ -37,6 +39,19 @@ interface TabManagerLike {
 }
 
 export type TabInfo = TabInfoLike;
+
+/**
+ * 关闭这个会话前是否需要确认：只有连接真的还在（终端 WebSocket 处于打开状态）时才需要。
+ * 不能只看 tab.state：网页版在几条重连放弃的路径上（例如断网后申请连接令牌一直失败）不会把标签改成
+ * “已断开”，会一直停在“连接中”；等待下一次重连时也没有可用的连接。
+ */
+export function sessionNeedsCloseConfirm(tab: TabInfo | null | undefined): boolean {
+  if (!tab || tab.state === 'disconnected') return false;
+  const socket = tab.terminal?.ws;
+  // 网页版内部字段变了时退回只看状态
+  if (socket === undefined) return tab.state === 'connected' || tab.state === 'connecting';
+  return socket !== null && socket.readyState === 1;
+}
 
 function serverList(): ServerListLike | null {
   return ((globalThis as Record<string, unknown>).__cloudsshServerList as ServerListLike) ?? null;

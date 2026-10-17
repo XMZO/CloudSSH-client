@@ -12,7 +12,7 @@
 import { copyTextToClipboard } from '../../../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../../../upstream/frontend/src/host-display';
 import { notify } from '../../../../upstream/frontend/src/ui-feedback';
-import { activeTab, activeTabId, listTabs, switchToTab, type TabInfo } from '../../../sidebar/hooks';
+import { activeTab, activeTabId, listTabs, sessionNeedsCloseConfirm, switchToTab, type TabInfo } from '../../../sidebar/hooks';
 import { mt } from '../../i18n';
 import { openSettings } from '../../settings';
 import { closeSheet, confirmSheet, openSheet } from '../../sheet';
@@ -124,6 +124,12 @@ function openMoreSheet(): void {
       const current = activeTab();
       if (!current) {
         closeSheet();
+        return;
+      }
+      // 已经断开的会话直接关闭；连接还在的先确认
+      if (!sessionNeedsCloseConfirm(current)) {
+        closeSheet();
+        clickById('disconnect-btn');
         return;
       }
       const ok = await confirmSheet(mt('closeSessionConfirm', { name: current.label ?? '' }), mt('closeSession'), mt('cancel'), true);

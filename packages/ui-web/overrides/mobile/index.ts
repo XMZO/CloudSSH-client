@@ -6,8 +6,11 @@
  * - 登录结果、下载结果提示
  */
 import { onBackButtonPress } from '@tauri-apps/api/app';
+import { t } from '../../upstream/frontend/src/i18n';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import '../desktop.css';
+import '../shared/web-fixes.css';
+import { installLanguagePicker, type LanguageMenu } from '../shared/language-picker';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
 import { mt } from './i18n';
@@ -16,7 +19,7 @@ import { mountNodes } from './nodes';
 import { closePanel, panelIsOpen } from './skin/panels';
 import { startSkin } from './skin';
 import { keepAliveEnabled } from './settings';
-import { closeSheet, isSheetOpen } from './sheet';
+import { closeSheet, isSheetOpen, showActions } from './sheet';
 import { mountTabs } from './tabs';
 import { isTauri, native } from './tauri';
 
@@ -152,6 +155,21 @@ function installDownloadNotices(): void {
   });
 }
 
+// ---------- 语言 ----------
+
+/** 语言按钮点开后用底部面板选择（当前语言打勾） */
+const sheetLanguageMenu: LanguageMenu = (_anchor, choices, current, pick) =>
+  showActions(
+    t('language.label'),
+    choices.map((choice) => ({
+      label: choice.name,
+      icon: choice.locale === current ? 'check_circle' : 'radio_button_unchecked',
+      current: choice.locale === current,
+      action: () => pick(choice.locale),
+    })),
+    mt('cancel')
+  );
+
 // ---------- 启动 ----------
 
 if (isTauri()) {
@@ -160,6 +178,7 @@ if (isTauri()) {
     mountNodes();
     mountTabs();
     startSkin();
+    installLanguagePicker(sheetLanguageMenu);
     installKeepAlive();
     installSystemBars();
     installDownloadNotices();

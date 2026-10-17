@@ -8,8 +8,12 @@
  *
  * 已有定制：
  * - sidebar/：左侧节点侧栏（按标签分组、搜索、双击连接、会话指示）
+ * - shared/language-picker.ts：语言按钮显示当前语言，点开下拉选择
+ * - shared/web-fixes.css：网页版界面的通用修正（与手机端共用）
  */
 import './desktop.css';
+import './shared/web-fixes.css';
+import { installLanguagePicker, popoverLanguageMenu } from './shared/language-picker';
 import { mountSidebar } from './sidebar/sidebar';
 
 document.documentElement.dataset.cloudsshClient = 'desktop';
@@ -24,3 +28,4 @@ window.cloudsshDesktop
   });
 
 mountSidebar();
+installLanguagePicker(popoverLanguageMenu);

@@ -7,7 +7,7 @@
  * 网页版每次状态变化都会整体重建标签栏，所以在每次重建后再加工（MutationObserver）。
  */
 import { maskIPAddress } from '../../upstream/frontend/src/host-display';
-import { activeTabId, closeTabById, listTabs, switchToTab, type TabInfo } from '../sidebar/hooks';
+import { activeTabId, closeTabById, listTabs, sessionNeedsCloseConfirm, switchToTab, type TabInfo } from '../sidebar/hooks';
 import { mt } from './i18n';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
 
@@ -36,13 +36,10 @@ function decorate(tabBar: HTMLElement): void {
   tabBar.querySelector<HTMLElement>('.tab-item.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
-function needsConfirm(tab: TabInfo | undefined): boolean {
-  return tab?.state === 'connected' || tab?.state === 'connecting';
-}
-
+/** 已经断开（包括重连失败、等待重连）的会话直接关闭，连接还在的才确认 */
 async function confirmClose(id: string): Promise<boolean> {
   const tab = listTabs().find((item) => item.id === id);
-  if (!needsConfirm(tab)) return true;
+  if (!sessionNeedsCloseConfirm(tab)) return true;
   return confirmSheet(mt('closeSessionConfirm', { name: tab?.label ?? '' }), mt('closeSession'), mt('cancel'), true);
 }
 
@@ -86,8 +83,9 @@ export function openSessionList(): void {
           openSessionList();
           return;
         }
+        // 已断开的会话不弹确认，列表还开着：先收起，等标签关闭后按剩下的会话重新打开（没有会话了就不再打开）
+        closeSheet();
         closeTabById(tab.id);
-        // 确认面板会关掉列表；等标签关闭后重新打开，没有会话了就不再打开
         setTimeout(() => listTabs().length && openSessionList(), 250);
       });
       row.append(el('span', `cs-m-session-dot ${stateClass(tab)}`), text, close);
