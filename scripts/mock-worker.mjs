@@ -55,6 +55,8 @@ const servers = [
   server('US-B 纽约', ['美国 🇺🇸'], '203.0.113.51'),
   server('NoTag-1 家里 NAS', [], '10.0.0.2', { os: 'freebsd' }),
   server('NoTag-2 测试机', [], '10.0.0.3', { os: null }),
+  // 连接会一直卡在认证、永远到不了 Shell 就绪：用来测试“正在连接”状态（例如关闭时是否确认）
+  server('Slow-1 卡在认证', [], '10.0.0.9', { stall: true }),
 ];
 
 let nextSnippetId = 1;
@@ -307,10 +309,14 @@ function attachShell(ws, url) {
   ws.sendJson({ type: 'rtt', latency: 18, colo: 'HKG' });
   ws.sendJson({ type: 'session_created', sessionId, resumeToken: crypto.randomUUID() });
   ws.sendJson({ type: 'sftp_attach', url: `ws://${url.host}/api/ssh/sftp?session=${encodeURIComponent(sessionId)}&token=sftp-${Date.now()}` });
-  const steps = ['version_exchange', 'version_ready', 'host_key_verified', 'auth_service_accepted', 'auth_public_key', 'auth_success', 'shell_ready'];
+  // 标了 stall 的服务器卡在认证，永远到不了 Shell 就绪
+  const tokenId = Number(/^mock-(\d+)-/.exec(url.searchParams.get('token') ?? '')?.[1]);
+  const stall = servers.find((s) => s.id === tokenId)?.stall === true;
+  const allSteps = ['version_exchange', 'version_ready', 'host_key_verified', 'auth_service_accepted', 'auth_public_key', 'auth_success', 'shell_ready'];
+  const steps = stall ? allSteps.slice(0, 5) : allSteps;
   const messages = { version_exchange: '正在交换版本信息...', version_ready: '版本交换完成，正在密钥协商...', host_key_verified: '主机密钥验证通过 (ssh-ed25519) ✓', auth_service_accepted: '认证服务已接受，正在认证...', auth_public_key: '正在使用密钥认证...', auth_success: '认证成功', shell_ready: 'Shell 已就绪' };
   steps.forEach((event, index) => setTimeout(() => ws.sendJson({ type: 'status', message: messages[event], event }), 60 * (index + 1)));
-  setTimeout(() => write(`欢迎使用 CloudSSH 假 shell（输入 help 查看命令）\r\n${PROMPT}`), 60 * (steps.length + 1));
+  if (!stall) setTimeout(() => write(`欢迎使用 CloudSSH 假 shell（输入 help 查看命令）\r\n${PROMPT}`), 60 * (steps.length + 1));
 
   let line = '';
   return (data) => {

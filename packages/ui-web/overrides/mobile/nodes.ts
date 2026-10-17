@@ -145,6 +145,16 @@ function renderGroup(key: string, label: string, servers: ServerConfig[], sessio
   return group;
 }
 
+/**
+ * 内容没变就不动 DOM。回到节点页时会连着来好几次刷新（标签栏变化、页面切换、网页版重新拉取列表），
+ * 每次都整体替换会让列表闪几下，也会打断正在按下的行。列表上的点击、长按都委托在外层，保留旧节点没有问题。
+ */
+function replaceIfChanged(target: HTMLElement, nodes: Node[]): void {
+  const next = document.createElement('div');
+  next.append(...nodes);
+  if (next.innerHTML !== target.innerHTML) target.replaceChildren(...next.childNodes);
+}
+
 function render(): void {
   const servers = getServers();
   document.documentElement.classList.toggle('cs-nodes-on', servers !== null);
@@ -153,7 +163,12 @@ function render(): void {
   const activeId = activeServerId();
   const tabs = tabCount();
   banner.hidden = tabs === 0;
-  banner.replaceChildren(icon('terminal'), el('span', '', mt(tabs === 1 ? 'sessionsBannerOne' : 'sessionsBanner', { n: tabs })), el('span', 'cs-m-banner-go', mt('backToTerminal')), icon('arrow_forward'));
+  replaceIfChanged(banner, [
+    icon('terminal'),
+    el('span', '', mt(tabs === 1 ? 'sessionsBannerOne' : 'sessionsBanner', { n: tabs })),
+    el('span', 'cs-m-banner-go', mt('backToTerminal')),
+    icon('arrow_forward'),
+  ]);
 
   const fragment = document.createDocumentFragment();
   if (!state.query) {
@@ -174,7 +189,7 @@ function render(): void {
   }
   for (const group of groups) fragment.append(renderGroup(group.key, group.label, group.servers, sessions, activeId));
   if (total === 0) fragment.append(el('div', 'cs-m-empty', servers.length ? mt('noMatch') : mt('empty')));
-  list.replaceChildren(fragment);
+  replaceIfChanged(list, [fragment]);
 }
 
 let frame = 0;

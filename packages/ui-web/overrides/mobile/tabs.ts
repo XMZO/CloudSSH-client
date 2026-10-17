@@ -7,7 +7,8 @@
  * 网页版每次状态变化都会整体重建标签栏，所以在每次重建后再加工（MutationObserver）。
  */
 import { maskIPAddress } from '../../upstream/frontend/src/host-display';
-import { activeTabId, closeTabById, listTabs, sessionNeedsCloseConfirm, switchToTab, type TabInfo } from '../sidebar/hooks';
+import { activeTabId, closeTabById, listTabs, switchToTab, type TabInfo } from '../sidebar/hooks';
+import { shouldConfirmClose } from './close-confirm';
 import { mt } from './i18n';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
 
@@ -36,10 +37,10 @@ function decorate(tabBar: HTMLElement): void {
   tabBar.querySelector<HTMLElement>('.tab-item.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
-/** 已经断开（包括重连失败、等待重连）的会话直接关闭，连接还在的才确认 */
+/** 按“关闭会话前确认”设置决定是否弹确认（默认只有真正连着的会话才确认） */
 async function confirmClose(id: string): Promise<boolean> {
   const tab = listTabs().find((item) => item.id === id);
-  if (!sessionNeedsCloseConfirm(tab)) return true;
+  if (!shouldConfirmClose(tab)) return true;
   return confirmSheet(mt('closeSessionConfirm', { name: tab?.label ?? '' }), mt('closeSession'), mt('cancel'), true);
 }
 

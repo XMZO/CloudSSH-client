@@ -12,7 +12,8 @@
 import { copyTextToClipboard } from '../../../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../../../upstream/frontend/src/host-display';
 import { notify } from '../../../../upstream/frontend/src/ui-feedback';
-import { activeTab, activeTabId, listTabs, sessionNeedsCloseConfirm, switchToTab, type TabInfo } from '../../../sidebar/hooks';
+import { activeTab, activeTabId, listTabs, switchToTab, type TabInfo } from '../../../sidebar/hooks';
+import { shouldConfirmClose } from '../../close-confirm';
 import { mt } from '../../i18n';
 import { openSettings } from '../../settings';
 import { closeSheet, confirmSheet, openSheet } from '../../sheet';
@@ -126,8 +127,8 @@ function openMoreSheet(): void {
         closeSheet();
         return;
       }
-      // 已经断开的会话直接关闭；连接还在的先确认
-      if (!sessionNeedsCloseConfirm(current)) {
+      // 按“关闭会话前确认”设置：默认只有真正连着的会话才确认
+      if (!shouldConfirmClose(current)) {
         closeSheet();
         clickById('disconnect-btn');
         return;

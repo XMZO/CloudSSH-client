@@ -45,15 +45,15 @@ interface TabManagerLike {
 export type TabInfo = TabInfoLike;
 
 /**
- * 关闭这个会话前是否需要确认：只有连接真的还在（终端 WebSocket 处于打开状态）时才需要。
+ * 会话是否真的连着（Shell 已就绪且终端 WebSocket 打开）。正在连接、重连中、已断开都算没连着。
  * 不能只看 tab.state：网页版在几条重连放弃的路径上（例如断网后申请连接令牌一直失败）不会把标签改成
- * “已断开”，会一直停在“连接中”；等待下一次重连时也没有可用的连接。
+ * “已断开”，会一直停在“连接中”；短暂断线还没被发现时状态也可能仍是“已连接”。
  */
-export function sessionNeedsCloseConfirm(tab: TabInfo | null | undefined): boolean {
-  if (!tab || tab.state === 'disconnected') return false;
+export function sessionIsConnected(tab: TabInfo | null | undefined): boolean {
+  if (!tab || tab.state !== 'connected') return false;
   const socket = tab.terminal?.ws;
   // 网页版内部字段变了时退回只看状态
-  if (socket === undefined) return tab.state === 'connected' || tab.state === 'connecting';
+  if (socket === undefined) return true;
   return socket !== null && socket.readyState === 1;
 }
 

@@ -6,6 +6,7 @@ import { CLIENT_CODENAME, CLIENT_VERSION } from '@cloudssh/core';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { skinSettingsSection } from './skin';
 import { tabCount } from '../sidebar/hooks';
+import { CLOSE_CONFIRM_MODES, closeConfirmMode, setCloseConfirmMode, type CloseConfirmMode } from './close-confirm';
 import { mt } from './i18n';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
 import { native, type MobileInstance, type MobileState } from './tauri';
@@ -279,6 +280,38 @@ export async function openSettings(): Promise<void> {
     .then((m: { upstreamVersion?: string }) => (uiVersion.textContent = mt('uiVersion', { v: m.upstreamVersion ?? '?' })))
     .catch(() => undefined);
 
-  body.append(skinSettingsSection(), instances, proxy, keep, storage, about);
+  // 关闭会话前确认：仅已连接的（默认）/ 总是 / 从不
+  const closing = section(mt('closeConfirm'));
+  const choice = el('div', 'cs-m-choice');
+  choice.setAttribute('role', 'radiogroup');
+  choice.setAttribute('aria-label', mt('closeConfirm'));
+  const choiceLabels: Record<CloseConfirmMode, string> = {
+    connected: mt('closeConfirmConnected'),
+    always: mt('closeConfirmAlways'),
+    never: mt('closeConfirmNever'),
+  };
+  const syncChoice = () => {
+    const current = closeConfirmMode();
+    choice.querySelectorAll<HTMLButtonElement>('.cs-m-choice-item').forEach((item) => {
+      const on = item.dataset.mode === current;
+      item.classList.toggle('is-on', on);
+      item.setAttribute('aria-checked', String(on));
+    });
+  };
+  for (const mode of CLOSE_CONFIRM_MODES) {
+    const item = el('button', 'cs-m-choice-item', choiceLabels[mode]);
+    item.type = 'button';
+    item.dataset.mode = mode;
+    item.setAttribute('role', 'radio');
+    item.addEventListener('click', () => {
+      setCloseConfirmMode(mode);
+      syncChoice();
+    });
+    choice.append(item);
+  }
+  syncChoice();
+  closing.append(choice, el('p', 'cs-m-hint', mt('closeConfirmHint')));
+
+  body.append(skinSettingsSection(), instances, proxy, keep, closing, storage, about);
   openSheet(mt('settings'), body, { tall: true });
 }

@@ -120,6 +120,7 @@ html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-m-search:focus-within {
 }
 
 html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-m-iconbtn {
+  flex: none;
   width: 46px;
   height: 46px;
   border: 0;

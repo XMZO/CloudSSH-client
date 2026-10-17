@@ -8,6 +8,7 @@
  *   pnpm android:install         # adb 安装最近一次构建的 APK（需已连接设备或启动模拟器）
  *   pnpm android:dev             # tauri android dev（热更新，需已连接设备）
  *   node scripts/mobile.mjs build --target aarch64 armv7   # 透传额外参数给 tauri android build
+ *   node scripts/mobile.mjs build --uncompressed           # 动态库与 dex 不压缩：安装包大一倍，安装后占用最小
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -155,7 +156,9 @@ const tauri = ['exec', 'tauri', 'android'];
 switch (command) {
   case 'build': {
     const debug = rest.includes('--debug');
-    const extra = rest.filter((arg) => arg !== '--debug');
+    // 默认把动态库与 dex 压缩进安装包（见 gen/android/app/build.gradle.kts 的 compressApk）
+    if (rest.includes('--uncompressed')) env.CLOUDSSH_COMPRESS_APK = 'false';
+    const extra = rest.filter((arg) => arg !== '--debug' && arg !== '--uncompressed');
     const targets = extra.includes('--target') ? [] : ['--target', 'aarch64', ...(debug ? ['x86_64'] : [])];
     // Gradle 的 debug 构建会在旧 APK 上增量打包：替换掉的动态库空间不回收，每重建一次 APK 就大一圈。
     // 先删掉上次的输出，强制全新打包

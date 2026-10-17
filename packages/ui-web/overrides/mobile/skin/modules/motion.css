@@ -33,10 +33,6 @@
   html[data-cs-mods~="motion"][data-cs-mods~="hosts"] .cs-m-banner:active {
     transform: translateX(-50%) scale(0.96);
   }
-
-  html[data-cs-mods~="motion"] .cs-m-group-body {
-    animation: cs-ob-fade-in 220ms ease-out backwards;
-  }
 }
 
 @keyframes cs-ob-page-in {

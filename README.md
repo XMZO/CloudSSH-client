@@ -46,6 +46,7 @@ pnpm dist:win
 ```bash
 pnpm android:build         # 正式版（arm64，手机用）：apps/mobile/release/CloudSSH-<版本>-release.apk
 pnpm android:build:debug   # 调试版（arm64 + x86_64，可装模拟器）
+pnpm android:build --uncompressed   # 动态库与 dex 不压缩：安装包大一倍，换来安装后占用最小（见下文“体积”）
 ```
 
 把 APK 传到手机上安装即可，系统会提示允许安装未知来源的应用。打开后点“使用 GitHub 登录”，在应用内完成授权。
@@ -251,7 +252,7 @@ pnpm build:ui   # 构建内置 UI，打包时会带进安装包
 - **语言按钮**（`language-picker.ts`）：显示当前语言（网页版显示的是下一个语言），点开后直接选；电脑端是下拉菜单，手机端是底部面板。按钮文字由 `vite.config.ts` 的扩展钩子在网页版刷新按钮时交给这里改写
 - **AI 助手“交互 / 自动”切换的选中态**（`web-fixes.css`）：改为强调色描边；并给网页版用到却从未定义的 `--warning` 补上默认值（“自动”模式和自动确认倒计时进度条依赖它），用 `:where()` 写成零特异性，主题以后自己定义了就以主题为准
 - **服务器列表在断网后被清空**（`vite.config.ts` 扩展钩子 + `sidebar/hooks.ts`）：网页版拉取列表遇到网络失败时保留原列表；连接/编辑/克隆前网页版列表里没有这台服务器就先刷新一次再继续，仍没有则提示，而不是点了没反应
-- **关闭会话的确认**（`sidebar/hooks.ts` 的 `sessionNeedsCloseConfirm`）：按终端 WebSocket 是否打开判断连接是否还在，网页版重连失败时标签会一直停在“连接中”，不能只看标签状态。手机端据此决定关闭时要不要确认
+- **关闭会话的确认**（`sidebar/hooks.ts` 的 `sessionIsConnected`、`mobile/close-confirm.ts`）：按 Shell 是否就绪、终端 WebSocket 是否打开判断会话是否真的连着（网页版重连失败时标签会一直停在“连接中”，不能只看标签状态）；手机端再按“关闭会话前确认”设置决定要不要弹确认
 
 ### 方式二：完全自研 UI
 
@@ -361,6 +362,7 @@ pnpm install && pnpm build:ui
 | SFTP | 上传走系统文件选择器；下载与日志导出写入系统“下载”目录（Android 10+ 不需要存储权限），重名自动改名 |
 | 后台保活 | 有会话时启动前台服务（通知栏显示会话数），持有 CPU 与 Wi-Fi 唤醒锁，WebView 渲染进程保持重要优先级；设置里可一键申请“不受电池优化限制”。全部会话关闭后自动停止 |
 | 返回键 | 先关最上层的浮层（设置、对话框、抽屉、更多菜单）；在终端时回到节点页（会话保留）；在节点页时退到后台而不是退出 |
+| 关闭会话的确认 | “设置 → 关闭会话前确认”可选：仅已连接的（默认）/ 总是 / 从不。默认只有真正连着的会话关闭前要确认，已断开、正在连接或重连中的直接关闭；关闭标签、会话列表里的 ×、黑曜“更多”里的“断开”都按这个设置 |
 | 多实例与代理 | 设置里新增/编辑/删除/切换实例（“测试连接”显示延迟、登录方式与 OAuth 回调地址），每个实例独立 Cookie；可设 HTTP 代理 |
 | 剪贴板 | `navigator.clipboard` 由原生剪贴板实现，终端粘贴可用 |
 | 全面屏与键盘 | 系统栏和键盘的空间由原生让出，键盘弹出时终端行数自动变化；系统栏颜色跟随网页主题 |
@@ -397,8 +399,8 @@ pnpm install && pnpm build:ui
 
 | 项目 | 大小 | 做法 |
 |---|---|---|
-| 安装包（release，arm64） | 约 7.7MB | 其中 Rust 动态库约 5.9MB（含打包的界面，Brotli 压缩），其余主要是 Tauri 运行时依赖的 Jackson 等 Java 库 |
-| 安装后本体 | 与安装包相当 | 动态库在 APK 里不压缩、按 16KB 页对齐，系统直接映射，不再解压出第二份 |
+| 安装包（release，arm64） | 约 4.0MB | Rust 动态库（约 5.9MB，含打包的界面）与 dex 在安装包里压缩存放（约 3.1MB 与 0.6MB）；排除了 Tauri 依赖里没用到的 Material 组件库，资源表从 381KB 降到 90KB |
+| 安装后本体 | 约 11MB | 安装时系统解压出动态库（与 dex），占用比安装包多。想要安装后占用最小，用 `pnpm android:build --uncompressed`：动态库与 dex 不压缩、按 16KB 页对齐由系统直接映射，安装包约 7.5MB，安装后与安装包相当 |
 | 应用数据 | 通常 2～5MB | 主要是 WebView 的数据目录；关闭 WebView 统计埋点，并阻止它生成约 4MB 的 `BrowserMetrics-spare.pma` 预分配文件 |
 | 缓存 | 上限 16MB | 界面在 APK 里，不靠 HTTP 缓存。超过 16MB 时下次启动自动清空；“设置 → 存储”显示占用，也可以手动清除 |
 
@@ -411,7 +413,7 @@ Rust 侧的压缩手段：`opt-level="z"`、LTO、`codegen-units=1`、`panic=abo
 - Windows 调试构建可设 `CLOUDSSH_WEBVIEW_DEBUG_PORT=9555` 打开 WebView2 远程调试端口，便于自动化测试
 - 模拟器联网需要代理时，在应用“设置 → 网络代理”填 `http://10.0.2.2:7890`（`10.0.2.2` 是模拟器访问宿主机的固定地址）
 - 调试版 APK 可用 `chrome://inspect` 或 `adb forward tcp:9556 localabstract:webview_devtools_remote_<pid>` 连接 WebView 调试
-- `node scripts/mock-worker.mjs [端口]`（默认 8788）：本地假 Worker，提供 25 台假服务器（含分组和系统类型）、可以交互的假 shell（输入 `help` 查看命令）、SFTP 目录列表和命令片段接口，不需要真实服务器就能调界面。在手机或模拟器上先运行 `adb reverse tcp:8788 tcp:8788`，再在“设置 → 实例”里添加 `http://127.0.0.1:8788`。调电脑端界面（侧栏、拖动排序等）时先 `pnpm build:ui`，再运行 `node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist`，用浏览器打开 `http://127.0.0.1:8788` 即可
+- `node scripts/mock-worker.mjs [端口]`（默认 8788）：本地假 Worker，提供 26 台假服务器（含分组和系统类型；其中“Slow-1 卡在认证”连接会一直停在认证，用来测“正在连接”状态）、可以交互的假 shell（输入 `help` 查看命令）、SFTP 目录列表和命令片段接口，不需要真实服务器就能调界面。在手机或模拟器上先运行 `adb reverse tcp:8788 tcp:8788`，再在“设置 → 实例”里添加 `http://127.0.0.1:8788`。调电脑端界面（侧栏、拖动排序等）时先 `pnpm build:ui`，再运行 `node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist`，用浏览器打开 `http://127.0.0.1:8788` 即可
 - 模拟器的两个假象，真机上不会出现：一是 WebGL 由软件渲染（SwiftShader），终端字形可能显示残缺，截图检查文字时可以在 WebView 调试里对当前终端执行 `webglAddon.dispose()` 改用 DOM 渲染；二是模拟器报告 `pointer: fine`，横屏宽度超过 767px 时网页版的移动端媒体查询不生效，按键栏会消失
 
 **正式签名**：在 `apps/mobile/src-tauri/gen/android/` 下新建 `keystore.properties`（已加入 .gitignore）：
