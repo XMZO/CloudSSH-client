@@ -8,10 +8,15 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- 用浏览器登录 GitHub：查找支持 Custom Tab 的浏览器（Android 11+ 的包可见性） -->
+    <!-- 用浏览器登录 GitHub：查找支持 Custom Tab 的浏览器与默认浏览器（Android 11+ 的包可见性） -->
     <queries>
         <intent>
             <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
         </intent>
     </queries>
 

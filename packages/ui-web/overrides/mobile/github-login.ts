@@ -13,7 +13,8 @@ import { native } from './tauri';
 type Method = 'browser' | 'app';
 
 const METHOD_KEY = 'cloudssh_login_method';
-const HINT_KEY = 'cloudssh_login_browser_hint';
+/** 说明改过一次（加了找不到按钮时的办法），换个键让它再显示一次 */
+const HINT_KEY = 'cloudssh_login_browser_hint_v2';
 
 function readMethod(): Method | null {
   try {
@@ -60,7 +61,8 @@ async function loginInBrowser(): Promise<void> {
   } catch (error) {
     const code = String(error);
     if (code === 'cancelled') {
-      notify(mt('loginCancelled'), { duration: 2000 });
+      // 多半是授权后没找到“完成登录”就切回来了：说清楚接下来怎么做
+      notify(mt('loginBrowserUnfinished'), { variant: 'warning', duration: 9000 });
     } else if (code === 'not_callback') {
       notify(mt('loginNotCallback'), { variant: 'warning' });
     } else if (code === 'no_browser') {

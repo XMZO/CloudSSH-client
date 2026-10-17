@@ -1,8 +1,13 @@
 package com.xmzo.cloudssh
 
+import android.app.ActivityOptions
 import android.app.PendingIntent
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -23,6 +28,7 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
@@ -42,6 +48,21 @@ private const val CRASH_LOOP_LIMIT = 3
 
 /** 用浏览器登录时，Custom Tab 底部“完成登录”发回本 Activity 的动作（浏览器会把当前页面地址放进 intent data） */
 private const val ACTION_AUTH_TAB_DONE = "com.xmzo.cloudssh.AUTH_TAB_DONE"
+
+/** Custom Tab 的工具栏、动作按钮、菜单项都支持完整的浏览器，按优先级 */
+private val AUTH_TAB_BROWSERS = listOf(
+  "com.android.chrome",
+  "com.chrome.beta",
+  "com.chrome.dev",
+  "com.chrome.canary",
+  "com.microsoft.emmx",
+  "com.sec.android.app.sbrowser",
+  "com.brave.browser",
+  "com.vivaldi.browser",
+)
+
+/** 剪贴板文字里的回调地址 */
+private val CALLBACK_IN_TEXT = Regex("""https?://[^\s"'<>]+/api/auth/callback\?[^\s"'<>]+""")
 
 class MainActivity : TauriActivity() {
   private val defaultBackground = Color.parseColor("#131313")
@@ -98,9 +119,20 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     raiseBackCallback()
-    // 从登录标签页回来却没点“完成登录”（返回键、关闭按钮）：当作取消。
+    // 从登录标签页回来却没点“完成登录”（返回键、关闭按钮、多任务切换）：等拿到窗口焦点后看看剪贴板里
+    // 有没有复制的回调地址（浏览器不显示“完成登录”时的兜底），没有就当作取消。
     // 点了“完成登录”时 onNewIntent 先于 onResume，已经交出结果
-    if (authTabLeft) finishAuthTab(null)
+    if (authTabLeft) {
+      authTabReturned = true
+      // 焦点迟迟不来（例如上面还盖着系统弹窗）也要结束等待
+      mainHandler.postDelayed({ if (authTabReturned) finishAuthTab(null) }, 2_000)
+    }
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    // Android 10 起要有窗口焦点才能读剪贴板
+    if (hasFocus && authTabReturned) finishAuthTab(callbackFromClipboard())
   }
 
   override fun onPause() {
@@ -119,21 +151,56 @@ class MainActivity : TauriActivity() {
   private var authTabResult: ((String?) -> Unit)? = null
   /** 标签页已经盖住本页面（之后回到本页面就说明标签页关了） */
   private var authTabLeft = false
+  /** 已经回到本页面，等窗口焦点去读剪贴板 */
+  private var authTabReturned = false
 
   /**
-   * 在系统浏览器的 Custom Tab 里打开登录页（passkey、密码管理器都能用），底部工具栏与菜单里有“完成登录”。
-   * 浏览器点击这类按钮时会把当前页面地址作为 intent data 发回来（singleTask：本 Activity 回到前台并关掉标签页）。
-   * 没有支持 Custom Tab 的浏览器时返回 false。
+   * 选浏览器。不少厂商浏览器打开 Custom Tab 时不显示自定义的工具栏和菜单项，用户会卡在授权后的页面上找不到
+   * “完成登录”。所以默认浏览器在支持完整的名单里才用它（它里面最可能已经登录了 GitHub）；否则用名单里已安装的
+   * 第一个；都没有再退回默认的 Custom Tab 浏览器，靠“复制链接后切回应用”兜底。
+   */
+  private fun authTabBrowser(): String? {
+    val default = CustomTabsClient.getPackageName(this, null)
+    if (default != null && default in AUTH_TAB_BROWSERS) return default
+    return CustomTabsClient.getPackageName(this, AUTH_TAB_BROWSERS, true) ?: default
+  }
+
+  /** 右上角的 ✓（工具栏动作按钮）：和底部工具栏、菜单项是同一个“完成登录”，哪个浏览器支持哪个都能用 */
+  private fun authDoneIcon(): Bitmap {
+    val size = (24 * resources.displayMetrics.density).toInt()
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    AppCompatResources.getDrawable(this, R.drawable.ic_auth_done)?.apply {
+      setBounds(0, 0, size, size)
+      draw(Canvas(bitmap))
+    }
+    return bitmap
+  }
+
+  /**
+   * 在系统浏览器的 Custom Tab 里打开登录页（passkey、密码管理器都能用），“完成登录”同时放在底部工具栏、
+   * 右上角按钮和菜单里。浏览器点击它们时会把当前页面地址作为 intent data 发回来（singleTask：本 Activity
+   * 回到前台并关掉标签页）。没有支持 Custom Tab 的浏览器时返回 false。
    */
   fun openAuthTab(url: String, onResult: (String?) -> Unit): Boolean {
-    val browser = CustomTabsClient.getPackageName(this, null) ?: return false
+    val browser = authTabBrowser() ?: return false
     finishAuthTab(null)
+    // Android 14 起，从后台拉起 Activity 的 PendingIntent 要声明允许：这里声明本应用这一方允许
+    // （浏览器作为发送方也会声明），否则部分系统上点了“完成登录”没有反应
+    val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      @Suppress("DEPRECATION")
+      ActivityOptions.makeBasic()
+        .setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+        .toBundle()
+    } else {
+      null
+    }
     val done = PendingIntent.getActivity(
       this,
       0,
       Intent(this, MainActivity::class.java).setAction(ACTION_AUTH_TAB_DONE),
       // 浏览器要把当前地址写进 intent data，必须可变；目标是显式的本 Activity
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+      options,
     )
     val colors = CustomTabColorSchemeParams.Builder()
       .setToolbarColor(defaultBackground)
@@ -144,13 +211,14 @@ class MainActivity : TauriActivity() {
       .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
       .setDefaultColorSchemeParams(colors)
       .setShowTitle(true)
-      .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
+      .setActionButton(authDoneIcon(), getString(R.string.auth_tab_done), done, true)
       .setSecondaryToolbarViews(RemoteViews(packageName, R.layout.auth_tab_toolbar), intArrayOf(R.id.auth_tab_done), done)
       .addMenuItem(getString(R.string.auth_tab_done), done)
       .build()
     tab.intent.setPackage(browser)
     authTabResult = onResult
     authTabLeft = false
+    authTabReturned = false
     return try {
       tab.launchUrl(this, Uri.parse(url))
       true
@@ -161,10 +229,23 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /**
+   * 浏览器里没有“完成登录”时的兜底：用户复制了地址栏里的回调地址再切回来。只取形如
+   * …/api/auth/callback?…code=…&state=… 的地址；是不是本实例、这次登录的回调由 Rust 再核对。
+   */
+  private fun callbackFromClipboard(): String? {
+    val clipboard = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
+    val description = clipboard.primaryClipDescription ?: return null
+    if (!description.hasMimeType("text/*") && !description.hasMimeType(ClipDescription.MIMETYPE_TEXT_URILIST)) return null
+    val text = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString() ?: return null
+    return CALLBACK_IN_TEXT.find(text)?.value?.takeIf { "code=" in it && "state=" in it }
+  }
+
   private fun finishAuthTab(url: String?) {
     val result = authTabResult ?: return
     authTabResult = null
     authTabLeft = false
+    authTabReturned = false
     result(url)
   }
 
