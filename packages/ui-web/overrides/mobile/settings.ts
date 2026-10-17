@@ -3,6 +3,7 @@
  * 实例与代理保存在 Rust 侧（settings.json），切换实例后整页重新加载。
  */
 import { notify } from '../../upstream/frontend/src/ui-feedback';
+import { skinSettingsSection } from './skin';
 import { tabCount } from '../sidebar/hooks';
 import { mt } from './i18n';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
@@ -272,6 +273,6 @@ export async function openSettings(): Promise<void> {
     .then((m: { upstreamVersion?: string }) => (uiVersion.textContent = mt('uiVersion', { v: m.upstreamVersion ?? '?' })))
     .catch(() => undefined);
 
-  body.append(instances, proxy, keep, storage, about);
+  body.append(skinSettingsSection(), instances, proxy, keep, storage, about);
   openSheet(mt('settings'), body, { tall: true });
 }

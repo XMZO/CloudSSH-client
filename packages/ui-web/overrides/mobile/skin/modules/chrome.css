@@ -1,0 +1,302 @@
+/* ========== 黑曜 · 紧凑终端栏（html[data-cs-mods~="chrome"]） ========== */
+
+/* 网页版的顶栏、标签栏、状态栏由一行紧凑栏取代（元素保留在页面里，按钮仍可被程序点击） */
+html[data-cs-mods~="chrome"] #terminal-section > .terminal-app-header,
+html[data-cs-mods~="chrome"] #terminal-section .cs-m-tabbar,
+html[data-cs-mods~="chrome"] #terminal-section #tab-bar,
+html[data-cs-mods~="chrome"] #terminal-section .terminal-status-bar {
+  display: none !important;
+}
+
+.cs-ob-bar {
+  position: relative;
+  z-index: 50;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: calc(54px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
+  background: var(--bg);
+  border-bottom: 1px solid var(--cs-hairline);
+  font-family: var(--font-ui);
+  transition: height 180ms ease;
+}
+
+.cs-ob-iconbtn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--on-surface-variant);
+}
+
+.cs-ob-iconbtn:active {
+  background: var(--bg-surface);
+  color: var(--on-surface);
+}
+
+.cs-ob-iconbtn.is-unavailable {
+  opacity: 0.38;
+}
+
+.cs-ob-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.cs-ob-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 6px 0 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  text-align: left;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cs-ob-title:active {
+  background: var(--bg-surface);
+}
+
+.cs-ob-title-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  will-change: transform;
+}
+
+.cs-ob-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-ob-sub {
+  overflow: hidden;
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-ob-sub[hidden] {
+  display: none;
+}
+
+.cs-ob-chevron {
+  flex: none;
+  font-size: 20px;
+  color: var(--text-dim);
+}
+
+.cs-ob-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.cs-ob-dot.is-connected {
+  background: var(--cs-ok);
+  box-shadow: 0 0 0 3px rgba(90, 211, 194, 0.16);
+}
+
+.cs-ob-dot.is-connecting {
+  background: var(--cs-warn);
+  animation: cs-ob-pulse 1.1s ease-in-out infinite;
+}
+
+.cs-ob-dot.is-disconnected {
+  background: var(--cs-bad);
+}
+
+@keyframes cs-ob-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 键盘弹出或横屏矮屏时压扁成一行，把空间留给终端 */
+html.mobile-keyboard-open .cs-ob-bar {
+  height: calc(42px + env(safe-area-inset-top));
+}
+
+html.mobile-keyboard-open .cs-ob-sub {
+  display: none;
+}
+
+html.mobile-keyboard-open .cs-ob-iconbtn {
+  height: 38px;
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .cs-ob-bar {
+    height: calc(40px + env(safe-area-inset-top));
+  }
+
+  .cs-ob-sub {
+    display: none;
+  }
+
+  .cs-ob-iconbtn,
+  .cs-ob-title {
+    height: 36px;
+  }
+}
+
+/* ---------- “更多”面板 ---------- */
+
+.cs-ob-more-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cs-ob-more-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 74px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--bg-surface);
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 12px;
+}
+
+.cs-ob-more-item:active {
+  background: var(--cs-surface-2);
+}
+
+.cs-ob-more-item .cs-ob-icon {
+  font-size: 24px;
+  color: var(--accent);
+}
+
+.cs-ob-more-label {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cs-ob-more-danger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--error-bg);
+  color: var(--error);
+  font: inherit;
+  font-weight: 600;
+}
+
+/* ---------- 字号调节 ---------- */
+
+.cs-ob-font {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 16px;
+  background: var(--bg-surface);
+}
+
+.cs-ob-font-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--on-surface);
+}
+
+.cs-ob-font-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.cs-ob-font-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--on-surface);
+}
+
+.cs-ob-font-btn:active {
+  background: var(--cs-surface-2);
+}
+
+.cs-ob-font-btn:disabled {
+  opacity: 0.3;
+}
+
+.cs-ob-font-value {
+  min-width: 28px;
+  font-family: var(--font-code);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.cs-ob-font-auto {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: 13px;
+}
+
+.cs-ob-font-auto.is-on {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}

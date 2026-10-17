@@ -1,0 +1,283 @@
+/* 设置页“界面主题”分区（两种主题下都会显示，颜色全部取主题变量） */
+
+.cs-ob-skin-section {
+  gap: 12px;
+}
+
+.cs-ob-theme-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cs-ob-theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--bg-surface);
+  color: var(--on-surface);
+  font: inherit;
+  text-align: left;
+}
+
+.cs-ob-theme-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.cs-ob-theme-preview {
+  position: relative;
+  display: block;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.cs-ob-theme-card.is-obsidian .cs-ob-theme-preview {
+  background: #0c0e12;
+}
+
+.cs-ob-theme-card.is-classic .cs-ob-theme-preview {
+  background: #0a0a0a;
+}
+
+.cs-ob-theme-preview-bar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  height: 10px;
+  border-radius: 5px;
+}
+
+.cs-ob-theme-preview-line {
+  position: absolute;
+  top: 26px;
+  left: 8px;
+  width: 60%;
+  height: 5px;
+  border-radius: 3px;
+}
+
+.cs-ob-theme-preview-line.is-short {
+  top: 36px;
+  width: 38%;
+}
+
+.cs-ob-theme-preview-key {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  height: 12px;
+  border-radius: 6px;
+}
+
+.cs-ob-theme-card.is-obsidian .cs-ob-theme-preview-bar {
+  background: #191d24;
+}
+
+.cs-ob-theme-card.is-obsidian .cs-ob-theme-preview-line {
+  background: #8c9eff;
+}
+
+.cs-ob-theme-card.is-obsidian .cs-ob-theme-preview-line.is-short {
+  background: #5ad3c2;
+}
+
+.cs-ob-theme-card.is-obsidian .cs-ob-theme-preview-key {
+  background: #1f242d;
+}
+
+.cs-ob-theme-card.is-classic .cs-ob-theme-preview-bar {
+  background: #131313;
+  border: 1px solid #3c4b36;
+  border-radius: 0;
+}
+
+.cs-ob-theme-card.is-classic .cs-ob-theme-preview-line {
+  background: #4af626;
+  border-radius: 0;
+}
+
+.cs-ob-theme-card.is-classic .cs-ob-theme-preview-line.is-short {
+  background: #14d1ff;
+}
+
+.cs-ob-theme-card.is-classic .cs-ob-theme-preview-key {
+  background: #121212;
+  border: 1px solid #3c4b36;
+  border-radius: 0;
+}
+
+.cs-ob-theme-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.cs-ob-theme-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.cs-ob-theme-desc {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+.cs-ob-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 16px;
+  background: var(--bg-surface);
+}
+
+.cs-ob-setting-label {
+  flex: 1;
+  font-size: 14px;
+}
+
+.cs-ob-accents {
+  display: flex;
+  gap: 8px;
+}
+
+.cs-ob-accent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--swatch);
+  color: #0c0e12;
+}
+
+.cs-ob-accent[aria-checked="true"] {
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--swatch);
+}
+
+.cs-ob-accent .cs-ob-icon {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cs-ob-skin-section .cs-ob-font {
+  margin-top: 0;
+}
+
+.cs-ob-modules-title {
+  margin-top: 6px;
+}
+
+.cs-ob-modules {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--bg-surface);
+}
+
+.cs-ob-module {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-ob-module:last-child {
+  border-bottom: 0;
+}
+
+.cs-ob-module-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cs-ob-module-title {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.cs-ob-module-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+/* 开关 */
+.cs-ob-switch {
+  position: relative;
+  flex: none;
+  width: 46px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background-image: none;
+  box-shadow: none;
+  outline: none;
+  border-radius: 999px;
+  background: var(--surface-dot);
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.cs-ob-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.cs-ob-switch:checked,
+.cs-ob-switch:checked:focus,
+.cs-ob-switch:checked:hover {
+  background: var(--accent);
+}
+
+.cs-ob-switch:focus {
+  box-shadow: none;
+  outline: none;
+}
+
+.cs-ob-switch:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.cs-ob-switch:checked::after {
+  transform: translateX(18px);
+}
+
+.cs-ob-reset {
+  margin-top: 2px;
+}

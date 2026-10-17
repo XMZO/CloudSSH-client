@@ -41,7 +41,8 @@ function groupsPage(body: HTMLElement): void {
     item.setAttribute('role', 'button');
     item.tabIndex = 0;
     const text = el('span', 'cs-m-sort-text');
-    text.append(el('span', 'cs-m-sort-name', group.label), el('span', 'cs-m-sort-sub', mt('sortGroupCount', { n: group.servers.length })));
+    const count = group.servers.length === 1 ? mt('sortGroupCountOne') : mt('sortGroupCount', { n: group.servers.length });
+    text.append(el('span', 'cs-m-sort-name', group.label), el('span', 'cs-m-sort-sub', count));
     item.append(icon('folder'), text, icon('chevron_right'), handle());
     item.addEventListener('click', () => serversPage(body, group));
     list.append(item);

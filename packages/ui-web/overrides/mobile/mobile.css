@@ -67,6 +67,12 @@ html.cs-nodes-on .cs-m-nodes {
   padding: 0;
 }
 
+/* Tailwind 表单插件会给获得焦点的输入框加一圈蓝色 ring；外框已经用强调色表示焦点 */
+.cs-m-search input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
 .cs-m-iconbtn {
   display: inline-flex;
   align-items: center;
@@ -189,6 +195,13 @@ html.cs-nodes-on .cs-m-nodes {
 
 .cs-m-row-item > .cs-m-icon {
   color: var(--on-surface-variant);
+}
+
+/* 系统图标只在黑曜主题的节点首页显示 */
+.cs-m-avatar .cs-m-os {
+  display: none;
+  align-items: center;
+  justify-content: center;
 }
 
 .cs-m-avatar {
@@ -389,6 +402,7 @@ html.cs-nodes-on .cs-m-nodes {
 .cs-m-input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: none;
 }
 
 .cs-m-hint {

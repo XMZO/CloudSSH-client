@@ -3,11 +3,24 @@
  * 这些都是上游的私有实现细节：每个调用都做存在性检查，找不到就返回 false 让侧栏降级。
  */
 
+interface TerminalLike {
+  insertSnippet?: (command: string, run: boolean) => boolean;
+  focus?: () => void;
+  blur?: () => void;
+}
+
 interface TabInfoLike {
   id: string;
   label?: string;
   state?: 'connecting' | 'connected' | 'disconnected' | string;
   hostInfo?: { host: string; port: number; username?: string; serverId?: number };
+  wsLatency?: number;
+  cfLatency?: number;
+  /** 会话就绪后才创建（SFTP 需要 Shell 就绪） */
+  sftpPanel?: unknown;
+  /** 仅登录用户且 Agent 可用时创建 */
+  agentPanel?: unknown;
+  terminal?: TerminalLike;
 }
 
 interface ServerListLike {
@@ -114,6 +127,10 @@ export function listTabs(): TabInfo[] {
 
 export function activeTabId(): string | null {
   return tabManager()?.getActiveTab?.()?.id ?? null;
+}
+
+export function activeTab(): TabInfo | null {
+  return tabManager()?.getActiveTab?.() ?? null;
 }
 
 /** 切到指定标签；在服务器列表页时同时切回终端视图 */

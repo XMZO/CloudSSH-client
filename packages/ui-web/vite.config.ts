@@ -144,6 +144,26 @@ const MOBILE_HOOKS: Hook[] = [
     anchor: '      url.origin === window.location.origin ||\n',
     inject: '      (globalThis as any).__cloudsshIsInstanceWs?.(url) === true ||\n',
   },
+  {
+    // 黑曜主题的终端字号设置：有覆盖值时优先使用（经典主题不设置该全局，行为不变）
+    file: '/upstream/frontend/src/terminal-layout.ts',
+    anchor: 'export function resolveTerminalFontSize(viewportWidth: number, coarsePointer: boolean): number {\n',
+    inject:
+      "  const override = (globalThis as any).__cloudsshTerminalFontSize;\n  if (typeof override === 'number' && override >= 8 && override <= 24) return override;\n",
+  },
+  {
+    // 半屏面板模式下打开命令面板不自动聚焦搜索框（手机上会立刻弹出键盘挡住面板）。注入一个条件让下一行的 focus 按需跳过
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor:
+      "    window.addEventListener('keydown', this.keydownHandler);\n\n    const searchInput = document.getElementById('snippet-search-input') as HTMLInputElement | null;\n",
+    inject: '    if ((globalThis as any).__cloudsshNoSnippetAutofocus !== true)\n',
+  },
+  {
+    // 同理，半屏面板模式下打开 AI 助手不自动聚焦输入框，点输入框时才弹键盘
+    file: '/upstream/frontend/src/agent/agent-panel.ts',
+    anchor: "    document.body.classList.add('agent-panel-open');\n",
+    inject: '    if ((globalThis as any).__cloudsshNoAgentAutofocus !== true)\n',
+  },
 ];
 
 function extensionHooks(target: Target): Plugin {

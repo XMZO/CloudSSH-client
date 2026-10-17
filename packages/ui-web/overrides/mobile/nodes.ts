@@ -9,6 +9,7 @@
 import { groupServersByTag, serverInitial, type ServerConfig } from '@cloudssh/core';
 import { copyTextToClipboard } from '../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../upstream/frontend/src/host-display';
+import { osIconSvg } from '../../upstream/frontend/src/os-icons';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import {
   activeServerId,
@@ -61,11 +62,11 @@ searchInput.type = 'search';
 searchInput.enterKeyHint = 'search';
 searchInput.autocomplete = 'off';
 search.append(icon('search'), searchInput);
-const settingsButton = el('button', 'cs-m-iconbtn');
+const settingsButton = el('button', 'cs-m-iconbtn cs-m-settings-btn');
 settingsButton.type = 'button';
 settingsButton.append(icon('tune'));
 settingsButton.addEventListener('click', () => openSettings());
-const reorderButton = el('button', 'cs-m-iconbtn');
+const reorderButton = el('button', 'cs-m-iconbtn cs-m-reorder-btn');
 reorderButton.type = 'button';
 reorderButton.append(icon('swap_vert'));
 reorderButton.addEventListener('click', () => openReorderSheet());
@@ -86,12 +87,37 @@ function hostLabel(server: ServerConfig): string {
   return `${server.username}@${maskIPAddress(server.host) ?? server.host}`;
 }
 
+/** 首字母头像；识别出系统时附带品牌图标（经典主题隐藏，黑曜主题显示，见 hosts.css） */
+const osIconCache = new Map<string, SVGElement | null>();
+function osIcon(os: string): SVGElement | null {
+  if (!osIconCache.has(os)) {
+    const markup = osIconSvg(os);
+    const svg = markup ? new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement : null;
+    osIconCache.set(os, svg instanceof SVGElement ? svg : null);
+  }
+  const cached = osIconCache.get(os);
+  return cached ? (cached.cloneNode(true) as SVGElement) : null;
+}
+
+function renderAvatar(server: ServerConfig): HTMLElement {
+  const avatar = el('span', 'cs-m-avatar');
+  avatar.append(el('span', 'cs-m-avatar-initial', serverInitial(server.name)));
+  const svg = server.os ? osIcon(server.os) : null;
+  if (svg) {
+    const wrap = el('span', 'cs-m-os');
+    wrap.append(svg);
+    avatar.append(wrap);
+    avatar.classList.add('has-os');
+  }
+  return avatar;
+}
+
 function renderRow(server: ServerConfig, sessions: Map<number, string[]>, activeId: number | null): HTMLElement {
   const row = el('button', 'cs-m-row-item');
   row.type = 'button';
   row.dataset.id = String(server.id);
   if (server.id === activeId) row.classList.add('is-active');
-  const avatar = el('span', 'cs-m-avatar', serverInitial(server.name));
+  const avatar = renderAvatar(server);
   const text = el('span', 'cs-m-row-text');
   text.append(el('span', 'cs-m-row-name', server.name), el('span', 'cs-m-row-sub', hostLabel(server)));
   row.append(avatar, text);
@@ -127,7 +153,7 @@ function render(): void {
   const activeId = activeServerId();
   const tabs = tabCount();
   banner.hidden = tabs === 0;
-  banner.replaceChildren(icon('terminal'), el('span', '', mt('sessionsBanner', { n: tabs })), el('span', 'cs-m-banner-go', mt('backToTerminal')), icon('arrow_forward'));
+  banner.replaceChildren(icon('terminal'), el('span', '', mt(tabs === 1 ? 'sessionsBannerOne' : 'sessionsBanner', { n: tabs })), el('span', 'cs-m-banner-go', mt('backToTerminal')), icon('arrow_forward'));
 
   const fragment = document.createDocumentFragment();
   if (!state.query) {

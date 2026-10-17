@@ -37,6 +37,7 @@ delete
 deployed_code
 description
 dns
+dock
 download
 draft
 drag_indicator
@@ -89,6 +90,7 @@ message
 mobile
 mode
 monitoring
+more
 more_vert
 mouse
 movie
@@ -136,11 +138,15 @@ storage
 style
 swap_horiz
 swap_vert
+switch
 tab
 target
 terminal
+text_decrease
+text_increase
 title
 today
+toolbar
 trending_up
 tune
 upload

@@ -13,6 +13,8 @@ import { installFetchObserver } from '../sidebar/store';
 import { mt } from './i18n';
 import './mobile.css';
 import { mountNodes } from './nodes';
+import { closePanel, panelIsOpen } from './skin/panels';
+import { startSkin } from './skin';
 import { keepAliveEnabled } from './settings';
 import { closeSheet, isSheetOpen } from './sheet';
 import { mountTabs } from './tabs';
@@ -28,7 +30,14 @@ function isShown(node: Element | null): node is HTMLElement {
   const style = getComputedStyle(node);
   if (style.display === 'none' || style.visibility === 'hidden') return false;
   const rect = node.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0 && rect.left < innerWidth - 4 && rect.right > 4;
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    rect.left < innerWidth - 4 &&
+    rect.right > 4 &&
+    rect.top < innerHeight - 4 &&
+    rect.bottom > 4
+  );
 }
 
 /** 关闭最上层浮层；有可关闭的返回 true。复用网页版自己的 Escape 处理。 */
@@ -52,11 +61,13 @@ function closeTopOverlay(): boolean {
     document.querySelector<HTMLElement>('[aria-controls="mobile-more-menu"]')?.click();
     return true;
   }
+  // 每个会话各有一个同 id 的 SFTP / AI 助手面板，必须逐个检查；开关状态以网页版写入的样式为准
   for (const id of ['snippet-panel', 'agent-panel', 'sftp-panel']) {
-    const panel = document.getElementById(id);
-    if (isShown(panel)) {
-      pressEscape(panel);
-      return true;
+    for (const panel of document.querySelectorAll<HTMLElement>(`[id="${id}"]`)) {
+      if (panelIsOpen(panel) && isShown(panel)) {
+        closePanel(panel);
+        return true;
+      }
     }
   }
   return false;
@@ -148,6 +159,7 @@ if (isTauri()) {
   const start = () => {
     mountNodes();
     mountTabs();
+    startSkin();
     installKeepAlive();
     installSystemBars();
     installDownloadNotices();

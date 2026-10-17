@@ -1,0 +1,280 @@
+/* ========== 黑曜 · 节点首页（html[data-cs-mods~="hosts"]） ========== */
+
+html[data-cs-mods~="hosts"] #user-space-section {
+  background: var(--bg);
+}
+
+html[data-cs-mods~="hosts"] #user-space-section .user-space-header {
+  height: calc(52px + env(safe-area-inset-top));
+  min-height: calc(52px + env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(6px, env(safe-area-inset-right));
+  gap: 4px;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+}
+
+html[data-cs-mods~="hosts"] #user-space-logo {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+html[data-cs-mods~="hosts"] .user-space-brand {
+  flex: 1;
+}
+
+.cs-ob-header-btn,
+html[data-cs-mods~="hosts"] #user-space-more-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--on-surface-variant);
+}
+
+.cs-ob-header-btn:active,
+html[data-cs-mods~="hosts"] #user-space-more-btn:active {
+  background: var(--bg-surface);
+}
+
+/* 网页版的“服务器列表”标题行、页脚在新布局里由大标题和底部栏取代 */
+html[data-cs-mods~="hosts"].cs-nodes-on .server-list-toolbar,
+html[data-cs-mods~="hosts"] #user-space-section .user-space-footer {
+  display: none !important;
+}
+
+html[data-cs-mods~="hosts"].cs-nodes-on #user-space-section .user-space-main {
+  padding: 0 14px calc(108px + env(safe-area-inset-bottom));
+  scrollbar-width: none;
+}
+
+/* 浮动的“回到终端”胶囊出现时再多留出它的高度，滚到底时最后一行不被挡住 */
+html[data-cs-mods~="hosts"].cs-nodes-on #user-space-section .user-space-main:has(.cs-m-banner:not([hidden])) {
+  padding-bottom: calc(156px + env(safe-area-inset-bottom));
+}
+
+html[data-cs-mods~="hosts"].cs-nodes-on #user-space-section .user-space-main::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-cs-mods~="hosts"] #user-space-section .scanlines {
+  display: none;
+}
+
+.cs-ob-hosts-head {
+  padding: 4px 4px 10px;
+}
+
+.cs-ob-hosts-title {
+  margin: 0;
+  font: 700 30px/1.15 var(--font-ui);
+  letter-spacing: -0.01em;
+  color: var(--on-surface);
+}
+
+.cs-ob-hosts-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---- 底部浮动操作栏：搜索 + 排序 + 添加，单手可达 ---- */
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar {
+  position: fixed;
+  top: auto;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 40;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 22px;
+  background: var(--bg-elevated);
+  background: color-mix(in srgb, var(--bg-elevated) 90%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: var(--cs-shadow);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-m-search {
+  height: 46px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--bg);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-m-search:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-m-iconbtn {
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--bg);
+  color: var(--on-surface-variant);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-m-settings-btn {
+  display: none;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-ob-add {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-nodes-bar .cs-ob-add:active {
+  background: var(--accent);
+  color: var(--on-accent);
+  filter: brightness(0.92);
+}
+
+/* ---- 浮动的“回到终端”胶囊 ---- */
+
+html[data-cs-mods~="hosts"] .cs-m-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(86px + env(safe-area-inset-bottom));
+  z-index: 41;
+  width: auto;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 10px 14px 10px 12px;
+  gap: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  box-shadow: 0 10px 26px var(--accent-glow), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-banner-go {
+  margin-left: 4px;
+  opacity: 0.75;
+}
+
+html[data-cs-mods~="hosts"].mobile-keyboard-open .cs-m-banner {
+  display: none;
+}
+
+/* ---- 分组与节点 ---- */
+
+html[data-cs-mods~="hosts"] .cs-m-group {
+  margin-top: 16px;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-group-header {
+  min-height: 34px;
+  padding: 0 6px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-group-count {
+  display: inline-flex;
+  min-width: 24px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-group-body {
+  border: 1px solid var(--cs-hairline);
+  border-radius: 18px;
+  background: var(--bg-surface);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-row-item {
+  min-height: 66px;
+  gap: 14px;
+  padding: 10px 10px 10px 14px;
+  border-bottom-color: var(--cs-hairline);
+  transition: background-color 120ms ease;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-row-item:active {
+  background: var(--cs-surface-2);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-row-item.is-active {
+  background: var(--accent-bg);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--cs-surface-2);
+  color: var(--on-surface);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 识别出系统时显示品牌图标（浅色底，深色品牌标志也看得清） */
+html[data-cs-mods~="hosts"] .cs-m-avatar .cs-m-os {
+  display: inline-flex;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-avatar.has-os {
+  background: #e6eaf1;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-avatar.has-os .cs-m-avatar-initial {
+  display: none;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-row-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-row-sub {
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-row-item > .cs-m-icon {
+  color: var(--text-dim);
+}
+
+html[data-cs-mods~="hosts"] .cs-m-badge {
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+html[data-cs-mods~="hosts"] .cs-m-empty {
+  padding: 40px 12px;
+  color: var(--text-muted);
+}

@@ -1,0 +1,118 @@
+/* ========== 黑曜 · 半屏面板（html[data-cs-mods~="sheets"]） ==========
+   需要 ID 级特异性才能压过网页版移动端对 #sftp-panel 等写的 !important 尺寸，
+   所以统一用 :is(#sftp-panel, #snippet-panel, #agent-panel) 起头。 */
+
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet {
+  --cs-sheet-full: calc(var(--visual-viewport-height) - 10px);
+  --cs-sheet-half: min(var(--cs-sheet-full), max(340px, calc(var(--visual-viewport-height) * 0.58)));
+  position: fixed !important;
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: var(--cs-sheet-half) !important;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  overflow: hidden;
+  border: 0 !important;
+  border-radius: 22px 22px 0 0;
+  background: var(--bg-surface);
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.5);
+  transform: translateY(calc(100% + 48px)) !important;
+  transition:
+    transform 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    height 280ms cubic-bezier(0.32, 0.72, 0, 1) !important;
+  will-change: transform;
+}
+
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet[data-cs-detent="full"],
+html[data-cs-mods~="sheets"].mobile-keyboard-open :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet {
+  height: var(--cs-sheet-full) !important;
+}
+
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet[data-cs-open="1"] {
+  transform: translateY(var(--cs-sheet-drag, 0px)) !important;
+}
+
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet.is-dragging {
+  transition: none !important;
+}
+
+/* SFTP 与 AI 助手面板里只有一层内容外框：去掉抽屉的左边线，并跟随面板圆角。
+   命令面板的标题、搜索、分类、列表都是面板的直接子元素，不能一并加圆角裁剪
+   （多层圆角裁剪既没必要，也会让部分 GPU 合成路径出问题）。 */
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #agent-panel).cs-ob-sheet > div:not(.cs-ob-sheet-grabber) {
+  border: 0 !important;
+  border-radius: inherit;
+  background: var(--bg-surface);
+}
+
+/* 标题栏让出把手的位置，同时作为拖动区域 */
+html[data-cs-mods~="sheets"] .cs-ob-sheet :is(.sftp-panel-header, .agent-panel-header) {
+  height: auto !important;
+  min-height: 60px !important;
+  padding-top: 16px !important;
+  border-bottom-color: var(--cs-hairline) !important;
+  background: var(--bg-surface) !important;
+  touch-action: none;
+}
+
+.cs-ob-sheet-grabber {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  width: 140px;
+  height: 24px;
+  padding-top: 8px;
+  transform: translateX(-50%);
+  touch-action: none;
+  cursor: grab;
+}
+
+.cs-ob-sheet-grabber::before {
+  content: "";
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+/* 网页版命令面板自带的全屏遮罩在面板模式下不再需要，由统一遮罩代替 */
+html[data-cs-mods~="sheets"] #snippet-panel-backdrop {
+  display: none !important;
+}
+
+.cs-ob-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  /* 实际层级由 sheets.ts 设为“最上层面板 - 1” */
+  z-index: 84;
+  background: rgba(4, 6, 10, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 260ms ease;
+}
+
+.cs-ob-sheet-backdrop.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet,
+  .cs-ob-sheet-backdrop {
+    transition: none !important;
+  }
+}
+
+/* 关闭“流畅动画”模块时面板直接出现/消失 */
+html[data-cs-skin="obsidian"]:not([data-cs-mods~="motion"]) :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet,
+html[data-cs-skin="obsidian"]:not([data-cs-mods~="motion"]) .cs-ob-sheet-backdrop {
+  transition: none !important;
+}

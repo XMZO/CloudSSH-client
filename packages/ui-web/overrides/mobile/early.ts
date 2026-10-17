@@ -6,6 +6,8 @@
  * Rust 按实例保存 Cookie、补上 Origin，所以网页版代码与 Worker 都不用改。
  * 同时接管 blob 下载与剪贴板（WebView 自己做不到）。
  */
+import { paletteCss } from './skin/palette-data';
+import { applySkinAttributes, loadSkinState } from './skin/state';
 import { Channel, isTauri, native, type MobileState, type WsEvent } from './tauri';
 
 declare global {
@@ -14,8 +16,18 @@ declare global {
   }
 }
 
+/** 界面主题：在网页版脚本运行前写好 html 属性与配色变量，启动时不会先闪一下旧界面 */
+function installSkinEarly(): void {
+  const style = document.createElement('style');
+  style.id = 'cs-skin-palette';
+  style.textContent = paletteCss();
+  document.head.append(style);
+  applySkinAttributes(loadSkinState());
+}
+
 function install(): void {
   document.documentElement.dataset.cloudsshClient = 'mobile';
+  installSkinEarly();
 
   // ---------- 实例状态（异步加载，供 WebSocket 地址判断等使用） ----------
   const mobile: { ready: Promise<MobileState>; state: MobileState | null } = { ready: native.state(), state: null };

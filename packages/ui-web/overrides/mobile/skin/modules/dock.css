@@ -1,0 +1,54 @@
+/* ========== 黑曜 · 按键栏（html[data-cs-mods~="dock"]） ========== */
+
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar {
+  min-height: 54px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--cs-hairline);
+}
+
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll {
+  gap: 6px;
+  padding: 7px max(8px, env(safe-area-inset-right)) 7px 8px;
+}
+
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll button {
+  min-width: 46px;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--on-surface);
+  font: 600 13px/1 var(--font-code);
+  box-shadow:
+    inset 0 -2px 0 rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition:
+    transform 90ms ease,
+    background-color 90ms ease;
+}
+
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll button:active {
+  background: var(--cs-surface-2);
+  transform: translateY(1px) scale(0.96);
+}
+
+/* Ctrl / Alt 锁定、复制模式开启 */
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll button.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px var(--accent-glow);
+}
+
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar .material-symbols-outlined {
+  font-size: 20px;
+}
+
+html[data-cs-mods~="dock"] #mobile-terminal-toolbar .cs-ob-cmds-toggle {
+  height: 40px;
+  margin-top: 7px;
+  margin-bottom: 7px;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+}

@@ -1,0 +1,177 @@
+/* ========== 黑曜主题 · 基础样式（html[data-cs-skin="obsidian"]） ==========
+   颜色变量由 palette-data.ts 生成（early.ts 注入，带 !important）；这里只写与布局模块无关的通用外观。 */
+
+html[data-cs-skin="obsidian"] body {
+  background: var(--bg);
+  font-family: var(--font-ui);
+}
+
+/* 黑曜自带配色：网页版的主题切换入口隐藏，统一在“设置 → 界面主题”里调整 */
+html[data-cs-skin="obsidian"] :is(.mobile-more-theme-row, #user-theme-selector, #user-theme-segmented-container, #theme-selector) {
+  display: none !important;
+}
+
+/* CRT 扫描线类特效与黑曜风格不搭 */
+html[data-cs-skin="obsidian"] :is(#terminal-section .scanline, #user-space-section .scanlines) {
+  display: none !important;
+}
+
+/* ---------- 终端区域：去掉边框与内衬，字符尽量贴边 ---------- */
+
+html[data-cs-skin="obsidian"] #terminal-section {
+  background: var(--bg);
+}
+
+html[data-cs-skin="obsidian"] #terminal-section .terminal-main {
+  padding: 0 !important;
+  background: var(--bg);
+}
+
+html[data-cs-skin="obsidian"] #terminal-wrapper {
+  padding: 6px 6px 2px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--bg) !important;
+}
+
+/* 网页版终端页底部的版权/文档链接页脚在手机应用里没有意义，横屏时还会挤掉一行终端 */
+html[data-cs-skin="obsidian"] #terminal-section .terminal-footer {
+  display: none !important;
+}
+
+/* ---------- 通用底部面板（设置、操作菜单、确认框） ---------- */
+
+html[data-cs-skin="obsidian"] .cs-m-sheet-backdrop {
+  background: rgba(4, 6, 10, 0.55);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-sheet {
+  padding: 6px 16px calc(18px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--bg-elevated);
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.5);
+}
+
+html[data-cs-skin="obsidian"][data-cs-mods~="motion"] .cs-m-sheet {
+  transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-sheet-handle {
+  width: 40px;
+  height: 5px;
+  margin: 4px auto 12px;
+  border-radius: 3px;
+}
+
+html[data-cs-skin="obsidian"] .cs-m-sheet-title {
+  margin: 0 2px 14px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-actions {
+  gap: 6px;
+}
+
+html[data-cs-skin="obsidian"] .cs-m-action {
+  min-height: 52px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: var(--bg-surface);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-action .cs-m-icon {
+  color: var(--accent);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-action:active {
+  background: var(--cs-surface-2);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-action.is-cancel {
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+/* ---------- 表单 ---------- */
+
+html[data-cs-skin="obsidian"] .cs-m-section {
+  gap: 10px;
+}
+
+html[data-cs-skin="obsidian"] .cs-m-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-input {
+  min-height: 46px;
+  border-color: var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-btn {
+  min-height: 46px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--bg-surface);
+  font-weight: 600;
+}
+
+html[data-cs-skin="obsidian"] .cs-m-btn.is-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-btn.is-danger {
+  border: 0;
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-sort-item {
+  border-color: var(--cs-hairline);
+  border-radius: 16px;
+  background: var(--bg-surface);
+}
+
+/* 会话列表：当前会话用强调色描边，连接状态点与终端栏一致 */
+html[data-cs-skin="obsidian"] .cs-m-session.is-current {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-session.is-current .cs-m-sort-name {
+  color: var(--accent);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-session-dot.is-connected {
+  background: var(--cs-ok);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-session-dot.is-connecting {
+  background: var(--cs-warn);
+}
+
+/* ---------- 经典主题留下的紧凑标签栏（关闭“紧凑终端栏”模块时仍会用到） ---------- */
+
+html[data-cs-skin="obsidian"] #tab-bar {
+  background: var(--bg);
+  border-bottom-color: var(--cs-hairline);
+}
+
+html[data-cs-skin="obsidian"] #tab-bar .tab-item.active {
+  background: var(--bg-surface);
+  border-color: var(--cs-hairline);
+}

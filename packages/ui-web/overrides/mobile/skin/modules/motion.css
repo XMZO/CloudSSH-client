@@ -1,0 +1,60 @@
+/* ========== 黑曜 · 流畅动画（html[data-cs-mods~="motion"]） ==========
+   终端页（#terminal-section）本身不做位移：网页版在里面放了 position:fixed 的元素，
+   祖先带 transform 会改变它们的定位参照。所以只动终端栏与终端内容。 */
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-cs-mods~="motion"] #user-space-section:not(.hidden) {
+    animation: cs-ob-page-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  }
+
+  html[data-cs-mods~="motion"] #terminal-section:not(.hidden) .cs-ob-bar {
+    animation: cs-ob-bar-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  }
+
+  html[data-cs-mods~="motion"] #terminal-section:not(.hidden) .terminal-main {
+    animation: cs-ob-fade-in 320ms ease-out backwards;
+  }
+
+  html[data-cs-mods~="motion"] :is(.cs-ob-iconbtn, .cs-ob-title, .cs-ob-more-item, .cs-m-iconbtn, .cs-m-row-item, .cs-m-banner, .cs-m-action) {
+    transition:
+      transform 120ms ease,
+      background-color 120ms ease;
+  }
+
+  html[data-cs-mods~="motion"] :is(.cs-ob-iconbtn, .cs-ob-more-item, .cs-m-iconbtn, .cs-m-action):active {
+    transform: scale(0.95);
+  }
+
+  html[data-cs-mods~="motion"] :is(.cs-ob-title, .cs-m-row-item):active {
+    transform: scale(0.985);
+  }
+
+  /* 浮动胶囊本身带 translateX(-50%) 居中，按压时保留 */
+  html[data-cs-mods~="motion"][data-cs-mods~="hosts"] .cs-m-banner:active {
+    transform: translateX(-50%) scale(0.96);
+  }
+
+  html[data-cs-mods~="motion"] .cs-m-group-body {
+    animation: cs-ob-fade-in 220ms ease-out backwards;
+  }
+}
+
+@keyframes cs-ob-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+@keyframes cs-ob-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes cs-ob-fade-in {
+  from {
+    opacity: 0;
+  }
+}
