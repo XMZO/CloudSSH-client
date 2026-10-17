@@ -1,6 +1,6 @@
 /**
  * 移动端界面功能（在网页版之后执行）：
- * - 节点分组首页（nodes.ts）与设置面板（settings.ts）
+ * - 节点分组首页（nodes.ts）与设置面板（settings.ts），匿名连接页的设置入口（auth-entry.ts）
  * - 返回键：关闭最上层浮层 → 终端回到节点页 → 退到后台（保持会话）
  * - 后台保活：有会话时让 Android 前台服务保持连接
  * - 登录结果、下载结果提示
@@ -14,6 +14,7 @@ import { installLanguagePicker, type LanguageMenu } from '../shared/language-pic
 import { installTerminalEnhancements } from '../shared/terminal';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
+import { mountAuthSettings } from './auth-entry';
 import { mt } from './i18n';
 import './mobile.css';
 import { mountNodes } from './nodes';
@@ -180,6 +181,7 @@ if (isTauri()) {
   installFetchObserver();
   const start = () => {
     mountNodes();
+    mountAuthSettings();
     mountTabs();
     startSkin();
     installLanguagePicker(sheetLanguageMenu);

@@ -4,6 +4,7 @@
  *
  *   node scripts/mock-worker.mjs [端口，默认 8788]
  *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist   # 同时托管构建好的界面，浏览器直接打开调试
+ *   node scripts/mock-worker.mjs 8788 --anon                       # 未登录（匿名连接页）
  *
  * 客户端把实例地址设为 http://127.0.0.1:8788（安卓模拟器可配合 adb reverse tcp:8788 tcp:8788）。
  * 带 --ui 时，非 /api 的 GET 请求返回该目录下的文件（找不到就返回 index.html），浏览器打开 http://127.0.0.1:8788 即可。
@@ -19,6 +20,7 @@ const args = process.argv.slice(2);
 const port = Number(args.find((arg) => /^\d+$/.test(arg)) ?? 8788);
 const uiArg = args.indexOf('--ui');
 const uiDir = uiArg >= 0 && args[uiArg + 1] ? nodePath.resolve(args[uiArg + 1]) : null;
+const anonymous = args.includes('--anon');
 const now = Date.now();
 
 // ---------- 数据 ----------
@@ -104,7 +106,10 @@ async function handleHttp(req, res) {
   console.log(method, path);
 
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sharingEnabled: false });
-  if (path === '/api/auth/me') return json(res, 200, { id: 1, github_id: 1, username: 'tester', avatar_url: null });
+  if (path === '/api/auth/me') {
+    if (anonymous) return json(res, 401, { error: 'Unauthorized' });
+    return json(res, 200, { id: 1, github_id: 1, username: 'tester', avatar_url: null });
+  }
   if (path === '/api/servers' && method === 'GET') return json(res, 200, servers);
   if (path === '/api/health') return json(res, 200, { ok: true });
   if (path === '/api/known-hosts' && method === 'GET') return json(res, 200, []);

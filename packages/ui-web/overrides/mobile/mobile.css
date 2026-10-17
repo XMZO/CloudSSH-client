@@ -734,3 +734,34 @@ html.cs-nodes-on .cs-m-nodes {
   justify-content: center;
   gap: 6px;
 }
+
+/* ---------- 匿名连接页右上角的设置入口（与节点页标题栏的设置按钮同一位置） ---------- */
+
+.cs-m-auth-settings {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  color: var(--on-surface-variant);
+}
+
+.cs-m-auth-settings:active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+html[data-cs-skin="obsidian"] .cs-m-auth-settings {
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-surface);
+}
