@@ -354,39 +354,6 @@ html.cs-nodes-on .cs-m-nodes {
   color: var(--error);
 }
 
-/* 三选一（例如“关闭会话前确认”） */
-.cs-m-choice {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--bg);
-}
-
-.cs-m-choice-item {
-  min-height: 40px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--on-surface-variant);
-  font: inherit;
-  font-size: 13px;
-}
-
-.cs-m-choice-item.is-on {
-  background: var(--accent-bg);
-  color: var(--accent);
-  font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.cs-m-choice + .cs-m-hint {
-  margin-top: 8px;
-}
-
 /* 当前选中的一项（例如当前语言） */
 .cs-m-action.is-current {
   color: var(--accent);
@@ -408,18 +375,6 @@ html.cs-nodes-on .cs-m-nodes {
 .cs-m-form {
   display: grid;
   gap: 16px;
-}
-
-.cs-m-section {
-  display: grid;
-  gap: 8px;
-}
-
-.cs-m-section-title {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: var(--on-surface-variant);
 }
 
 .cs-m-field {
@@ -474,15 +429,6 @@ html.cs-nodes-on .cs-m-nodes {
   flex: 1;
 }
 
-.cs-m-inline {
-  display: flex;
-  gap: 8px;
-}
-
-.cs-m-inline .cs-m-input {
-  flex: 1;
-}
-
 .cs-m-btn {
   min-height: 44px;
   padding: 0 14px;
@@ -504,50 +450,6 @@ html.cs-nodes-on .cs-m-nodes {
 .cs-m-btn.is-danger {
   border-color: var(--error);
   color: var(--error);
-}
-
-.cs-m-instance {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.cs-m-instance-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  border: 0;
-  background: transparent;
-  color: var(--on-surface);
-  font: inherit;
-  text-align: left;
-}
-
-.cs-m-instance-main > .cs-m-icon {
-  color: var(--accent);
-}
-
-.cs-m-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--on-surface-variant);
-}
-
-.cs-m-switch input {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  accent-color: var(--accent);
-  /* Tailwind forms 插件把复选框改成 appearance:none，选中底色取 currentColor */
-  color: var(--accent);
-  border-radius: 6px;
 }
 
 .cs-m-confirm-text {

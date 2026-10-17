@@ -108,17 +108,6 @@ html[data-cs-skin="obsidian"] .cs-m-action.is-cancel {
 
 /* ---------- 表单 ---------- */
 
-html[data-cs-skin="obsidian"] .cs-m-section {
-  gap: 10px;
-}
-
-html[data-cs-skin="obsidian"] .cs-m-section-title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
 html[data-cs-skin="obsidian"] .cs-m-input {
   min-height: 46px;
   border-color: var(--border-strong);

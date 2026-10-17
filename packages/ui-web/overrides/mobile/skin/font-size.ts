@@ -1,12 +1,15 @@
-/** 终端字号调节（“更多”面板与设置页共用）：A− / 当前值 / A+ / 自动 */
+/**
+ * 终端字号调节（“更多”面板与设置页共用）：A− / 当前值 / A+ / 自动。
+ * withLabel 为 false 时只返回控件本身（设置页的行自己带标题）。
+ */
 import { currentTerminalFontSize } from '../../../upstream/frontend/src/terminal-layout';
 import { h, icon } from './dom';
 import { skinState, SKIN_CHANGED_EVENT, updateSkin } from './engine';
 import { st } from './i18n';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from './state';
 
-export function fontSizeControl(): HTMLElement {
-  const row = h('div', 'cs-ob-font');
+export function fontSizeControl(withLabel = true): HTMLElement {
+  const row = h('div', withLabel ? 'cs-ob-font' : 'cs-set-font');
   const label = h('span', 'cs-ob-font-label', st('fontSize'));
   const minus = h('button', 'cs-ob-font-btn');
   minus.type = 'button';
@@ -55,7 +58,8 @@ export function fontSizeControl(): HTMLElement {
 
   const stepper = h('div', 'cs-ob-font-stepper');
   stepper.append(minus, value, plus);
-  row.append(label, stepper, auto);
+  if (withLabel) row.append(label);
+  row.append(stepper, auto);
   render();
   return row;
 }

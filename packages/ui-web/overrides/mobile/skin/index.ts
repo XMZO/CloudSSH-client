@@ -6,9 +6,9 @@
  *   palette.ts       运行时套用 / 恢复经典配色
  *   engine.ts        按状态挂载、卸载布局模块
  *   modules/         各布局模块（每个模块一个 .ts + .css，可单独开关）
- *   settings-section.ts  设置页里的“界面主题”分区
+ *   settings-section.ts  设置页里的“外观”分组
  */
 import './obsidian.css';
 
 export { startSkin } from './engine';
-export { skinSettingsSection } from './settings-section';
+export { appearanceGroup } from './settings-section';
