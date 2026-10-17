@@ -39,6 +39,14 @@ log = "0.4"
 android_logger = "0.15"
 libc = "0.2"
 
+[profile.dev]
+# 调试包体积：本 crate 只保留行号表（panic 回溯仍能定位到源码行），依赖不带调试信息。
+# 默认的完整调试信息会让 Android 调试版动态库膨胀到 160MB 以上
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 # 移动端安装包体积优先
 codegen-units = 1

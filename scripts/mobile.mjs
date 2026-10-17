@@ -148,6 +148,9 @@ switch (command) {
     const debug = rest.includes('--debug');
     const extra = rest.filter((arg) => arg !== '--debug');
     const targets = extra.includes('--target') ? [] : ['--target', 'aarch64', ...(debug ? ['x86_64'] : [])];
+    // Gradle 的 debug 构建会在旧 APK 上增量打包：替换掉的动态库空间不回收，每重建一次 APK 就大一圈。
+    // 先删掉上次的输出，强制全新打包
+    fs.rmSync(path.join(androidDir, 'app', 'build', 'outputs', 'apk'), { recursive: true, force: true });
     run('pnpm', [...tauri, 'build', '--apk', ...(debug ? ['--debug'] : []), ...targets, ...extra], env);
     const apks = copyApks(version, debug ? 'debug' : 'release');
     for (const apk of apks) {
