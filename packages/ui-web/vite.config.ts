@@ -95,6 +95,14 @@ const COMMON_HOOKS: Hook[] = [
     anchor: '  constructor(tabBarId: string, terminalAreaId: string) {\n',
     inject: '    (globalThis as any).__cloudsshTabManager = this;\n',
   },
+  {
+    // 回到前台时不再往终端写“页面已回到前台，正在检查 SSH 连接…”：客户端切后台不会断线
+    // （手机有前台服务保活，桌面关闭了后台节流）。紧随其后的心跳校验照常静默进行，
+    // 真的失去响应时网页版仍会提示并重连。注入一个条件，让下一行的 writeln 默认不执行。
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '      if (returnedFromBackground) {\n',
+    inject: '        if ((globalThis as any).__cloudsshAnnounceResume === true)\n',
+  },
 ];
 
 /**
