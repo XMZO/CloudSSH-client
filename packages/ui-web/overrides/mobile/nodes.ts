@@ -13,17 +13,20 @@ import { osIconSvg } from '../../upstream/frontend/src/os-icons';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import {
   activeServerId,
+  canShare,
   connectServer,
+  deleteServer,
   focusSession,
   openServerModal,
   sessionsByServer,
+  shareServer,
   tabCount,
 } from '../sidebar/hooks';
 import { getServers, subscribe } from '../sidebar/store';
 import { mt, onLocaleChange } from './i18n';
 import { ORDER_CHANGED_EVENT, orderedGroups, RECENT_KEY, UNGROUPED_KEY } from './node-groups';
 import { openReorderSheet } from './reorder-sheet';
-import { el, icon, showActions } from './sheet';
+import { el, icon, showActions, type SheetAction } from './sheet';
 import { openSettings } from './settings';
 
 const COLLAPSED_KEY = 'cloudssh_mobile_collapsed_groups';
@@ -216,7 +219,7 @@ function connectOrSwitch(server: ServerConfig): void {
 
 function showServerActions(server: ServerConfig, groupKey: string | null): void {
   const open = sessionsByServer().get(server.id)?.length ?? 0;
-  const actions = [{ label: mt('connectNew'), icon: 'add_circle', action: () => void connectServer(server.id) }];
+  const actions: SheetAction[] = [{ label: mt('connectNew'), icon: 'add_circle', action: () => void connectServer(server.id) }];
   if (open > 0) actions.push({ label: `${mt('switchSession')} (${open})`, icon: 'swap_horiz', action: () => void focusSession(server.id) });
   actions.push(
     { label: mt('edit'), icon: 'edit', action: () => void openServerModal('edit', server.id) },
@@ -230,11 +233,15 @@ function showServerActions(server: ServerConfig, groupKey: string | null): void 
       },
     }
   );
+  // 一次性分享：只在 Worker 开启分享时提供（与网页版的卡片一致）
+  if (canShare()) actions.push({ label: mt('share'), icon: 'share', action: () => void shareServer(server.id) });
   actions.push({
     label: mt('reorder'),
     icon: 'swap_vert',
     action: () => void openReorderSheet(groupKey && groupKey !== RECENT_KEY ? groupKey : undefined),
   });
+  // 删除走网页版自己的流程：确认框、被用作跳板时的报错都与网页版一致
+  actions.push({ label: mt('delete'), icon: 'delete', danger: true, action: () => void deleteServer(server.id) });
   showActions(server.name, actions, mt('cancel'));
 }
 

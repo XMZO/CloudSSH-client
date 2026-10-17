@@ -71,3 +71,10 @@
   font-size: 16px;
   line-height: 1;
 }
+
+/* 旧版 WebView（Chrome 122 之前）里 ::backdrop 读不到页面上定义的 CSS 变量，网页版对话框（删除确认、
+   多步认证等）的遮罩会变成全透明，对话框像浮在列表中间。给变量加上回退值：新版照样用主题的遮罩色 */
+dialog.app-dialog::backdrop,
+dialog.auth-challenge-dialog::backdrop {
+  background: var(--modal-overlay, rgba(0, 0, 0, 0.72));
+}

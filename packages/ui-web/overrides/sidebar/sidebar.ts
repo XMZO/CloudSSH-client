@@ -18,10 +18,13 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import {
   activeServerId,
   canConnect,
+  canShare,
   connectServer,
+  deleteServer,
   focusSession,
   openServerModal,
   sessionsByServer,
+  shareServer,
 } from './hooks';
 import { onLocaleChange, st } from './i18n';
 import { getServers, installFetchObserver, reloadServers, subscribe } from './store';
@@ -419,10 +422,20 @@ function closeMenu(): void {
   menu.replaceChildren();
 }
 
-function showMenu(x: number, y: number, entries: { label: string; icon: string; checked?: boolean; action: () => void }[]): void {
+interface MenuEntry {
+  label: string;
+  icon: string;
+  checked?: boolean;
+  /** 危险操作（删除）：红色显示，前面加一条分隔线 */
+  danger?: boolean;
+  action: () => void;
+}
+
+function showMenu(x: number, y: number, entries: MenuEntry[]): void {
   menu.replaceChildren();
   for (const entry of entries) {
-    const item = el('button', 'cs-sb-menu-item');
+    if (entry.danger && menu.childElementCount) menu.append(el('div', 'cs-sb-menu-sep'));
+    const item = el('button', entry.danger ? 'cs-sb-menu-item is-danger' : 'cs-sb-menu-item');
     item.type = 'button';
     item.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
     if (entry.checked !== undefined) item.setAttribute('aria-checked', String(entry.checked));
@@ -462,7 +475,7 @@ function toggleSortMenu(anchor: HTMLElement): void {
 
 function showItemMenu(event: MouseEvent, server: ServerConfig): void {
   const open = sessionsByServer().get(server.id)?.length ?? 0;
-  const entries = [{ label: st('connect'), icon: 'play_arrow', action: () => connect(server.id) }];
+  const entries: MenuEntry[] = [{ label: st('connect'), icon: 'play_arrow', action: () => connect(server.id) }];
   if (open > 0) entries.push({ label: `${st('focusSession')} (${open})`, icon: 'tab', action: () => void focusSession(server.id) });
   entries.push(
     { label: st('edit'), icon: 'edit', action: () => void openServerModal('edit', server.id) },
@@ -476,6 +489,9 @@ function showItemMenu(event: MouseEvent, server: ServerConfig): void {
       },
     }
   );
+  // 一次性分享只在 Worker 开启分享时提供；删除走网页版自己的确认与报错（与卡片上的按钮一致）
+  if (canShare()) entries.push({ label: st('share'), icon: 'share', action: () => void shareServer(server.id) });
+  entries.push({ label: st('delete'), icon: 'delete', danger: true, action: () => void deleteServer(server.id) });
   showMenu(event.clientX, event.clientY, entries);
 }
 

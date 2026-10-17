@@ -8,7 +8,16 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { getServers } from '../sidebar/store';
 import { makeReorderable } from '../shared/reorder';
 import { mt } from './i18n';
-import { nodeOrder, notifyOrderChanged, orderedGroups, type NodeGroup } from './node-groups';
+import {
+  NODE_SORT_MODES,
+  nodeOrder,
+  nodeSortLabel,
+  nodeSortMode,
+  notifyOrderChanged,
+  orderedGroups,
+  setNodeSortMode,
+  type NodeGroup,
+} from './node-groups';
 import { confirmSheet, el, icon, openSheet } from './sheet';
 
 function handle(): HTMLElement {
@@ -29,6 +38,33 @@ function mountList(body: HTMLElement, list: HTMLElement, onReorder: (keys: strin
   cleanup?.();
   const scroller = body.parentElement ?? body;
   cleanup = makeReorderable({ list, scroller, onReorder });
+}
+
+/** 组内排序：一排选项，选中立即生效（节点首页随之重绘） */
+function sortModes(): HTMLElement {
+  const wrap = el('div', 'cs-m-sort-modes');
+  wrap.setAttribute('role', 'radiogroup');
+  wrap.setAttribute('aria-label', mt('sortMode'));
+  const current = nodeSortMode();
+  for (const mode of NODE_SORT_MODES) {
+    const chip = el('button', 'cs-m-sort-mode', nodeSortLabel(mode));
+    chip.type = 'button';
+    chip.setAttribute('role', 'radio');
+    chip.setAttribute('aria-checked', String(mode === current));
+    chip.classList.toggle('is-on', mode === current);
+    chip.addEventListener('click', () => {
+      wrap.querySelectorAll<HTMLElement>('.cs-m-sort-mode').forEach((item) => {
+        const on = item === chip;
+        item.classList.toggle('is-on', on);
+        item.setAttribute('aria-checked', String(on));
+      });
+      setNodeSortMode(mode);
+    });
+    wrap.append(chip);
+  }
+  const section = el('div', 'cs-m-sort-mode-section');
+  section.append(el('span', 'cs-m-sort-mode-title', mt('sortMode')), wrap);
+  return section;
 }
 
 function groupsPage(body: HTMLElement): void {
@@ -61,14 +97,21 @@ function groupsPage(body: HTMLElement): void {
     void openReorderSheet();
   });
 
-  body.replaceChildren(el('p', 'cs-m-hint cs-m-sort-hint', mt('sortGroupsHint')), groups.length ? list : el('div', 'cs-m-empty', mt('empty')), reset);
+  body.replaceChildren(
+    sortModes(),
+    el('p', 'cs-m-hint cs-m-sort-hint', mt('sortGroupsHint')),
+    groups.length ? list : el('div', 'cs-m-empty', mt('empty')),
+    reset
+  );
   mountList(body, list, (keys) => {
     nodeOrder().setGroups(keys);
     notifyOrderChanged();
   });
 }
 
-function serversPage(body: HTMLElement, group: NodeGroup): void {
+function serversPage(body: HTMLElement, entry: NodeGroup): void {
+  // 进入时按当前的“组内排序”重新取一次（面板打开后可能刚切换过排序方式）
+  const group = orderedGroups(getServers() ?? []).find((item) => item.key === entry.key) ?? entry;
   const back = el('button', 'cs-m-sort-back');
   back.type = 'button';
   back.append(icon('arrow_back'), el('span', '', group.label));
@@ -84,9 +127,21 @@ function serversPage(body: HTMLElement, group: NodeGroup): void {
     list.append(item);
   }
 
-  body.replaceChildren(back, el('p', 'cs-m-hint cs-m-sort-hint', mt('sortServersHint')), list);
+  // 按规则排序时，列表就是当前看到的顺序；拖动调整后改为自定义顺序
+  const mode = nodeSortMode();
+  const hint = mode === 'custom' ? mt('sortServersHint') : mt('sortModeHint', { mode: nodeSortLabel(mode) });
+  body.replaceChildren(back, el('p', 'cs-m-hint cs-m-sort-hint', hint), list);
   (body.parentElement ?? body).scrollTop = 0;
   mountList(body, list, (keys) => {
+    if (nodeSortMode() !== 'custom') {
+      // 改为自定义前，先把其他分组当前看到的顺序记下来，免得它们跳回按名称排列
+      for (const other of orderedGroups(getServers() ?? [])) {
+        if (other.key !== group.key) nodeOrder().setServers(other.key, other.servers.map((server) => server.id));
+      }
+      nodeOrder().setServers(group.key, keys.map(Number));
+      setNodeSortMode('custom');
+      return;
+    }
     nodeOrder().setServers(group.key, keys.map(Number));
     notifyOrderChanged();
   });

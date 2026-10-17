@@ -2,6 +2,7 @@
  * 侧栏数据源：旁听网页版自己的 /api/servers 请求，不额外加请求。
  * - GET /api/servers 成功 → 更新列表（网页版增删改后都会重新拉取）
  * - POST /api/servers/:id/connect 成功 → 本地刷新该节点的最近连接时间
+ * - DELETE /api/servers/:id 成功 → 本地去掉（网页版删除后只改自己的列表，不重新拉取）
  * - 登出 / /api/auth/me 返回 401 → 清空（侧栏隐藏）
  * 只依赖公开的 HTTP 接口约定，不依赖上游内部实现。
  */
@@ -71,6 +72,12 @@ function observe(info: { method: string; path: string }, response: Response): vo
   if (connect && method === 'POST' && response.ok && servers) {
     const id = Number(connect[1]);
     setServers(servers.map((server) => (server.id === id ? { ...server, last_connected_at: Date.now() } : server)));
+    return;
+  }
+  const removed = /^\/api\/servers\/(\d+)$/.exec(path);
+  if (removed && method === 'DELETE' && response.ok && servers) {
+    const id = Number(removed[1]);
+    setServers(servers.filter((server) => server.id !== id));
     return;
   }
   if ((path === '/api/auth/logout' && method === 'POST') || (path === '/api/auth/me' && response.status === 401)) {

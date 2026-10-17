@@ -97,6 +97,10 @@ const zhCN = {
   loginCancelled: '已取消登录',
   loginNotCallback: '还没有完成 GitHub 授权，请重新登录',
   loginNoBrowser: '没有支持的浏览器，改用应用内登录',
+  share: '分享',
+  sortMode: '组内排序',
+  sortCustom: '自定义',
+  sortModeHint: '当前按“{mode}”排序，拖动调整后会改为自定义顺序',
 } as const;
 
 type Key = keyof typeof zhCN;
@@ -200,6 +204,10 @@ const dictionaries: Record<string, Record<Key, string>> = {
     loginCancelled: '已取消登入',
     loginNotCallback: '還沒有完成 GitHub 授權，請重新登入',
     loginNoBrowser: '沒有支援的瀏覽器，改用應用程式內登入',
+    share: '分享',
+    sortMode: '組內排序',
+    sortCustom: '自訂',
+    sortModeHint: '目前依「{mode}」排序，拖動調整後會改為自訂順序',
   },
   'en-US': {
     nodes: 'Hosts',
@@ -297,6 +305,10 @@ const dictionaries: Record<string, Record<Key, string>> = {
     loginCancelled: 'Sign-in cancelled',
     loginNotCallback: 'GitHub authorization was not finished. Please sign in again.',
     loginNoBrowser: 'No supported browser, signing in inside the app instead',
+    share: 'Share',
+    sortMode: 'Order within groups',
+    sortCustom: 'Custom',
+    sortModeHint: 'Sorted by “{mode}”. Dragging switches to a custom order.',
   },
 };
 

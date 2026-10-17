@@ -571,6 +571,44 @@ html.cs-nodes-on .cs-m-nodes {
   text-align: left;
 }
 
+/* 组内排序：一排可换行的选项 */
+.cs-m-sort-mode-section {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.cs-m-sort-mode-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-sort-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cs-m-sort-mode {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: 13px;
+}
+
+.cs-m-sort-mode.is-on {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .cs-m-sort-reset {
   width: 100%;
   margin-top: 16px;

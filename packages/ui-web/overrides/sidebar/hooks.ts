@@ -28,11 +28,16 @@ interface TabInfoLike {
 }
 
 interface ServerListLike {
-  servers?: { id: number }[];
+  servers?: { id: number; name?: string }[];
   connectServer?: (id: number) => Promise<void>;
   showModal?: (mode: string, server?: unknown) => void;
   /** 重新拉取服务器列表（网页版回到主页时也会调用） */
   refresh?: () => Promise<void>;
+  /** 删除：网页版自己的确认框 → DELETE → 从列表里去掉（被用作跳板等错误由它提示） */
+  deleteServer?: (id: number) => Promise<void>;
+  /** Worker 开启了一次性分享（/api/config 的 sshSharingEnabled） */
+  sharingEnabled?: boolean;
+  shareManager?: { open?: (id: number, name: string) => Promise<void> };
 }
 
 interface TabManagerLike {
@@ -74,7 +79,11 @@ export function canConnect(): boolean {
  * 两者可能不一致（例如网页版的列表还没加载出来，或者某次刷新失败被清空过）。找不到就先让网页版重新拉一次；
  * 仍找不到（多半是网络不通）时提示，而不是点了没反应。
  */
-async function findListedServer(list: ServerListLike, id: number): Promise<unknown | null> {
+async function findListedServer(
+  list: ServerListLike,
+  id: number,
+  failTitle = t('server.connectFailed')
+): Promise<{ id: number; name?: string } | null> {
   const find = () => list.servers?.find((item) => item.id === id) ?? null;
   const listed = find();
   if (listed) return listed;
@@ -84,7 +93,7 @@ async function findListedServer(list: ServerListLike, id: number): Promise<unkno
     // 下面统一提示
   }
   const server = find();
-  if (!server) notify(t('server.loadFailed'), { title: t('server.connectFailed'), variant: 'danger' });
+  if (!server) notify(t('server.loadFailed'), { title: failTitle, variant: 'danger' });
   return server;
 }
 
@@ -107,6 +116,31 @@ export function openServerModal(mode: 'add' | 'edit' | 'clone', id?: number): bo
   const show = list.showModal.bind(list);
   if (id === undefined) return false;
   void findListedServer(list, id).then((server) => server && show(mode, server));
+  return true;
+}
+
+/** 走网页版自己的删除流程（确认框 → DELETE → 从列表里去掉）；返回 false 表示网页版钩子不可用 */
+export function deleteServer(id: number): boolean {
+  const list = serverList();
+  if (typeof list?.deleteServer !== 'function') return false;
+  const remove = list.deleteServer.bind(list);
+  void findListedServer(list, id, t('common.delete')).then((server) => server && remove(id));
+  return true;
+}
+
+/** Worker 开启了一次性分享（网页版只在这时显示分享按钮） */
+export function canShare(): boolean {
+  const list = serverList();
+  return list?.sharingEnabled === true && typeof list.shareManager?.open === 'function';
+}
+
+/** 打开网页版的分享管理（创建链接、撤销、审计记录） */
+export function shareServer(id: number): boolean {
+  const list = serverList();
+  const manager = list?.shareManager;
+  if (!list || typeof manager?.open !== 'function') return false;
+  const open = manager.open.bind(manager);
+  void findListedServer(list, id, t('share.create')).then((server) => server && open(id, server.name ?? ''));
   return true;
 }
 

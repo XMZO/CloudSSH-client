@@ -60,6 +60,8 @@ const servers = [
   // 连接会一直卡在认证、永远到不了 Shell 就绪：用来测试“正在连接”状态（例如关闭时是否确认）
   server('Slow-1 卡在认证', [], '10.0.0.9', { stall: true }),
 ];
+// JP-D 经 JP-C 跳板连接：用来测试“被用作跳板的服务器不能删”
+servers.find((s) => s.name.startsWith('JP-D')).jump_server_id = servers.find((s) => s.name.startsWith('JP-C')).id;
 
 let nextSnippetId = 1;
 const snippet = (name, command, category = '') => ({
@@ -174,7 +176,7 @@ async function handleHttp(req, res) {
   const method = req.method;
   console.log(method, path);
 
-  if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sharingEnabled: false });
+  if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });
   if (anonymous && handleMockOauth(req, res, url)) return;
   if (path === '/api/auth/me') {
     if (anonymous && !sessions.has(cookieOf(req, 'session'))) return json(res, 401, { error: 'Unauthorized' });
@@ -190,6 +192,19 @@ async function handleHttp(req, res) {
     if (target) target.last_connected_at = Date.now();
     return json(res, 200, { wsUrl: `ws://${req.headers.host}/api/ssh?token=mock-${connect[1]}-${Date.now()}` });
   }
+
+  const serverPath = /^\/api\/servers\/(\d+)$/.exec(path);
+  if (serverPath && method === 'DELETE') {
+    const id = Number(serverPath[1]);
+    const index = servers.findIndex((s) => s.id === id);
+    if (index < 0) return json(res, 404, { error: 'Server not found' });
+    // 与 Worker 一致：被别的服务器用作跳板时不能删
+    if (servers.some((s) => s.jump_server_id === id)) return json(res, 409, { error: 'Server is used as a jump host' });
+    servers.splice(index, 1);
+    return json(res, 200, { success: true });
+  }
+  // 一次性分享：只提供空列表，够打开分享管理界面
+  if (/^\/api\/servers\/\d+\/shares$/.test(path) && method === 'GET') return json(res, 200, []);
 
   if (path === '/api/snippets' && method === 'GET') return json(res, 200, snippets);
   if (path === '/api/snippets' && method === 'POST') {
