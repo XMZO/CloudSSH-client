@@ -81,7 +81,8 @@ const snippets = [
   snippet('端口监听', 'ss -tlnp', '网络'),
   snippet('基础软件包', 'apt install sudo curl wget nano screen vnstat unzip zip jq dnsutils whois ncdu rsync -y', '初始化'),
   snippet('更新并重启', "sudo bash -c 'apt update && apt full-upgrade -y && apt autoremove -y && apt clean && systemctl reboot'", '初始化'),
-  snippet('分行更新', 'sudo apt update \\\n&& sudo apt full-upgrade -y \\\n&& sudo apt autoremove -y \\\n&& sudo apt clean', '初始化'),
+  snippet('远程安装脚本', 'bash <(curl -sL https://raw.githubusercontent.com/example/project/refs/heads/main/scripts/install-latest.sh)', '初始化'),
+  snippet('分行更新','sudo apt update \\\n&& sudo apt full-upgrade -y \\\n&& sudo apt autoremove -y \\\n&& sudo apt clean', '初始化'),
 ];
 
 // ---------- HTTP ----------
