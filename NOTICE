@@ -8,3 +8,8 @@ which is licensed under the Apache License, Version 2.0:
   Copyright 2026 TanXin (@newbietan)
   CloudSSH was originally created and architected by TanXin (@newbietan).
   Original project: https://github.com/newbietan/CloudSSH
+
+This product bundles the JetBrains Mono font (packages/ui-web/overrides/fonts/jetbrains-mono),
+which is licensed under the SIL Open Font License, Version 1.1 (see OFL.txt in that directory):
+
+  Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)

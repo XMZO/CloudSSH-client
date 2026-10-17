@@ -253,8 +253,31 @@ function createSocket(socket, onMessage) {
 // ---------- 假 shell ----------
 
 const PROMPT = '\x1b[1;32mroot@mock\x1b[0m:\x1b[1;34m~\x1b[0m# ';
+/** 各种常见日志（系统、nginx 访问日志、容器状态……），用来测试关键词高亮；ls 那一行带程序自己的颜色 */
+const SAMPLE_LOGS = [
+  '2026-10-17 15:30:01 INFO  nginx started, listening on 0.0.0.0:443 (pid=1234)',
+  'Oct 17 15:30:02 web-01 sshd[2291]: Failed password for invalid user admin from 203.0.113.7 port 52144 ssh2',
+  'Oct 17 15:30:03 web-01 systemd[1]: nginx.service: Active: active (running) since Fri; 12.5MB memory',
+  'Oct 17 15:30:04 web-01 kernel: Out of memory: Killed process 4242 (java) total-vm:2048000kB',
+  'WARN  disk /dev/sda1 is 91% full, retrying in 5s (deprecated option --legacy)',
+  'ERROR connection to 10.0.0.5:5432 refused: timeout after 3000ms',
+  'DEBUG cache miss for key=user:42, fallback to database',
+  '192.0.2.10 - - [17/Oct/2026:15:30:05 +0800] "GET /api/servers HTTP/1.1" 200 512 "-" "curl/8.5.0"',
+  '192.0.2.11 - - [17/Oct/2026:15:30:06 +0800] "POST /login HTTP/1.1" 403 87 "-" "Mozilla/5.0"',
+  'HTTP/1.1 502 Bad Gateway   upstream 2001:db8::1 unreachable',
+  'CONTAINER ID   NAME     STATUS',
+  '3f9c2ab1d4e5   web      Up 3 hours',
+  '7a1b2c3d4e5f   api      Exited (1) 2 minutes ago',
+  'worker-6d9f8   0/1      CrashLoopBackOff   5 (30s ago)',
+  'cache-5c7b9    0/1      Pending',
+  'eth0: ether 52:54:00:12:34:56  inet 172.17.0.2/16  link fe80::5054:ff:fe12:3456',
+  'Saved to ~/backups/db-2026-10-17.sql.gz (sha256 9b74c9897bac770ffc029102a200c5de)',
+  'See https://github.com/XMZO/CloudSSH/issues for details; request id 3fa85f64-5717-4562-b3fc-2c963f66afa6',
+  '\x1b[1;34mbin\x1b[0m  \x1b[1;32mdeploy.sh\x1b[0m  error.log  ok.txt  (ls 自己着色的部分保持原样)',
+].join('\r\n');
+
 const HELP = [
-  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  clear  exit',
+  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  clear  exit',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
 
@@ -292,6 +315,9 @@ function runCommand(line, write) {
       write(`${out}\r\n`);
       break;
     }
+    case 'logs':
+      write(`${SAMPLE_LOGS}\r\n`);
+      break;
     case 'top':
       write('top - 12:00:00 up 3 days,  load average: 0.10, 0.08, 0.05\r\nTasks: 120 total,   1 running\r\n%Cpu(s):  2.0 us,  1.0 sy, 97.0 id\r\nMiB Mem :   1985.6 total,   512.3 free\r\n');
       break;

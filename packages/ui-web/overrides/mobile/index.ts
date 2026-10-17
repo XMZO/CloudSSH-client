@@ -11,6 +11,7 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import '../desktop.css';
 import '../shared/web-fixes.css';
 import { installLanguagePicker, type LanguageMenu } from '../shared/language-picker';
+import { installTerminalEnhancements } from '../shared/terminal';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
 import { mt } from './i18n';
@@ -171,6 +172,9 @@ const sheetLanguageMenu: LanguageMenu = (_anchor, choices, current, pick) =>
   );
 
 // ---------- 启动 ----------
+
+// 内置终端字体与关键词高亮：要在网页版创建第一个终端之前装好
+installTerminalEnhancements();
 
 if (isTauri()) {
   installFetchObserver();

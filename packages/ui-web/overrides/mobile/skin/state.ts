@@ -19,7 +19,7 @@ export const ACCENT_IDS = ['indigo', 'teal', 'green', 'amber', 'rose'] as const;
 export type AccentId = (typeof ACCENT_IDS)[number];
 
 /** 布局模块（顺序即设置页里的显示顺序）。新增模块：在这里加 id，再在 modules/index.ts 注册实现 */
-export const MODULE_IDS = ['hosts', 'chrome', 'sheets', 'commands', 'dock', 'motion'] as const;
+export const MODULE_IDS = ['hosts', 'chrome', 'sheets', 'commands', 'dock', 'glass', 'motion'] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 /** 终端字号：0 表示自动（跟随网页版的屏幕宽度规则） */

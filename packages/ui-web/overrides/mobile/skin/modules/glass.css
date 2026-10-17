@@ -1,0 +1,200 @@
+/* ========== 黑曜 · 液态玻璃（html[data-cs-mods~="glass"]） ==========
+   一层玻璃 = 磨砂（模糊 + 提饱和 + 提亮背后内容）+ 半透明底色 + 顶部高光 + 渐变描边（左上亮、右下暗）
+   + 内外阴影；底部栏和“回到终端”胶囊额外叠加边缘折射（滤镜由 glass.ts 按尺寸生成）。
+   节点页加一层强调色的环境光，玻璃才有颜色可“折”。 */
+
+html[data-cs-mods~="glass"] {
+  --cs-glass-fill: color-mix(in srgb, var(--bg-elevated) 50%, transparent);
+  --cs-glass-fill-strong: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
+  --cs-glass-backdrop: blur(18px) saturate(190%) brightness(1.1);
+  /* 浮动控件用“清透”玻璃：模糊轻、看得见背后的内容，边缘折射才明显（与 iOS 26 的底栏一致） */
+  --cs-glass-backdrop-clear: blur(5px) saturate(180%) brightness(1.08);
+  --cs-glass-fill-clear: color-mix(in srgb, var(--bg-elevated) 34%, transparent);
+  --cs-glass-backdrop-strong: blur(30px) saturate(170%) brightness(1.04);
+  --cs-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 42%, rgba(255, 255, 255, 0) 62%);
+  --cs-glass-rim: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.12) 26%,
+    rgba(255, 255, 255, 0.04) 58%,
+    rgba(255, 255, 255, 0.26) 100%
+  );
+  --cs-glass-depth:
+    inset 0 1px 1px rgba(255, 255, 255, 0.16),
+    inset 0 -14px 24px -18px rgba(255, 255, 255, 0.16),
+    0 14px 36px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+  --cs-glass-well: rgba(6, 8, 12, 0.58);
+  --cs-glass-chip: rgba(255, 255, 255, 0.07);
+  --cs-glass-chip-rim: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* ---------- 节点页：环境光 + 半透明分组卡片 ---------- */
+
+html[data-cs-skin][data-cs-mods~="glass"] #user-space-section {
+  background:
+    radial-gradient(120% 55% at 105% -8%, color-mix(in srgb, var(--accent) 30%, transparent) 0%, transparent 58%),
+    radial-gradient(95% 45% at -12% 104%, color-mix(in srgb, var(--accent) 16%, rgba(79, 216, 196, 0.22)) 0%, transparent 62%),
+    radial-gradient(70% 35% at 30% 46%, color-mix(in srgb, var(--accent) 7%, transparent) 0%, transparent 70%),
+    var(--bg);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] #user-space-section .user-space-header {
+  background: transparent;
+}
+
+html[data-cs-skin][data-cs-mods~="glass"][data-cs-mods~="hosts"] .cs-m-group-body {
+  border: 0;
+  background: color-mix(in srgb, var(--bg-surface) 58%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"][data-cs-mods~="hosts"] .cs-m-group-count {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- 浮动玻璃：底部栏、“回到终端”胶囊 ---------- */
+
+html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes :is(.cs-m-nodes-bar, .cs-m-banner) {
+  isolation: isolate;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--cs-glass-depth);
+}
+
+/* 玻璃层：磨砂 + 底色 + 顶部高光，边缘折射滤镜作用在这一层 */
+html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes :is(.cs-m-nodes-bar, .cs-m-banner)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  border-radius: inherit;
+  background: var(--cs-glass-sheen), var(--cs-glass-fill-clear);
+  -webkit-backdrop-filter: var(--cs-glass-backdrop-clear);
+  backdrop-filter: var(--cs-glass-backdrop-clear);
+  filter: var(--cs-glass-lens, none);
+  pointer-events: none;
+}
+
+/* 渐变描边：只露出 1px 的环 */
+html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes :is(.cs-m-nodes-bar, .cs-m-banner)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--cs-glass-rim);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* 胶囊是强调色玻璃 */
+html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes .cs-m-banner::before {
+  background:
+    var(--cs-glass-sheen),
+    color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes .cs-m-banner {
+  color: var(--on-accent);
+  box-shadow: var(--cs-glass-depth), 0 10px 30px var(--accent-glow);
+}
+
+/* 底部栏里的输入框与按钮做成嵌在玻璃里的“凹槽” */
+html[data-cs-skin][data-cs-mods~="glass"] .cs-m-nodes-bar :is(.cs-m-search, .cs-m-iconbtn:not(.cs-ob-add)) {
+  background: var(--cs-glass-well);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-m-nodes-bar .cs-ob-add {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%),
+    var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 4px 14px var(--accent-glow);
+}
+
+/* ---------- 终端页：紧凑栏、快捷命令、按键栏 ---------- */
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-ob-bar {
+  border-bottom: 0;
+  background: var(--cs-glass-sheen), color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  -webkit-backdrop-filter: var(--cs-glass-backdrop);
+  backdrop-filter: var(--cs-glass-backdrop);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.07), 0 8px 22px rgba(0, 0, 0, 0.32);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-ob-cmds,
+html[data-cs-skin][data-cs-mods~="glass"] #terminal-section #mobile-terminal-toolbar {
+  border-top: 0;
+  background: var(--cs-glass-sheen), color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-ob-chip,
+html[data-cs-skin][data-cs-mods~="glass"][data-cs-mods~="dock"] #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll button {
+  border-color: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
+  box-shadow: var(--cs-glass-chip-rim);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-ob-chip.is-manage {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 14%, transparent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* 按下时像液体一样回弹 */
+html[data-cs-skin][data-cs-mods~="glass"] :is(.cs-ob-chip, #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll button, .cs-m-nodes-bar .cs-m-iconbtn) {
+  transition:
+    transform 460ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] :is(.cs-ob-chip, #mobile-terminal-toolbar .mobile-terminal-toolbar-scroll button, .cs-m-nodes-bar .cs-m-iconbtn):active {
+  transform: scale(0.92);
+  transition-duration: 90ms;
+}
+
+/* ---------- 底部面板（设置、更多、确认框）：磨砂玻璃 ---------- */
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-m-sheet-backdrop {
+  background: rgba(4, 6, 10, 0.34);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-m-sheet {
+  background: var(--cs-glass-sheen), var(--cs-glass-fill-strong);
+  -webkit-backdrop-filter: var(--cs-glass-backdrop-strong);
+  backdrop-filter: var(--cs-glass-backdrop-strong);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 1px 0 0 rgba(255, 255, 255, 0.05),
+    inset -1px 0 0 rgba(255, 255, 255, 0.05),
+    0 -18px 48px rgba(0, 0, 0, 0.5);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-m-sheet :is(.cs-m-action:not(.is-cancel), .cs-ob-more-item, .cs-ob-font) {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: var(--cs-glass-chip-rim);
+}
+
+html[data-cs-skin][data-cs-mods~="glass"] .cs-m-sheet .cs-m-action.is-current {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* 系统要求减少透明效果时退回实色 */
+@media (prefers-reduced-transparency: reduce) {
+  html[data-cs-mods~="glass"] {
+    --cs-glass-fill: var(--bg-elevated);
+    --cs-glass-fill-strong: var(--bg-elevated);
+    --cs-glass-fill-clear: var(--bg-elevated);
+    --cs-glass-backdrop: none;
+    --cs-glass-backdrop-strong: none;
+    --cs-glass-backdrop-clear: none;
+  }
+}

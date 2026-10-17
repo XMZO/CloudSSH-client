@@ -16,6 +16,8 @@ import { activeTab, activeTabId, listTabs, switchToTab, type TabInfo } from '../
 import { shouldConfirmClose } from '../../close-confirm';
 import { mt } from '../../i18n';
 import { openSettings } from '../../settings';
+import { openHighlightEditor } from '../../../shared/terminal';
+import { ht } from '../../../shared/terminal/i18n';
 import { closeSheet, confirmSheet, openSheet } from '../../sheet';
 import { openSessionList } from '../../tabs';
 import { clickById, Disposer, h, icon, iconButton, prefersReducedMotion, rafThrottle, upstreamButtonAvailable } from '../dom';
@@ -103,6 +105,7 @@ function openMoreSheet(): void {
       },
     },
     { icon: 'add', label: st('actNew'), visible: true, run: () => clickById('new-tab-btn') },
+    { icon: 'format_color_text', label: ht('title'), visible: true, run: () => openHighlightEditor() },
     { icon: 'tune', label: st('actSettings'), visible: true, run: () => void openSettings() },
   ];
   for (const item of items.filter((entry) => entry.visible)) {

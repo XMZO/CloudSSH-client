@@ -44,6 +44,7 @@ drag_indicator
 drive_file_rename_outline
 edit
 edit_note
+enable
 error
 error_outline
 expand
@@ -53,10 +54,12 @@ folder
 folder_off
 folder_open
 folder_zip
+format_color_text
 function
 gif
 group
 groups
+highlight
 history
 history_edu
 home
@@ -100,12 +103,14 @@ note_add
 open_in_new
 palette
 password
+pattern
 person
 php
 picture_as_pdf
 play_arrow
 play_circle
 power_settings_new
+preview
 progress_activity
 psychology
 quick_phrases
@@ -116,6 +121,7 @@ refresh
 reorder
 report
 resize
+restart_alt
 route
 rtt
 rule

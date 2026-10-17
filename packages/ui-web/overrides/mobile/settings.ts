@@ -7,6 +7,9 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { skinSettingsSection } from './skin';
 import { tabCount } from '../sidebar/hooks';
 import { CLOSE_CONFIRM_MODES, closeConfirmMode, setCloseConfirmMode, type CloseConfirmMode } from './close-confirm';
+import { openHighlightEditor } from '../shared/terminal';
+import { loadSettings as loadHighlight, saveSettings as saveHighlight } from '../shared/terminal/highlight-rules';
+import { ht } from '../shared/terminal/i18n';
 import { mt } from './i18n';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
 import { native, type MobileInstance, type MobileState } from './tauri';
@@ -312,6 +315,21 @@ export async function openSettings(): Promise<void> {
   syncChoice();
   closing.append(choice, el('p', 'cs-m-hint', mt('closeConfirmHint')));
 
-  body.append(skinSettingsSection(), instances, proxy, keep, closing, storage, about);
+  // 关键词高亮：总开关 + 规则管理
+  const highlight = section(ht('title'));
+  const highlightToggle = el('label', 'cs-m-switch');
+  const highlightInput = el('input');
+  highlightInput.type = 'checkbox';
+  highlightInput.checked = loadHighlight().enabled;
+  highlightInput.addEventListener('change', () => saveHighlight({ ...loadHighlight(), enabled: highlightInput.checked }));
+  highlightToggle.append(highlightInput, el('span', '', ht('enableHint')));
+  const highlightManage = button(ht('manage'));
+  highlightManage.addEventListener('click', () => {
+    closeSheet();
+    openHighlightEditor();
+  });
+  highlight.append(highlightToggle, highlightManage);
+
+  body.append(skinSettingsSection(), instances, proxy, keep, closing, highlight, storage, about);
   openSheet(mt('settings'), body, { tall: true });
 }

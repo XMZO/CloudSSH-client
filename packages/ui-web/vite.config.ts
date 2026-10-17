@@ -75,6 +75,20 @@ function localIconFont(html: string, warn: (message: string) => void): string {
   return html.replace(ICON_FONT_LINK, () => `<style data-cloudssh-icons>\n${css}\n</style>`);
 }
 
+/**
+ * 终端字体随客户端内置（overrides/shared/terminal/terminal.css），去掉 index.html 里在线加载 JetBrains Mono 的 <link>：
+ * 国内常常加载不到，只会白白等待，还会和内置的同名字体抢着生效
+ */
+const TERMINAL_FONT_LINK = /<link\s+href="https:\/\/fonts\.googleapis\.com\/css2\?family=JetBrains\+Mono[^"]*"\s+rel="stylesheet"\s*\/?>\s*/;
+
+function localTerminalFont(html: string, warn: (message: string) => void): string {
+  if (!TERMINAL_FONT_LINK.test(html)) {
+    warn('index.html 里没找到 JetBrains Mono 的在线字体链接（上游可能已变化）');
+    return html;
+  }
+  return html.replace(TERMINAL_FONT_LINK, '');
+}
+
 function overrides(target: Target): Plugin {
   const injections = injectionsFor(target);
   return {
@@ -93,7 +107,8 @@ function overrides(target: Target): Plugin {
             attrs: { type: 'module', src: item.id },
             injectTo: item.injectTo,
           }));
-        return { html: localIconFont(html, (message) => console.warn(`[cloudssh] ${message}`)), tags };
+        const warn = (message: string) => console.warn(`[cloudssh] ${message}`);
+        return { html: localTerminalFont(localIconFont(html, warn), warn), tags };
       },
     },
   };
@@ -131,6 +146,17 @@ const COMMON_HOOKS: Hook[] = [
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '      if (returnedFromBackground) {\n',
     inject: '        if ((globalThis as any).__cloudsshAnnounceResume === true)\n',
+  },
+  {
+    // 终端增强（overrides/shared/terminal）：每创建一个终端就交给它设置内置字体、挂上关键词高亮
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '    this.fitAddon = new FitAddon();\n',
+    inject: '    (globalThis as any).__cloudsshTerminalCreated?.(this.terminal);\n',
+  },
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '  dispose(): void {\n    this.disconnect();\n',
+    inject: '    (globalThis as any).__cloudsshTerminalDisposed?.(this.terminal);\n',
   },
   {
     // 网页版拉取服务器列表失败时会把列表清空，断网一次后，客户端节点页/侧栏（显示的是另一份缓存）

@@ -8,10 +8,11 @@ import type { SkinModule } from '../types';
 import { chromeModule } from './chrome';
 import { commandsModule } from './commands';
 import { dockModule } from './dock';
+import { glassModule } from './glass';
 import { hostsModule } from './hosts';
 import { motionModule } from './motion';
 import { sheetsModule } from './sheets';
 
-export const MODULES: SkinModule[] = [hostsModule, chromeModule, sheetsModule, commandsModule, dockModule, motionModule];
+export const MODULES: SkinModule[] = [hostsModule, chromeModule, sheetsModule, commandsModule, dockModule, glassModule, motionModule];
 
 export const MODULE_BY_ID = new Map<ModuleId, SkinModule>(MODULES.map((module) => [module.id, module]));

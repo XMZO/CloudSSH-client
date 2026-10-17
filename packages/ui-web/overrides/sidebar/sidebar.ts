@@ -26,6 +26,7 @@ import {
 import { onLocaleChange, st } from './i18n';
 import { getServers, installFetchObserver, reloadServers, subscribe } from './store';
 import { NodeOrder } from '../shared/order';
+import { openHighlightEditor } from '../shared/terminal';
 import { dragHandle, installSortable } from '../shared/sortable';
 import './sidebar.css';
 
@@ -124,8 +125,9 @@ const actions = el('div', 'cs-sb-actions');
 const sortButton = iconButton('sort', '', (event) => toggleSortMenu(event.currentTarget as HTMLElement));
 const addButton = iconButton('add', '', () => openServerModal('add'));
 const refreshButton = iconButton('refresh', '', () => void reloadServers().catch(() => undefined));
+const highlightButton = iconButton('format_color_text', '', () => openHighlightEditor());
 const collapseButton = iconButton('left_panel_close', '', () => setCollapsed(true));
-actions.append(sortButton, addButton, refreshButton, collapseButton);
+actions.append(sortButton, addButton, refreshButton, highlightButton, collapseButton);
 header.append(title, actions);
 
 const searchBox = el('label', 'cs-sb-search');
@@ -175,6 +177,7 @@ function applyTexts(): void {
     [sortButton, 'sort'],
     [addButton, 'add'],
     [refreshButton, 'refresh'],
+    [highlightButton, 'highlight'],
     [collapseButton, 'collapse'],
     [railExpand, 'expand'],
     [railAdd, 'add'],

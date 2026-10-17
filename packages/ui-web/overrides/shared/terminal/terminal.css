@@ -1,0 +1,26 @@
+/* ========== 内置终端字体：JetBrains Mono（SIL OFL 1.1，许可见 overrides/fonts/jetbrains-mono/OFL.txt） ==========
+   网页版原本从 Google Fonts 在线加载同名字体，国内经常加载失败、悄悄退回系统字体；这里随客户端内置。
+   400 以下用常规体、550 以上用粗体（界面里的 600 半粗也落到粗体）。 */
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 100 549;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../fonts/jetbrains-mono/JetBrainsMono-Bold.woff2") format("woff2");
+  font-weight: 550 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 终端里不要连字：JetBrains Mono 会把 -> != 等合成一个字形，DOM 渲染时会和字符格错位 */
+.xterm,
+.xterm .xterm-rows {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
