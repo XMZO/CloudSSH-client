@@ -497,54 +497,127 @@ html.cs-nodes-on .cs-m-nodes {
   line-height: 1.5;
 }
 
-/* ---------- 拖动排序 ---------- */
+/* ---------- 调整排序面板 ---------- */
 
-.cs-m-drag {
+.cs-m-sort-hint {
+  margin: 0 2px 10px;
+}
+
+.cs-m-sort-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cs-m-sort-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 4px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--on-surface);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.cs-m-sort-item > .cs-m-icon {
+  flex: none;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-sort-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cs-m-sort-name,
+.cs-m-sort-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-m-sort-name {
+  font-weight: 600;
+}
+
+.cs-m-sort-sub {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+/* 手柄：大触摸区域，按住立即开始拖动，不触发滚动 */
+.cs-m-sort-handle {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 40px;
-  margin: -8px -6px -8px 0;
-  font-size: 22px;
+  width: 44px;
+  height: 44px;
+  font-size: 24px;
   color: var(--on-surface-variant);
-  opacity: 0.7;
-  cursor: grab;
   touch-action: none;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
+  cursor: grab;
 }
 
-.cs-m-group-header .cs-m-drag {
-  margin-left: 2px;
+.cs-m-sort-list.is-reordering {
+  cursor: grabbing;
 }
 
-.cs-m-group.is-dragging,
-.cs-m-row-item.is-dragging {
-  position: relative;
-  z-index: 2;
-  background: var(--bg-surface-variant, var(--bg-surface));
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-  outline: 1px solid var(--accent);
-  border-radius: 12px;
+.cs-m-sort-item.is-shifting {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.cs-m-group.is-dragging .cs-m-drag,
-.cs-m-row-item.is-dragging .cs-m-drag {
+.cs-m-sort-item.is-lifted {
+  z-index: 5;
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  cursor: grabbing;
+}
+
+.cs-m-sort-item.is-lifted .cs-m-sort-handle {
   color: var(--accent);
-  opacity: 1;
 }
 
-/* 拖动分组时暂时收起分组内容，方便在分组之间移动 */
-.cs-m-compact .cs-m-group-body {
-  display: none;
+.cs-m-sort-item.is-settling {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-html.cs-sorting,
-html.cs-sorting * {
-  cursor: grabbing !important;
-  -webkit-user-select: none !important;
-  user-select: none !important;
+.cs-m-sort-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.cs-m-sort-reset {
+  width: 100%;
+  margin-top: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-m-sort-item.is-shifting,
+  .cs-m-sort-item.is-settling {
+    transition: none;
+  }
 }

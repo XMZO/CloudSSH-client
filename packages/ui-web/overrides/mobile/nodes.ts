@@ -3,6 +3,7 @@
  * - 按标签分组、可折叠，“最近连接”置顶，搜索
  * - 点按：已有会话就切过去，没有就新建连接；长按：操作面板（新建连接/切换会话/编辑/克隆/复制地址）
  * - 有会话时顶部显示“N 个会话进行中”，一键回到终端
+ * - 分组与组内服务器的顺序在“调整排序”面板里拖动（reorder-sheet.ts），这里只按保存的顺序显示
  * 数据与动作复用桌面侧栏：旁听 /api/servers（store.ts），调用网页版自身逻辑（hooks.ts）。
  */
 import { groupServersByTag, serverInitial, type ServerConfig } from '@cloudssh/core';
@@ -18,23 +19,13 @@ import {
   tabCount,
 } from '../sidebar/hooks';
 import { getServers, subscribe } from '../sidebar/store';
-import { NodeOrder } from '../shared/order';
-import { dragHandle, installSortable, scrollParent } from '../shared/sortable';
 import { mt, onLocaleChange } from './i18n';
+import { ORDER_CHANGED_EVENT, orderedGroups, RECENT_KEY, UNGROUPED_KEY } from './node-groups';
+import { openReorderSheet } from './reorder-sheet';
 import { el, icon, showActions } from './sheet';
 import { openSettings } from './settings';
 
 const COLLAPSED_KEY = 'cloudssh_mobile_collapsed_groups';
-const RECENT_KEY = '__recent__';
-const UNGROUPED_KEY = '__ungrouped__';
-
-/** 手动排序按实例分开保存（所有实例共用 tauri.localhost 这一个 origin） */
-let orderCache: { id: string; order: NodeOrder } | null = null;
-function nodeOrder(): NodeOrder {
-  const id = window.__cloudsshMobile?.state?.currentId ?? 'default';
-  if (orderCache?.id !== id) orderCache = { id, order: new NodeOrder(`cloudssh_mobile_node_order:${id}`) };
-  return orderCache.order;
-}
 const RECENT_LIMIT = 5;
 
 const state = {
@@ -74,7 +65,11 @@ const settingsButton = el('button', 'cs-m-iconbtn');
 settingsButton.type = 'button';
 settingsButton.append(icon('tune'));
 settingsButton.addEventListener('click', () => openSettings());
-bar.append(search, settingsButton);
+const reorderButton = el('button', 'cs-m-iconbtn');
+reorderButton.type = 'button';
+reorderButton.append(icon('swap_vert'));
+reorderButton.addEventListener('click', () => openReorderSheet());
+bar.append(search, reorderButton, settingsButton);
 
 const banner = el('button', 'cs-m-banner');
 banner.type = 'button';
@@ -82,7 +77,6 @@ banner.hidden = true;
 banner.addEventListener('click', () => document.getElementById('back-to-terminal-btn')?.click());
 
 const list = el('div', 'cs-m-list');
-list.dataset.sortScope = 'groups';
 root.append(bar, banner, list);
 
 // ---------- 渲染 ----------
@@ -92,11 +86,10 @@ function hostLabel(server: ServerConfig): string {
   return `${server.username}@${maskIPAddress(server.host) ?? server.host}`;
 }
 
-function renderRow(server: ServerConfig, sessions: Map<number, string[]>, activeId: number | null, sortable: boolean): HTMLElement {
+function renderRow(server: ServerConfig, sessions: Map<number, string[]>, activeId: number | null): HTMLElement {
   const row = el('button', 'cs-m-row-item');
   row.type = 'button';
   row.dataset.id = String(server.id);
-  if (sortable) row.dataset.sortKey = String(server.id);
   if (server.id === activeId) row.classList.add('is-active');
   const avatar = el('span', 'cs-m-avatar', serverInitial(server.name));
   const text = el('span', 'cs-m-row-text');
@@ -104,28 +97,23 @@ function renderRow(server: ServerConfig, sessions: Map<number, string[]>, active
   row.append(avatar, text);
   const open = sessions.get(server.id)?.length ?? 0;
   if (open > 0) row.append(el('span', 'cs-m-badge', String(open)));
-  row.append(sortable ? dragHandle('cs-m-drag', mt('dragToSort')) : icon('chevron_right'));
+  row.append(icon('chevron_right'));
   return row;
 }
 
 function renderGroup(key: string, label: string, servers: ServerConfig[], sessions: Map<number, string[]>, activeId: number | null): HTMLElement {
   const group = el('div', 'cs-m-group');
-  // 搜索结果与“最近连接”不参与手动排序
-  const sortable = !state.query && key !== RECENT_KEY;
-  if (sortable) group.dataset.sortKey = key;
+  group.dataset.groupKey = key;
   const collapsed = state.collapsed.has(key) && !state.query;
   const header = el('button', 'cs-m-group-header');
   header.type = 'button';
   header.dataset.group = key;
   header.setAttribute('aria-expanded', String(!collapsed));
   header.append(icon(collapsed ? 'chevron_right' : 'expand_more'), el('span', 'cs-m-group-label', label), el('span', 'cs-m-group-count', String(servers.length)));
-  if (sortable) header.append(dragHandle('cs-m-drag', mt('dragToSort')));
   group.append(header);
   if (!collapsed) {
     const body = el('div', 'cs-m-group-body');
-    if (sortable) body.dataset.sortScope = `group:${key}`;
-    const ordered = sortable ? nodeOrder().sortServers(key, servers) : servers;
-    for (const server of ordered) body.append(renderRow(server, sessions, activeId, sortable));
+    for (const server of servers) body.append(renderRow(server, sessions, activeId));
     group.append(body);
   }
   return group;
@@ -141,7 +129,6 @@ function render(): void {
   banner.hidden = tabs === 0;
   banner.replaceChildren(icon('terminal'), el('span', '', mt('sessionsBanner', { n: tabs })), el('span', 'cs-m-banner-go', mt('backToTerminal')), icon('arrow_forward'));
 
-  const { groups, ungrouped, total } = groupServersByTag(servers, { sort: 'name', query: state.query });
   const fragment = document.createDocumentFragment();
   if (!state.query) {
     const recent = [...servers]
@@ -150,12 +137,16 @@ function render(): void {
       .slice(0, RECENT_LIMIT);
     if (recent.length) fragment.append(renderGroup(RECENT_KEY, mt('recent'), recent, sessions, activeId));
   }
-  // “未分组”也作为一个可拖动的分组参与排序
-  const all = [...groups.map((g) => ({ key: g.key, label: g.label, servers: g.servers }))];
-  if (ungrouped.length) all.push({ key: UNGROUPED_KEY, label: mt('ungrouped'), servers: ungrouped });
-  for (const group of state.query ? all : nodeOrder().sortGroups(all)) {
-    fragment.append(renderGroup(group.key, group.label, group.servers, sessions, activeId));
+  // 没有搜索时按手动排序显示；搜索结果按名称
+  let total = servers.length;
+  let groups = orderedGroups(servers);
+  if (state.query) {
+    const found = groupServersByTag(servers, { sort: 'name', query: state.query });
+    total = found.total;
+    groups = found.groups.map((g) => ({ key: g.key, label: g.label, servers: g.servers }));
+    if (found.ungrouped.length) groups.push({ key: UNGROUPED_KEY, label: mt('ungrouped'), servers: found.ungrouped });
   }
+  for (const group of groups) fragment.append(renderGroup(group.key, group.label, group.servers, sessions, activeId));
   if (total === 0) fragment.append(el('div', 'cs-m-empty', servers.length ? mt('noMatch') : mt('empty')));
   list.replaceChildren(fragment);
 }
@@ -182,7 +173,7 @@ function connectOrSwitch(server: ServerConfig): void {
   if (!connectServer(server.id)) notify(mt('noMatch'), { variant: 'warning' });
 }
 
-function showServerActions(server: ServerConfig): void {
+function showServerActions(server: ServerConfig, groupKey: string | null): void {
   const open = sessionsByServer().get(server.id)?.length ?? 0;
   const actions = [{ label: mt('connectNew'), icon: 'add_circle', action: () => void connectServer(server.id) }];
   if (open > 0) actions.push({ label: `${mt('switchSession')} (${open})`, icon: 'swap_horiz', action: () => void focusSession(server.id) });
@@ -198,6 +189,11 @@ function showServerActions(server: ServerConfig): void {
       },
     }
   );
+  actions.push({
+    label: mt('reorder'),
+    icon: 'swap_vert',
+    action: () => void openReorderSheet(groupKey && groupKey !== RECENT_KEY ? groupKey : undefined),
+  });
   showActions(server.name, actions, mt('cancel'));
 }
 
@@ -207,7 +203,8 @@ list.addEventListener('contextmenu', (event) => {
   if (!server) return;
   event.preventDefault();
   longPressFired = true;
-  showServerActions(server);
+  const groupKey = (event.target as HTMLElement).closest<HTMLElement>('.cs-m-group')?.dataset.groupKey ?? null;
+  showServerActions(server, groupKey);
 });
 list.addEventListener('click', (event) => {
   if (longPressFired) {
@@ -241,6 +238,8 @@ function applyTexts(): void {
   searchInput.placeholder = mt('search');
   settingsButton.setAttribute('aria-label', mt('settings'));
   settingsButton.title = mt('settings');
+  reorderButton.setAttribute('aria-label', mt('reorder'));
+  reorderButton.title = mt('reorder');
 }
 
 // ---------- 挂载 ----------
@@ -253,16 +252,7 @@ export function mountNodes(): void {
   }
   toolbar.after(root);
   applyTexts();
-  installSortable({
-    root: list,
-    scroller: () => scrollParent(list),
-    compactClass: (scope) => (scope === 'groups' ? 'cs-m-compact' : null),
-    onSort: (scope, keys) => {
-      if (scope === 'groups') nodeOrder().setGroups(keys);
-      else if (scope.startsWith('group:')) nodeOrder().setServers(scope.slice(6), keys.map(Number));
-      render();
-    },
-  });
+  window.addEventListener(ORDER_CHANGED_EVENT, scheduleRender);
   subscribe(scheduleRender);
   onLocaleChange(() => {
     applyTexts();
