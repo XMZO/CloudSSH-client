@@ -374,6 +374,7 @@ dependencies = [
  "cookie",
  "cookie_store",
  "futures-util",
+ "libc",
  "log",
  "reqwest 0.12.28",
  "rustls",

@@ -71,6 +71,12 @@ struct NameResult {
 
 #[cfg(target_os = "android")]
 fn call<R: Runtime, T: serde::de::DeserializeOwned + Default>(app: &AppHandle<R>, method: &str, payload: impl Serialize) -> Result<T, String> {
+    // run_mobile_plugin 会把调用投递到 Android 主线程再阻塞等结果：在主线程上调用必然永久死锁（ANR）。
+    // 主线程的线程号等于进程号，遇到就直接报错，让问题暴露成日志而不是卡死。
+    if unsafe { libc::gettid() } == std::process::id() as libc::pid_t {
+        log::error!("refused native call {method} on the Android main thread");
+        return Err(format!("不能在主线程调用原生能力：{method}"));
+    }
     let handle = app.state::<NativeHandle<R>>();
     handle.0.run_mobile_plugin::<T>(method, payload).map_err(|e| e.to_string())
 }
