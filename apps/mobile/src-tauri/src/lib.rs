@@ -192,79 +192,98 @@ fn ws_close(net: State<'_, Net>, id: u32, code: Option<u16>, reason: Option<Stri
 }
 
 // ---------- 原生能力 ----------
+//
+// 这些命令都会同步调用 Kotlin 插件（run_mobile_plugin 会阻塞等结果），而插件命令常常要在 Android 主线程上执行。
+// 如果调用方本身就在主线程（导航回调、同步命令在某些路径下的执行线程），主线程会自己等自己 → ANR。
+// 所以一律声明为 async，并放到阻塞线程池里调用原生能力，保证永远不在主线程上等待插件。
+
+/// 在阻塞线程池里调用原生能力
+async fn on_worker<R: Runtime, T: Send + 'static>(
+    app: AppHandle<R>,
+    call: impl FnOnce(&AppHandle<R>) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || call(&app)).await.map_err(|e| e.to_string())?
+}
 
 #[tauri::command]
-fn keep_alive<R: Runtime>(app: AppHandle<R>, sessions: u32) -> Result<(), String> {
-    native::keep_alive(&app, sessions)
+async fn keep_alive<R: Runtime>(app: AppHandle<R>, sessions: u32) -> Result<(), String> {
+    on_worker(app, move |app| native::keep_alive(app, sessions)).await
 }
 
 /// 下载：请求体为文件内容，文件名（encodeURIComponent）与 MIME 放在头里
 #[tauri::command]
-fn save_download<R: Runtime>(app: AppHandle<R>, request: Request<'_>) -> Result<String, String> {
-    let name = header(&request, "x-file-name").map(percent_decode).unwrap_or_else(|| "download".into());
+async fn save_download<R: Runtime>(app: AppHandle<R>, request: Request<'_>) -> Result<String, String> {
+    let name = sanitize_file_name(&header(&request, "x-file-name").map(percent_decode).unwrap_or_else(|| "download".into()));
     let mime = header(&request, "x-mime").unwrap_or("application/octet-stream").to_string();
     let bytes = raw_body(&request)?;
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let tmp = dir.join(format!("download-{}.part", std::process::id() as u128 * 1_000 + bytes.len() as u128));
-    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
-    let result = native::save_download(&app, &tmp.to_string_lossy(), &sanitize_file_name(&name), &mime);
-    let _ = std::fs::remove_file(&tmp);
-    result
+    on_worker(app, move |app| {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        let tmp = dir.join(format!("download-{stamp}.part"));
+        std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+        let result = native::save_download(app, &tmp.to_string_lossy(), &name, &mime);
+        let _ = std::fs::remove_file(&tmp);
+        result
+    })
+    .await
 }
 
 #[tauri::command]
-fn clipboard_read<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
-    native::clipboard_read(&app)
+async fn clipboard_read<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+    on_worker(app, |app| native::clipboard_read(app)).await
 }
 
 #[tauri::command]
-fn clipboard_write<R: Runtime>(app: AppHandle<R>, text: String) -> Result<(), String> {
-    native::clipboard_write(&app, &text)
+async fn clipboard_write<R: Runtime>(app: AppHandle<R>, text: String) -> Result<(), String> {
+    on_worker(app, move |app| native::clipboard_write(app, &text)).await
 }
 
 #[tauri::command]
-fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+async fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("只允许打开 http(s) 链接".into());
     }
-    native::open_external(&app, &url);
-    Ok(())
+    on_worker(app, move |app| {
+        native::open_external(app, &url);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-fn move_to_background<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    native::move_to_background(&app)
+async fn move_to_background<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    on_worker(app, |app| native::move_to_background(app)).await
 }
 
 #[tauri::command]
-fn system_bars<R: Runtime>(app: AppHandle<R>, color: String) -> Result<(), String> {
+async fn system_bars<R: Runtime>(app: AppHandle<R>, color: String) -> Result<(), String> {
     let valid = color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit());
     if !valid {
         return Err("颜色格式应为 #rrggbb".into());
     }
-    native::system_bars(&app, &color)
+    on_worker(app, move |app| native::system_bars(app, &color)).await
 }
 
 #[tauri::command]
-fn battery_status<R: Runtime>(app: AppHandle<R>) -> Result<Option<bool>, String> {
-    native::battery_status(&app)
+async fn battery_status<R: Runtime>(app: AppHandle<R>) -> Result<Option<bool>, String> {
+    on_worker(app, |app| native::battery_status(app)).await
 }
 
 #[tauri::command]
-fn storage_info<R: Runtime>(app: AppHandle<R>) -> Result<Option<native::StorageInfo>, String> {
-    native::storage_info(&app)
+async fn storage_info<R: Runtime>(app: AppHandle<R>) -> Result<Option<native::StorageInfo>, String> {
+    on_worker(app, |app| native::storage_info(app)).await
 }
 
 #[tauri::command]
-fn clear_cache<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    native::clear_cache(&app)
+async fn clear_cache<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    on_worker(app, |app| native::clear_cache(app)).await
 }
 
 #[tauri::command]
-fn request_battery_exemption<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    native::request_battery_exemption(&app)
+async fn request_battery_exemption<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    on_worker(app, |app| native::request_battery_exemption(app)).await
 }
 
 fn percent_decode(input: &str) -> String {

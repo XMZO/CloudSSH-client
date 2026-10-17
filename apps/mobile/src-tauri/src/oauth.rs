@@ -39,7 +39,18 @@ fn is_github_auth(url: &Url) -> bool {
             .any(|p| url.path() == *p || url.path().starts_with(&format!("{p}/")))
 }
 
-/// 返回 true 表示允许 WebView 继续导航
+/// 交给系统打开外部链接。
+///
+/// 导航回调运行在 Android 主线程上（WebViewClient.shouldOverrideUrlLoading / RustWebView.loadUrl），
+/// 而调用 Kotlin 插件会阻塞等待、插件又要在主线程执行 —— 在这里同步调用会让主线程自己等自己（ANR）。
+/// 所以放到阻塞线程池里异步执行，导航回调立即返回。
+fn open_external_later<R: Runtime>(webview: &Webview<R>, url: &Url) {
+    let app = webview.app_handle().clone();
+    let url = url.to_string();
+    tauri::async_runtime::spawn_blocking(move || native::open_external(&app, &url));
+}
+
+/// 返回 true 表示允许 WebView 继续导航。这里运行在主线程：不能做任何阻塞调用（包括调用原生插件）。
 pub fn on_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let net = webview.state::<Net>();
     let instance = net.current();
@@ -67,12 +78,14 @@ pub fn on_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     match url.scheme() {
         "http" | "https" => {
             // 其他网页交给系统浏览器，避免离开应用页面导致 SSH 会话被销毁
-            native::open_external(webview.app_handle(), url.as_str());
+            open_external_later(webview, url);
             false
         }
-        "about" | "data" | "blob" => true,
+        // javascript: 是在当前页面执行脚本，不是跳转（例如 HyperOS 点状态栏回顶部会 loadUrl("javascript:...")）
+        "javascript" | "about" | "data" | "blob" => true,
         _ => {
-            native::open_external(webview.app_handle(), url.as_str());
+            // mailto:、tel:、intent: 等交给系统
+            open_external_later(webview, url);
             false
         }
     }
