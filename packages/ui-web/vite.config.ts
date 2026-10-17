@@ -133,6 +133,14 @@ const COMMON_HOOKS: Hook[] = [
     inject: '        if ((globalThis as any).__cloudsshAnnounceResume === true)\n',
   },
   {
+    // 网页版拉取服务器列表失败时会把列表清空，断网一次后，客户端节点页/侧栏（显示的是另一份缓存）
+    // 点节点就找不到服务器、什么也不发生。网络失败（fetch 抛 TypeError）时保留已有列表；
+    // 服务端明确返回错误（未登录等）时仍按网页版原样清空
+    file: '/upstream/frontend/src/server-list.ts',
+    anchor: "      console.error('Failed to fetch servers:', e);\n",
+    inject: '      if (e instanceof TypeError && this.servers.length) return;\n',
+  },
+  {
     // 语言按钮显示当前语言（网页版显示的是下一个语言）：网页版每次刷新按钮后交给
     // overrides/shared/language-picker.ts 改写文字，点击后弹出语言列表
     file: '/upstream/frontend/src/i18n/index.ts',

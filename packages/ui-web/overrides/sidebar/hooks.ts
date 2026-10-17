@@ -2,6 +2,8 @@
  * 访问网页版内部实例（由 vite.config.ts 的 desktopHooks 在构建时登记）。
  * 这些都是上游的私有实现细节：每个调用都做存在性检查，找不到就返回 false 让侧栏降级。
  */
+import { t } from '../../upstream/frontend/src/i18n';
+import { notify } from '../../upstream/frontend/src/ui-feedback';
 
 interface TerminalLike {
   insertSnippet?: (command: string, run: boolean) => boolean;
@@ -29,6 +31,8 @@ interface ServerListLike {
   servers?: { id: number }[];
   connectServer?: (id: number) => Promise<void>;
   showModal?: (mode: string, server?: unknown) => void;
+  /** 重新拉取服务器列表（网页版回到主页时也会调用） */
+  refresh?: () => Promise<void>;
 }
 
 interface TabManagerLike {
@@ -65,11 +69,31 @@ export function canConnect(): boolean {
   return typeof serverList()?.connectServer === 'function';
 }
 
-/** 走网页版自己的连接流程（申请一次性 token → 新建终端标签） */
+/**
+ * 在网页版自己的服务器列表里找这台服务器。网页版只操作它列表里有的服务器，而节点页/侧栏显示的是另一份缓存，
+ * 两者可能不一致（例如网页版的列表还没加载出来，或者某次刷新失败被清空过）。找不到就先让网页版重新拉一次；
+ * 仍找不到（多半是网络不通）时提示，而不是点了没反应。
+ */
+async function findListedServer(list: ServerListLike, id: number): Promise<unknown | null> {
+  const find = () => list.servers?.find((item) => item.id === id) ?? null;
+  const listed = find();
+  if (listed) return listed;
+  try {
+    await list.refresh?.();
+  } catch {
+    // 下面统一提示
+  }
+  const server = find();
+  if (!server) notify(t('server.loadFailed'), { title: t('server.connectFailed'), variant: 'danger' });
+  return server;
+}
+
+/** 走网页版自己的连接流程（申请一次性 token → 新建终端标签）；返回 false 表示网页版钩子不可用 */
 export function connectServer(id: number): boolean {
   const list = serverList();
   if (typeof list?.connectServer !== 'function') return false;
-  void list.connectServer(id);
+  const connect = list.connectServer.bind(list);
+  void findListedServer(list, id).then((server) => server && connect(id));
   return true;
 }
 
@@ -80,9 +104,9 @@ export function openServerModal(mode: 'add' | 'edit' | 'clone', id?: number): bo
     list.showModal('add');
     return true;
   }
-  const server = list.servers?.find((item) => item.id === id);
-  if (!server) return false;
-  list.showModal(mode, server);
+  const show = list.showModal.bind(list);
+  if (id === undefined) return false;
+  void findListedServer(list, id).then((server) => server && show(mode, server));
   return true;
 }
 

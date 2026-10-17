@@ -1,8 +1,7 @@
 node_modules/
 dist/
 release/
-# 正在运行旧版时打包到旁边的输出目录（例如 release-0.2.2/）
-release-*/
+.release-trash-*/
 out/
 coverage/
 *.log

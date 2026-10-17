@@ -1,7 +1,7 @@
 {
   "name": "@cloudssh/desktop",
   "productName": "CloudSSH",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "CloudSSH 桌面客户端",
   "author": "XMZO",
@@ -14,7 +14,7 @@
     "dist:win": "node ../../scripts/version.mjs check && pnpm run clean:release && node build.mjs && electron-builder --win --config electron-builder.yml",
     "dist:dir": "pnpm run clean:release && node build.mjs && electron-builder --win --dir --config electron-builder.yml",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.renderer.json",
-    "clean:release": "node -e \"require('fs').rmSync('release',{recursive:true,force:true})\""
+    "clean:release": "node scripts/clean-release.mjs"
   },
   "devDependencies": {
     "@cloudssh/core": "workspace:*",
