@@ -9,6 +9,7 @@ import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from 'electron';
 import { configStore } from '../config/store';
 import { logFilePath } from '../logger';
 import { openManagerWindow } from './manager-window';
+import { versionLabel } from './version';
 import {
   focusedInstanceWindow,
   instanceIdOf,
@@ -79,7 +80,7 @@ export function buildAppMenu(): void {
         { label: '打开配置目录', click: () => void shell.openPath(app.getPath('userData')) },
         { label: '打开日志', click: () => void shell.openPath(logFilePath()) },
         { type: 'separator' },
-        { label: `CloudSSH 桌面客户端 v${app.getVersion()}`, enabled: false },
+        { label: `CloudSSH 桌面客户端 ${versionLabel()}`, enabled: false },
       ],
     },
   ];

@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readVersionInfo, versionProblems } from './version.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mobileDir = path.join(repoRoot, 'apps', 'mobile');
@@ -139,8 +140,16 @@ console.log(`[mobile] JAVA_HOME=${javaHome}`);
 console.log(`[mobile] ANDROID_HOME=${sdk}`);
 console.log(`[mobile] NDK_HOME=${ndk}`);
 
-const version = JSON.parse(fs.readFileSync(path.join(mobileDir, 'src-tauri', 'tauri.conf.json'), 'utf8')).version;
 const [command = 'build', ...rest] = process.argv.slice(2);
+// 版本号以 version.json 为准；打包前确认 Cargo.toml / tauri.conf.json 等已同步，避免装出版本号对不上的 APK
+const { version } = readVersionInfo();
+if (command === 'build') {
+  const problems = versionProblems();
+  if (problems.length) {
+    console.error(`[mobile] 版本号不一致，先运行 node scripts/version.mjs sync：\n  - ${problems.join('\n  - ')}`);
+    process.exit(1);
+  }
+}
 const tauri = ['exec', 'tauri', 'android'];
 
 switch (command) {

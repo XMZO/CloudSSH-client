@@ -15,6 +15,7 @@ import { registerIpc } from './platform/ipc';
 import { openManagerWindow } from './platform/manager-window';
 import { buildAppMenu, buildTray, refreshMenus } from './platform/menus';
 import { getUpdater } from './platform/updater';
+import { versionLabel } from './platform/version';
 import {
   instanceWindows,
   markQuitting,
@@ -55,7 +56,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     configStore.load();
-    log.info(`启动 CloudSSH 桌面客户端 v${app.getVersion()}（Electron ${process.versions.electron}）`);
+    log.info(`启动 CloudSSH 桌面客户端 ${versionLabel()}（Electron ${process.versions.electron}）`);
     log.info('配置文件', configStore.path);
 
     registerIpc();

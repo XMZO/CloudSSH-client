@@ -2,7 +2,9 @@
 
 CloudSSH 的 Windows 桌面客户端（Electron）和 Android 客户端（Tauri 2 + Rust）。两者都直接对接已部署的 [CloudSSH](https://github.com/XMZO/CloudSSH) Worker（默认 `https://bash.al`，即路由到 Worker 的自定义域名），**无需修改 Worker**。
 
-第一版界面“照搬”网页版：GitHub 登录、服务器列表、SSH 终端、SFTP、Agent、分享、主题等功能与网页版一致。架构上把连接配置、平台适配和 UI 拆成独立的层，之后可以换成自研 UI。Android 版见下文“[Android 客户端](#android-客户端)”。
+界面以网页版为基础：GitHub 登录、服务器列表、SSH 终端、SFTP、Agent、分享、主题等功能与网页版一致。架构上把连接配置、平台适配和 UI 拆成独立的层，之后可以换成自研 UI。Android 版另有一套为手机重写布局的深色主题“黑曜”（默认启用），见下文“[Android 客户端](#android-客户端)”。
+
+当前版本见 [`version.json`](version.json)，更新内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -285,11 +287,9 @@ pnpm install && pnpm build:ui
 
 网页版从 Google Fonts 在线加载 Material Symbols 图标字体；离线或访问不畅时，图标会退化成 “close”“search” 这样的文字。客户端（桌面与手机）改为内置：
 
-- `scripts/update-icon-font.mjs` 扫描网页版与 `overrides/` 源码里实际用到的图标名（约 150 个），向 Google Fonts 请求只含这些图标的子集，写入 `packages/ui-web/overrides/fonts/`（约 38KB）
+- `scripts/update-icon-font.mjs` 扫描网页版与 `overrides/` 源码里实际用到的图标名（约 160 个），向 Google Fonts 请求只含这些图标的子集，写入 `packages/ui-web/overrides/fonts/`（约 39KB）
 - 构建时把 `index.html` 里在线字体的 `<link>` 原地换成内联 `<style>`（字体以 data URI 内嵌）。原地替换保证层叠顺序不变——网页版用 `text-[18px]` 等工具类控制图标大小，依赖图标样式排在 `style.css` 之前
 - 网页版新增图标后运行 `pnpm update:icon-font`（需要能访问 Google Fonts，代理用 `HTTPS_PROXY`）；运行时拼出来的图标名扫描不到，可加到脚本里的 `EXTRA_ICONS`
-
----
 
 ---
 
@@ -347,7 +347,7 @@ pnpm install && pnpm build:ui
 | 节点首页 | 代替网页版每页 3 张卡片的分页：搜索（名称、地址、标签），“最近连接”置顶，按标签分组并可折叠，显示系统图标与在线会话数 |
 | 调整排序 | 节点页顶部的排序按钮（或长按节点 → 调整排序）打开排序面板：拖动分组顺序，点分组拖动组内服务器顺序；按住 ⋮⋮ 立即拖、长按条目也能拖，被拖项浮起跟手、其余项动画让位，拖到边缘自动滚动；可恢复默认排序。顺序保存在本地，按实例区分 |
 | 多会话终端 | 网页版的标签页；节点页顶部显示“N 个会话进行中”一键回终端。点节点时已有会话就切过去，长按可“新建连接 / 切换会话 / 编辑 / 克隆 / 复制地址” |
-| 标签栏 | 一屏放 3 个标签，超出横向滚动，“+”固定在右侧；名称中间省略（保留开头和最后一段，如“宁宁云…NoLimit”）；右侧会话按钮打开会话列表，显示完整名称、地址与状态。防误触：只有当前标签显示小号关闭按钮，关闭仍在连接的会话前先确认 |
+| 标签栏（经典主题） | 黑曜主题用“紧凑终端栏”代替，见下文。一屏放 3 个标签，超出横向滚动，“+”固定在右侧；名称中间省略（保留开头和最后一段，如“宁宁云…NoLimit”）；右侧会话按钮打开会话列表，显示完整名称、地址与状态。防误触：只有当前标签显示小号关闭按钮，关闭仍在连接的会话前先确认 |
 | SFTP | 上传走系统文件选择器；下载与日志导出写入系统“下载”目录（Android 10+ 不需要存储权限），重名自动改名 |
 | 后台保活 | 有会话时启动前台服务（通知栏显示会话数），持有 CPU 与 Wi-Fi 唤醒锁，WebView 渲染进程保持重要优先级；设置里可一键申请“不受电池优化限制”。全部会话关闭后自动停止 |
 | 返回键 | 先关最上层的浮层（设置、对话框、抽屉、更多菜单）；在终端时回到节点页（会话保留）；在节点页时退到后台而不是退出 |
@@ -355,11 +355,39 @@ pnpm install && pnpm build:ui
 | 剪贴板 | `navigator.clipboard` 由原生剪贴板实现，终端粘贴可用 |
 | 全面屏与键盘 | 系统栏和键盘的空间由原生让出，键盘弹出时终端行数自动变化；系统栏颜色跟随网页主题 |
 
+### 界面主题：黑曜（默认）与经典
+
+在“设置 → 界面主题”里切换，即时生效，不用重启：
+
+- **黑曜**：为手机重写的深色主题。它重新安排了布局，不只是换颜色，目标是终端尽量大、面板不盖住终端、常用操作单手可达
+- **经典**：网页版原来的移动端布局，配色跟随网页版主题（赛博朋克等）
+
+黑曜由 6 个模块组成，每个都能在设置里单独开关：
+
+| 模块 | 作用 |
+|---|---|
+| 节点首页 | 大标题和节点/分组统计；搜索、排序、添加集中在底部浮动栏；“回到终端”改为浮动胶囊；识别出系统的节点显示系统图标 |
+| 紧凑终端栏 | 顶栏、标签栏、状态栏合成一行，默认字号下终端从 43 行增加到 47 行。左右滑动标题切换会话，点标题打开会话列表；“更多”里有命令、AI 助手、搜索、导出日志、横屏、快捷键、复制地址、新建连接、界面设置、字号与断开 |
+| 半屏面板 | SFTP、常用命令、AI 助手从底部弹出半屏。拖把手可以拉到全屏或下滑关闭，点把手在半屏和全屏之间切换；每种面板记住自己的高度（默认都是半屏）；打开时不自动弹键盘，键盘弹出时自动全屏，打字时下拉面板会收起键盘回到半屏 |
+| 快捷命令 | 键盘上方一排已保存的命令：点按填入（不回车），长按可“填入并执行 / 复制 / 管理”，带 `{{参数}}` 的命令先弹表单；按键栏最左侧的 ⚡ 显示或收起 |
+| 按键栏 | 更大的圆角按键，Ctrl / Alt 等修饰键的状态更醒目 |
+| 流畅动画 | 页面、面板、会话切换的过渡；系统打开“减少动态效果”时自动关闭 |
+
+另外可以选 5 种强调色，调终端字号（10～18，或“自动”沿用网页版按屏幕宽度的规则）。“恢复默认”只重置强调色、模块和字号，不会切走主题。
+
+实现与扩展（代码在 `packages/ui-web/overrides/mobile/skin/`）：
+
+- 所有改动都在 `overrides/` 里，不改 `upstream/`。样式按 `<html>` 上的属性生效：`data-cs-skin="obsidian"`、`data-cs-accent`、`data-cs-mods="hosts chrome …"`（CSS 用 `~=` 判断某个模块是否开启）。关掉一个模块，对应部分就恢复成网页版原样
+- 配色只有一个来源 `skin/palette-data.ts`：启动时由 `early.ts` 在网页版脚本之前注入，不会闪屏；运行时通过网页版自己的主题接口（`applyImportedTheme`）应用，终端配色一起变化
+- 每个模块实现 `SkinModule { id, mount() }`，`mount()` 返回清理函数。新增模块：写 `skin/modules/<名字>.ts`（和同名 `.css`），登记到 `skin/modules/index.ts` 的 `MODULES` 列表，把 id 加进 `skin/state.ts` 的 `MODULE_IDS`，再在 `skin/i18n.ts` 补上名称和说明（简体、繁体、英文）。删除模块按相反步骤
+- 需要改网页版行为时用构建钩子（`vite.config.ts` 的 `MOBILE_HOOKS`）：终端字号覆盖，以及打开命令面板、AI 助手时不自动聚焦输入框，都是在锚点后面注入一行条件。上游代码变化导致锚点找不到时，构建只告警，相应功能退回网页版原样
+- 网页版抽屉的开关状态从它们自己的 inline style 判断（`skin/panels.ts`）。关闭面板一律点面板自己的关闭按钮，与点 × 的效果完全相同（例如关闭 SFTP 会中断正在进行的传输）
+
 ### 体积
 
 | 项目 | 大小 | 做法 |
 |---|---|---|
-| 安装包（release，arm64） | 约 7.5MB | 其中 Rust 动态库约 5.7MB（含打包的界面，Brotli 压缩），其余主要是 Tauri 运行时依赖的 Jackson 等 Java 库 |
+| 安装包（release，arm64） | 约 7.7MB | 其中 Rust 动态库约 5.9MB（含打包的界面，Brotli 压缩），其余主要是 Tauri 运行时依赖的 Jackson 等 Java 库 |
 | 安装后本体 | 与安装包相当 | 动态库在 APK 里不压缩、按 16KB 页对齐，系统直接映射，不再解压出第二份 |
 | 应用数据 | 通常 2～5MB | 主要是 WebView 的数据目录；关闭 WebView 统计埋点，并阻止它生成约 4MB 的 `BrowserMetrics-spare.pma` 预分配文件 |
 | 缓存 | 上限 16MB | 界面在 APK 里，不靠 HTTP 缓存。超过 16MB 时下次启动自动清空；“设置 → 存储”显示占用，也可以手动清除 |
@@ -373,6 +401,8 @@ Rust 侧的压缩手段：`opt-level="z"`、LTO、`codegen-units=1`、`panic=abo
 - Windows 调试构建可设 `CLOUDSSH_WEBVIEW_DEBUG_PORT=9555` 打开 WebView2 远程调试端口，便于自动化测试
 - 模拟器联网需要代理时，在应用“设置 → 网络代理”填 `http://10.0.2.2:7890`（`10.0.2.2` 是模拟器访问宿主机的固定地址）
 - 调试版 APK 可用 `chrome://inspect` 或 `adb forward tcp:9556 localabstract:webview_devtools_remote_<pid>` 连接 WebView 调试
+- `node scripts/mock-worker.mjs [端口]`（默认 8788）：本地假 Worker，提供 25 台假服务器（含分组和系统类型）、可以交互的假 shell（输入 `help` 查看命令）、SFTP 目录列表和命令片段接口，不需要真实服务器就能调界面。在手机或模拟器上先运行 `adb reverse tcp:8788 tcp:8788`，再在“设置 → 实例”里添加 `http://127.0.0.1:8788`
+- 模拟器的两个假象，真机上不会出现：一是 WebGL 由软件渲染（SwiftShader），终端字形可能显示残缺，截图检查文字时可以在 WebView 调试里对当前终端执行 `webglAddon.dispose()` 改用 DOM 渲染；二是模拟器报告 `pointer: fine`，横屏宽度超过 767px 时网页版的移动端媒体查询不生效，按键栏会消失
 
 **正式签名**：在 `apps/mobile/src-tauri/gen/android/` 下新建 `keystore.properties`（已加入 .gitignore）：
 
@@ -404,6 +434,29 @@ keyPassword=******
 
 ---
 
+## 版本号与版本代号
+
+版本号和代号只在根目录的 [`version.json`](version.json) 里维护，用脚本修改和同步：
+
+```bash
+pnpm version:check                   # 查看当前版本，检查各处是否一致
+pnpm version:set 0.3.0 牛郎 Altair    # 修改版本号和代号，并同步到各处
+pnpm version:set 0.2.1               # 修订版沿用当前代号
+node scripts/version.mjs sync        # 手动改过 version.json 之后同步
+```
+
+`scripts/version.mjs` 同步的位置：
+
+- 根目录、`apps/desktop`、`apps/mobile`、`packages/core` 的 `package.json`。`packages/ui-web` 的版本跟随上游网页版，不在此列
+- `apps/mobile/src-tauri` 下的 `Cargo.toml`、`Cargo.lock`、`tauri.conf.json`
+- 生成 `packages/core/src/version.ts`（`CLIENT_VERSION`、`CLIENT_CODENAME`）。桌面端“帮助”菜单、实例管理页、启动日志，以及手机端“设置 → 关于”据此显示代号
+
+Android 的 `versionCode` 由 Tauri 按 主×1000000 + 次×1000 + 修订 推导（0.2.0 → 2000），所以次版本号和修订号要小于 1000；新版本号必须更高才能覆盖安装，脚本默认拒绝降级（确实需要时加 `--force`）。`pnpm test`、`pnpm dist:win` 和 `pnpm android:build` 都会先检查各处版本号是否一致，不一致直接报错。
+
+代号取自夜空中的亮星：0.1 天狼 Sirius，0.2 织女 Vega。次版本号或主版本号升级时换新代号，修订版沿用原代号。发版时在 [CHANGELOG.md](CHANGELOG.md) 顶部补上这一版的内容。
+
+---
+
 ## 常用命令
 
 | 命令 | 说明 |
@@ -420,7 +473,10 @@ keyPassword=******
 | `pnpm android:dev` | 在手机/模拟器上热更新运行 |
 | `pnpm mobile:dev` | 在电脑窗口里运行移动端（界面迭代） |
 | `pnpm typecheck` | 类型检查（core / ui-web / desktop） |
-| `pnpm test` | 单元测试（core） |
+| `pnpm test` | 检查版本号是否一致，然后运行单元测试（core） |
+| `pnpm version:check` | 查看版本号与代号，检查各处是否一致 |
+| `pnpm version:set <版本> [中文代号 英文代号]` | 修改版本号和代号，并同步到各处 |
+| `node scripts/mock-worker.mjs` | 启动本地假 Worker，不连真实服务器调界面 |
 
 ## 故障排查
 

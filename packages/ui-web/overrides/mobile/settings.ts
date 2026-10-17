@@ -2,6 +2,7 @@
  * 移动端设置面板：实例管理（切换/新增/编辑/删除/清除登录/测试连接）、网络代理、后台保活、关于。
  * 实例与代理保存在 Rust 侧（settings.json），切换实例后整页重新加载。
  */
+import { CLIENT_CODENAME, CLIENT_VERSION } from '@cloudssh/core';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { skinSettingsSection } from './skin';
 import { tabCount } from '../sidebar/hooks';
@@ -265,7 +266,12 @@ export async function openSettings(): Promise<void> {
   void refreshStorage();
 
   const about = section(mt('about'));
-  about.append(el('p', 'cs-m-hint', mt('appVersion', { v: state.appVersion })));
+  // 代号随界面一起打包；原生层版本与之一致时才显示代号（调试时混用新旧构建也不会张冠李戴）
+  const appVersion =
+    state.appVersion === CLIENT_VERSION
+      ? mt('appVersionNamed', { v: state.appVersion, zh: CLIENT_CODENAME.zh, en: CLIENT_CODENAME.en })
+      : mt('appVersion', { v: state.appVersion });
+  about.append(el('p', 'cs-m-hint', appVersion));
   const uiVersion = el('p', 'cs-m-hint');
   about.append(uiVersion);
   fetch('/cloudssh-ui.json')

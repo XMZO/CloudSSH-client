@@ -14,6 +14,8 @@ interface ManagerState {
   openInstanceIds: string[];
   bundledUis: { id: string; manifest: UiManifest | null }[];
   appVersion: string;
+  /** 带代号的版本文本，如 v0.2.0「织女 Vega」 */
+  appVersionLabel: string;
   electronVersion: string;
   configPath: string;
 }
@@ -180,7 +182,7 @@ function applyState(next: ManagerState): void {
   }
   prefCloseToTray.checked = next.preferences.closeToTray;
   prefShowMenuBar.checked = next.preferences.showMenuBar;
-  $('app-meta').textContent = `客户端 v${next.appVersion} · Electron ${next.electronVersion}`;
+  $('app-meta').textContent = `客户端 ${next.appVersionLabel} · Electron ${next.electronVersion}`;
   renderList();
 }
 

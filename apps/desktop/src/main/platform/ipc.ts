@@ -18,6 +18,7 @@ import { listBundledUis } from '../ui/providers';
 import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
 import { refreshMenus } from './menus';
 import { probeOAuthRedirectUri } from './oauth';
+import { versionLabel } from './version';
 import { clearInstanceData } from './session';
 import { getUpdater } from './updater';
 import {
@@ -59,6 +60,7 @@ function managerState() {
     openInstanceIds: [...openIds],
     bundledUis: listBundledUis().map(({ id, manifest }) => ({ id, manifest })),
     appVersion: app.getVersion(),
+    appVersionLabel: versionLabel(),
     electronVersion: process.versions.electron,
     configPath: configStore.path,
   };

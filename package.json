@@ -1,6 +1,6 @@
 {
   "name": "cloudssh-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "CloudSSH 客户端（桌面 Electron + Android Tauri 2），对接已部署的 CloudSSH Worker",
   "packageManager": "pnpm@11.8.0",
@@ -13,12 +13,14 @@
     "dist:win": "pnpm run build:ui && pnpm --filter @cloudssh/desktop dist:win",
     "sync:web-ui": "node scripts/sync-web-ui.mjs",
     "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test",
+    "test": "node scripts/version.mjs check && pnpm -r run test",
     "mobile:dev": "pnpm --filter @cloudssh/mobile tauri dev",
     "android:build": "node scripts/mobile.mjs build",
     "android:build:debug": "node scripts/mobile.mjs build --debug",
     "android:install": "node scripts/mobile.mjs install",
     "android:dev": "node scripts/mobile.mjs dev",
-    "update:icon-font": "node scripts/update-icon-font.mjs"
+    "update:icon-font": "node scripts/update-icon-font.mjs",
+    "version:check": "node scripts/version.mjs check",
+    "version:set": "node scripts/version.mjs set"
   }
 }
