@@ -406,22 +406,59 @@ html.cs-sb-resizing .cs-sb-resizer {
 
 .cs-sb-item:hover .cs-sb-drag,
 .cs-sb-group:hover .cs-sb-drag,
-.is-dragging .cs-sb-drag {
+.is-lifted .cs-sb-drag {
   visibility: visible;
 }
 
-.cs-sb-section.is-dragging,
-.cs-sb-item.is-dragging {
+/* 被拖的行浮起跟随指针，其余行动画让位，松手后滑到落点（引擎见 shared/reorder.ts） */
+.cs-sb-section.is-lifted,
+.cs-sb-item.is-lifted {
   position: relative;
-  z-index: 2;
+  z-index: 3;
   border-radius: 6px;
-  background: var(--bg-surface-variant, var(--bg-surface));
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  background: var(--bg-elevated, var(--bg-surface));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
   outline: 1px solid var(--accent);
 }
 
-.is-dragging .cs-sb-drag {
+.cs-sb-section.is-lifted .cs-sb-group,
+.cs-sb-item.is-lifted {
+  background: var(--bg-elevated, var(--bg-surface));
+}
+
+.is-lifted .cs-sb-drag {
   color: var(--accent);
+}
+
+.cs-sb-section.is-shifting,
+.cs-sb-item.is-shifting,
+.cs-sb-section.is-settling,
+.cs-sb-item.is-settling {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 拖动中其余行不跟着指针高亮、不显示行内按钮，避免一路闪烁 */
+.is-reordering > .cs-sb-item:not(.is-lifted, .is-selected):hover,
+.is-reordering > .cs-sb-section:not(.is-lifted) > .cs-sb-group:hover {
+  background: transparent;
+}
+
+html.cs-sorting .cs-sb-go,
+html.cs-sorting .cs-sb-drag {
+  visibility: hidden;
+}
+
+html.cs-sorting .is-lifted .cs-sb-drag {
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-sb-section.is-shifting,
+  .cs-sb-item.is-shifting,
+  .cs-sb-section.is-settling,
+  .cs-sb-item.is-settling {
+    transition: none;
+  }
 }
 
 /* 拖动分组时暂时收起分组内容 */

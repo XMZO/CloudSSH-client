@@ -283,7 +283,16 @@ function renderGroupHeader(key: string, label: string, count: number, sortable: 
   return row;
 }
 
+/** 拖动排序进行中：暂停重绘（重绘会替换掉正在拖动的行），结束后补一次 */
+let dragging = false;
+let renderPending = false;
+
 function render(): void {
+  if (dragging) {
+    renderPending = true;
+    return;
+  }
+  renderPending = false;
   updateVisibility();
   const servers = getServers();
   if (!servers) return;
@@ -336,19 +345,40 @@ function snapshotOrder(): void {
   }
 }
 
+/** 保存当前看到的顺序并切到手动排序 */
+function commitOrder(): void {
+  snapshotOrder();
+  if (state.sort !== 'custom') {
+    state.sort = 'custom';
+    save(KEYS.sort, 'custom');
+  }
+  render();
+}
+
+// 整行都能拖（鼠标按住移动几像素即开始），拖分组时暂时收起各组内容
 installSortable({
   root: list,
   scroller: () => list,
   compactClass: (scope) => (scope === 'groups' ? 'cs-sb-compact' : null),
-  onSort: () => {
-    snapshotOrder();
-    if (state.sort !== 'custom') {
-      state.sort = 'custom';
-      save(KEYS.sort, 'custom');
-    }
-    render();
+  onSort: commitOrder,
+  onDragState: (active) => {
+    dragging = active;
+    if (!active && renderPending) render();
   },
 });
+
+/** Alt+↑/↓：把选中的节点在所在分组里上移/下移一位（搜索结果不参与排序） */
+function moveSelected(step: -1 | 1): void {
+  if (state.selectedId === null || state.query || dragging) return;
+  const item = visibleItems().find((node) => Number(node.dataset.id) === state.selectedId && node.dataset.sortKey !== undefined);
+  if (!item?.parentElement?.dataset.sortScope) return;
+  const sibling = step < 0 ? item.previousElementSibling : item.nextElementSibling;
+  if (!(sibling instanceof HTMLElement) || sibling.dataset.sortKey === undefined) return;
+  if (step < 0) sibling.before(item);
+  else sibling.after(item);
+  commitOrder();
+  select(state.selectedId, true);
+}
 
 // ---------- 动作 ----------
 
@@ -480,7 +510,10 @@ list.addEventListener('keydown', (event) => {
   const items = visibleItems();
   if (!items.length) return;
   const index = items.findIndex((item) => Number(item.dataset.id) === state.selectedId);
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+  if (event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+    event.preventDefault();
+    moveSelected(event.key === 'ArrowDown' ? 1 : -1);
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
     const next = event.key === 'ArrowDown' ? Math.min(items.length - 1, index + 1) : Math.max(0, index - 1);
     select(Number(items[next].dataset.id), true);

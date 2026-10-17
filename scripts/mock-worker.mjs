@@ -3,15 +3,22 @@
  * 假 Worker：不连真实服务器也能调试客户端界面（节点列表、终端、SFTP、常用命令）。
  *
  *   node scripts/mock-worker.mjs [端口，默认 8788]
+ *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist   # 同时托管构建好的界面，浏览器直接打开调试
  *
  * 客户端把实例地址设为 http://127.0.0.1:8788（安卓模拟器可配合 adb reverse tcp:8788 tcp:8788）。
+ * 带 --ui 时，非 /api 的 GET 请求返回该目录下的文件（找不到就返回 index.html），浏览器打开 http://127.0.0.1:8788 即可。
  * 提供：登录态、带分组的服务器列表、一次性连接、可交互的假 shell（help/ls/colors/seq/top…）、
  * SFTP 目录列表、命令片段增删改。全部数据在内存里，重启即恢复。仅用于本机开发，不要暴露到公网。
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
+import nodePath from 'node:path';
 
-const port = Number(process.argv[2] || 8788);
+const args = process.argv.slice(2);
+const port = Number(args.find((arg) => /^\d+$/.test(arg)) ?? 8788);
+const uiArg = args.indexOf('--ui');
+const uiDir = uiArg >= 0 && args[uiArg + 1] ? nodePath.resolve(args[uiArg + 1]) : null;
 const now = Date.now();
 
 // ---------- 数据 ----------
@@ -128,7 +135,32 @@ async function handleHttp(req, res) {
       return json(res, 200, { ok: true });
     }
   }
+  if (uiDir && method === 'GET' && !path.startsWith('/api/')) return serveUi(res, path);
   return json(res, 404, { error: 'not mocked' });
+}
+
+// ---------- 托管界面（--ui） ----------
+
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json',
+};
+
+function serveUi(res, pathname) {
+  let file = nodePath.join(uiDir, decodeURIComponent(pathname));
+  // 只允许目录内的文件；目录或不存在的路径交给单页应用的 index.html
+  if (!file.startsWith(uiDir + nodePath.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    file = nodePath.join(uiDir, 'index.html');
+  }
+  res.writeHead(200, { 'Content-Type': CONTENT_TYPES[nodePath.extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
+  fs.createReadStream(file).pipe(res);
 }
 
 // ---------- WebSocket（最小实现：解析客户端掩码帧，发送不掩码帧） ----------

@@ -1,127 +1,180 @@
 /**
- * 拖动排序（鼠标与触摸通用，基于 Pointer Events）。
+ * 电脑侧栏的拖动排序（基于 reorder.ts 的拖动引擎：被拖项浮起跟手、其余项动画让位、松手落位）。
  *
- * 约定：可排序项带 `data-sort-key`，它们的父元素带 `data-sort-scope`（同一父元素内排序）；
- * 拖动从项内的 `[data-drag-handle]` 开始（手柄设 touch-action:none，不和列表滚动、长按菜单抢手势）。
- * 拖动时直接移动真实 DOM，松手后按新顺序回调；按过手柄的那次 click 会被吞掉，避免误触发连接/折叠。
+ * 约定：可排序项带 `data-sort-key`，它们的父元素带 `data-sort-scope`（只在同一父元素内排序）。
+ * - 鼠标：在整行上按住并移动超过几像素就开始拖（不必对准手柄）；只是点击、双击、右键时行为不变
+ * - 触摸/触控笔：只从 `[data-drag-handle]` 手柄开始，行上的滑动仍是滚动列表
+ * - 拖动中按 Esc、切走窗口或指针丢失都会取消，动画回到原位，顺序不变
+ * - 行里的按钮（连接、会话圆点等）上按下不会开始拖动
+ * 列表会整体重绘，所以只在根元素上委托监听一次；拖动期间调用方应暂停重绘（onDragState）。
  */
+import { beginReorder, type ReorderSession } from './reorder';
 
 export interface SortableOptions {
-  /** 委托监听的根元素（列表会整体重绘，所以只在根上监听一次） */
+  /** 委托监听的根元素 */
   root: HTMLElement;
   /** 需要自动滚动的容器（拖动开始时取） */
   scroller: () => HTMLElement;
-  /** 拖动分组等大块时加到 root 上的类名（可用来暂时收起分组内容，方便拖动） */
+  /** 拖动分组等大块时加到 root 上的类名（用来暂时收起分组内容，方便拖动） */
   compactClass?: (scope: string) => string | null;
   onSort: (scope: string, keys: string[]) => void;
+  /** 拖动开始（true）与彻底结束（false，含落位动画与取消） */
+  onDragState?: (dragging: boolean) => void;
 }
 
-const START_DISTANCE = 4;
-const EDGE = 48;
-const MAX_SCROLL_STEP = 14;
+const MOUSE_START_DISTANCE = 5;
+const HANDLE_START_DISTANCE = 2;
 
 export function installSortable(options: SortableOptions): void {
   const { root } = options;
+  let busy = false;
+  let swallowClick = false;
 
   root.addEventListener('pointerdown', (event) => {
+    if (busy || !event.isPrimary) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    const handle = (event.target as Element | null)?.closest<HTMLElement>('[data-drag-handle]');
-    if (!handle || !root.contains(handle)) return;
-    const item = handle.closest<HTMLElement>('[data-sort-key]');
+    const target = event.target as Element | null;
+    const handle = target?.closest<HTMLElement>('[data-drag-handle]') ?? null;
+    if (event.pointerType !== 'mouse' && !handle) return;
+    // 按钮、输入框上按下不拖（手柄本身除外）
+    if (!handle && target?.closest('button, input, textarea, select, a[href]')) return;
+    const item = target?.closest<HTMLElement>('[data-sort-key]');
     const container = item?.parentElement;
     const scope = container?.dataset.sortScope;
-    if (!item || !container || !scope) return;
+    if (!item || !container || !scope || !root.contains(container)) return;
+    // 只能拖“本层”的行：例如在分组内容的空白处按下，不应拖动整个分组
+    if (target?.closest('[data-sort-scope]') !== container) return;
 
-    event.preventDefault();
-    handle.setPointerCapture(event.pointerId);
-    suppressNextClick();
-
-    const scroller = options.scroller();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
     const startY = event.clientY;
-    let lastY = startY;
-    let active = false;
+    const threshold = handle ? HANDLE_START_DISTANCE : MOUSE_START_DISTANCE;
+    let session: ReorderSession | null = null;
     let compact: string | null = null;
-    let frame = 0;
+    if (handle) event.preventDefault();
 
-    const siblings = () => [...container.children].filter((node): node is HTMLElement => node instanceof HTMLElement && node !== item && 'sortKey' in node.dataset);
-
-    const reorder = () => {
-      const others = siblings();
-      const before = others.find((node) => {
-        const rect = node.getBoundingClientRect();
-        return lastY < rect.top + rect.height / 2;
-      });
-      if (before) {
-        if (item.nextElementSibling !== before) container.insertBefore(item, before);
-      } else if (others.length) {
-        const last = others[others.length - 1];
-        if (last.nextElementSibling !== item) last.after(item);
-      }
+    const stopListening = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onCancel, true);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('blur', onCancel);
+      root.removeEventListener('lostpointercapture', onCancel);
     };
 
-    const autoScroll = () => {
-      frame = 0;
-      if (!active) return;
-      const rect = scroller === document.scrollingElement ? { top: 0, bottom: innerHeight } : scroller.getBoundingClientRect();
-      let step = 0;
-      if (lastY < rect.top + EDGE) step = -Math.ceil(((rect.top + EDGE - lastY) / EDGE) * MAX_SCROLL_STEP);
-      else if (lastY > rect.bottom - EDGE) step = Math.ceil(((lastY - (rect.bottom - EDGE)) / EDGE) * MAX_SCROLL_STEP);
-      if (step) {
-        scroller.scrollTop += step;
-        reorder();
-        frame = requestAnimationFrame(autoScroll);
+    const activate = (y: number) => {
+      busy = true;
+      swallowClick = true;
+      options.onDragState?.(true);
+      document.documentElement.classList.add('cs-sorting');
+      try {
+        root.setPointerCapture(pointerId);
+      } catch {
+        // 指针已经抬起等情况：靠 window 上的监听收尾
       }
-    };
-
-    const activate = () => {
-      active = true;
+      const scroller = options.scroller();
+      // 从按下的位置算起（不是越过阈值的位置），被拖的行与指针保持按下时的相对位置
+      let beginY = startY;
       compact = options.compactClass?.(scope) ?? null;
       if (compact) {
-        // 收起内容后把被拖的项保持在手指下面
+        // 收起各分组的内容，再把被拖的分组标题移到指针下面
         const before = item.getBoundingClientRect().top;
         root.classList.add(compact);
         scroller.scrollTop += item.getBoundingClientRect().top - before;
+        const rect = item.getBoundingClientRect();
+        beginY = rect.top + rect.height / 2;
       }
-      item.classList.add('is-dragging');
-      document.documentElement.classList.add('cs-sorting');
-      navigator.vibrate?.(10);
+      const items = [...container.children].filter(
+        (node): node is HTMLElement => node instanceof HTMLElement && node.dataset.sortKey !== undefined
+      );
+      session = beginReorder({
+        container,
+        item,
+        items,
+        scroller,
+        y: beginY,
+        onEnd: (changed) => {
+          if (compact) {
+            // 展开回来时让落下的分组保持在原来的屏幕位置
+            const before = item.getBoundingClientRect().top;
+            root.classList.remove(compact);
+            scroller.scrollTop += item.getBoundingClientRect().top - before;
+          }
+          document.documentElement.classList.remove('cs-sorting');
+          busy = false;
+          // 先按 DOM 里的新顺序保存，再宣布拖动结束：拖动期间被推迟的重绘要在保存之后才能执行，
+          // 否则会按旧顺序重绘，把刚拖好的顺序冲掉
+          if (changed) {
+            const keys = [...container.children]
+              .filter((node): node is HTMLElement => node instanceof HTMLElement && node.dataset.sortKey !== undefined)
+              .map((node) => node.dataset.sortKey as string);
+            options.onSort(scope, keys);
+          }
+          options.onDragState?.(false);
+        },
+      });
+      session.move(y);
     };
 
-    const onMove = (move: PointerEvent) => {
-      if (move.pointerId !== event.pointerId) return;
-      lastY = move.clientY;
-      if (!active) {
-        if (Math.abs(lastY - startY) < START_DISTANCE) return;
-        activate();
+    const finish = (commit: boolean) => {
+      stopListening();
+      if (!session) return;
+      try {
+        if (root.hasPointerCapture(pointerId)) root.releasePointerCapture(pointerId);
+      } catch {
+        // 忽略
+      }
+      const current = session;
+      session = null;
+      if (commit) current.drop();
+      else current.cancel();
+    };
+
+    function onMove(move: PointerEvent): void {
+      if (move.pointerId !== pointerId) return;
+      if (!session) {
+        if (Math.hypot(move.clientX - startX, move.clientY - startY) < threshold) return;
+        activate(move.clientY);
       }
       move.preventDefault();
-      reorder();
-      if (!frame) frame = requestAnimationFrame(autoScroll);
-    };
+      session?.move(move.clientY);
+    }
+    function onUp(up: PointerEvent): void {
+      if (up.pointerId === pointerId) finish(true);
+    }
+    function onCancel(): void {
+      finish(false);
+    }
+    function onKey(key: KeyboardEvent): void {
+      if (key.key !== 'Escape' || !session) return;
+      key.preventDefault();
+      key.stopPropagation();
+      finish(false);
+    }
 
-    const onEnd = (end: PointerEvent) => {
-      if (end.pointerId !== event.pointerId) return;
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onEnd);
-      handle.removeEventListener('pointercancel', onEnd);
-      if (frame) cancelAnimationFrame(frame);
-      if (!active) return;
-      active = false;
-      item.classList.remove('is-dragging');
-      document.documentElement.classList.remove('cs-sorting');
-      if (compact) root.classList.remove(compact);
-      const keys = [...container.children]
-        .filter((node): node is HTMLElement => node instanceof HTMLElement && 'sortKey' in node.dataset)
-        .map((node) => node.dataset.sortKey as string);
-      options.onSort(scope, keys);
-    };
-
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onEnd);
-    handle.addEventListener('pointercancel', onEnd);
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onCancel, true);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('blur', onCancel);
+    root.addEventListener('lostpointercapture', onCancel);
   });
 
-  // 手柄上的长按不弹系统菜单/列表的长按菜单
+  // 拖动之后紧跟的那次 click 不算点击（不会误触发选中、折叠分组）
+  root.addEventListener(
+    'click',
+    (event) => {
+      if (!swallowClick) return;
+      swallowClick = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },
+    true
+  );
+  // 新的一次按下时清掉标记（拖动后浏览器不一定会派发 click）
+  root.addEventListener('pointerdown', () => !busy && (swallowClick = false), true);
+
+  // 手柄上的长按不弹系统菜单/列表的右键菜单
   root.addEventListener(
     'contextmenu',
     (event) => {
@@ -132,23 +185,6 @@ export function installSortable(options: SortableOptions): void {
     },
     true
   );
-}
-
-/** 吞掉按手柄之后紧跟的那次 click（手柄在可点击的行里面） */
-function suppressNextClick(): void {
-  const swallow = (event: Event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    clear();
-  };
-  const clear = () => {
-    window.removeEventListener('click', swallow, true);
-    window.removeEventListener('pointerdown', later, true);
-  };
-  // 下一次按下时还没触发 click，说明这次没有 click，取消吞掉
-  const later = () => setTimeout(clear, 0);
-  window.addEventListener('click', swallow, true);
-  setTimeout(() => window.addEventListener('pointerdown', later, true), 0);
 }
 
 /** 拖动手柄元素 */
