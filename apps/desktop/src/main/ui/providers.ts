@@ -23,6 +23,8 @@ export interface UiManifest {
   entry?: string;
   upstreamVersion?: string | null;
   upstreamCommit?: string | null;
+  /** 界面自己画标题栏的协议版本（≥1 时窗口去掉系统边框，见 windows.ts） */
+  desktopChrome?: number;
   builtAt?: string;
 }
 

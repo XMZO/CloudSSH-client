@@ -3,11 +3,17 @@ interface CloudSSHDesktopBridgeInfo {
   platform: string;
   appVersion: string;
   instance: { id: string; name: string; baseUrl: string };
+  /** 窗口没有系统边框，由界面自己画标题栏（旧版客户端没有这两项） */
+  customChrome?: boolean;
+  titleBarHeight?: number;
 }
 
 interface Window {
   cloudsshDesktop?: {
     info(): Promise<CloudSSHDesktopBridgeInfo>;
     openInstanceManager?(): Promise<void>;
+    setTitleBarColors?(color: string, symbolColor: string): Promise<void>;
+    showAppMenu?(x: number, y: number): Promise<void>;
+    showInstanceMenu?(x: number, y: number): Promise<void>;
   };
 }

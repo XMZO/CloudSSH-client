@@ -14,6 +14,7 @@ import { app, BrowserWindow, dialog, Menu, screen, shell } from 'electron';
 import path from 'node:path';
 import { configStore, type WindowState } from '../config/store';
 import { createLogger } from '../logger';
+import type { ResolvedUi } from '../ui/providers';
 import { loginWithGitHub } from './oauth';
 import { prepareInstanceSession } from './session';
 
@@ -22,7 +23,12 @@ const log = createLogger('window');
 interface WindowEntry {
   window: BrowserWindow;
   instanceId: string;
+  /** 界面自己画标题栏（窗口没有系统边框） */
+  customChrome: boolean;
 }
+
+/** 自绘标题栏的高度（与 overrides/desktop/titlebar.css 的 --cs-tb-height 一致） */
+export const TITLEBAR_HEIGHT = 40;
 
 const entries = new Map<number, WindowEntry>();
 let quitting = false;
@@ -54,6 +60,28 @@ export function instanceWindows(instanceId?: string): BrowserWindow[] {
   return [...entries.values()]
     .filter((entry) => !entry.window.isDestroyed() && (!instanceId || entry.instanceId === instanceId))
     .map((entry) => entry.window);
+}
+
+/** 窗口是否由界面自己画标题栏 */
+export function hasCustomChrome(window: BrowserWindow | null | undefined): boolean {
+  return window ? entries.get(window.id)?.customChrome === true : false;
+}
+
+/**
+ * 内置界面（本仓库的 ui-web 桌面构建，或开发服务器）自己画标题栏：去掉系统边框，窗口按钮由系统画在
+ * 标题栏右侧（Windows 11 的贴靠布局照常可用）。跟随 Worker 的网页没有标题栏，保留系统边框。
+ */
+function usesCustomChrome(ui: ResolvedUi): boolean {
+  if (ui.kind === 'proxy') return true;
+  return ui.kind === 'static' && (ui.manifest?.desktopChrome ?? 0) >= 1;
+}
+
+function chromeOptions(): Electron.BrowserWindowConstructorOptions {
+  if (process.platform === 'darwin') {
+    return { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } };
+  }
+  // 颜色先按深色给，页面加载后按当前主题改（desktop:titlebar）
+  return { titleBarStyle: 'hidden', titleBarOverlay: { color: '#131313', symbolColor: '#e5e2e1', height: TITLEBAR_HEIGHT } };
 }
 
 export function instanceIdOf(window: BrowserWindow | null | undefined): string | undefined {
@@ -159,9 +187,11 @@ function createInstanceWindow(instance: InstanceConfig, replace?: BrowserWindow)
   const prepared = prepareInstanceSession(instance);
   const state = configStore.windowState;
   const bounds = replace && !replace.isDestroyed() ? replace.getBounds() : visibleBounds(state);
+  const customChrome = usesCustomChrome(prepared.ui);
 
   const window = new BrowserWindow({
     ...bounds,
+    ...(customChrome ? chromeOptions() : {}),
     minWidth: 360,
     minHeight: 480,
     show: false,
@@ -182,8 +212,9 @@ function createInstanceWindow(instance: InstanceConfig, replace?: BrowserWindow)
       backgroundThrottling: false,
     },
   });
-  window.setMenuBarVisibility(configStore.preferences.showMenuBar);
-  entries.set(window.id, { window, instanceId: instance.id });
+  // 自绘标题栏时菜单收进标题栏左侧的菜单按钮（desktop:app-menu），不显示系统菜单栏
+  window.setMenuBarVisibility(!customChrome && configStore.preferences.showMenuBar);
+  entries.set(window.id, { window, instanceId: instance.id, customChrome });
 
   if ((replace && replace.isMaximized()) || (!replace && state.maximized)) window.maximize();
   window.once('ready-to-show', () => window.show());
@@ -313,9 +344,17 @@ export function reloadInstance(instanceId: string): void {
   if (!instance) return;
   const windows = instanceWindows(instanceId);
   if (!windows.length) return;
-  prepareInstanceSession(instance);
+  const { ui } = prepareInstanceSession(instance);
+  const customChrome = usesCustomChrome(ui);
   for (const window of windows) {
-    void window.loadURL(`${originOf(instance.baseUrl)}/`);
+    if (hasCustomChrome(window) === customChrome) {
+      void window.loadURL(`${originOf(instance.baseUrl)}/`);
+      continue;
+    }
+    // 有没有系统边框只能在建窗口时决定：内置界面与“跟随 Worker”之间切换时换一个新窗口（位置、大小不变）
+    createInstanceWindow(instance, window);
+    entries.delete(window.id);
+    window.destroy();
   }
 }
 
@@ -328,7 +367,7 @@ export function closeInstanceWindows(instanceId: string): void {
 }
 
 export function applyMenuBarVisibility(visible: boolean): void {
-  for (const window of instanceWindows()) window.setMenuBarVisibility(visible);
+  for (const window of instanceWindows()) window.setMenuBarVisibility(visible && !hasCustomChrome(window));
 }
 
 export function openExternal(url: string): void {

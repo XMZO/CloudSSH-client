@@ -16,7 +16,7 @@ import { configStore, type Preferences } from '../config/store';
 import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
 import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
-import { refreshMenus } from './menus';
+import { popupAppMenu, popupInstanceMenu, refreshMenus } from './menus';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
 import { clearInstanceData } from './session';
@@ -24,11 +24,13 @@ import { getUpdater } from './updater';
 import {
   applyMenuBarVisibility,
   closeInstanceWindows,
+  hasCustomChrome,
   instanceIdOfWebContents,
   instanceWindows,
   openInstance,
   reloadInstance,
   startLogin,
+  TITLEBAR_HEIGHT,
 } from './windows';
 
 const log = createLogger('ipc');
@@ -79,7 +81,29 @@ export function registerIpc(): void {
       platform: process.platform,
       appVersion: app.getVersion(),
       instance: { id: instance.id, name: instance.name, baseUrl: instance.baseUrl },
+      customChrome: hasCustomChrome(BrowserWindow.fromWebContents(event.sender)),
+      titleBarHeight: TITLEBAR_HEIGHT,
     };
+  });
+  // 自绘标题栏：系统窗口按钮的配色跟随页面主题
+  ipcMain.handle('desktop:titlebar', (event, colors: unknown) => {
+    senderInstance(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !hasCustomChrome(window) || process.platform === 'darwin') return;
+    const { color, symbolColor } = (colors ?? {}) as { color?: unknown; symbolColor?: unknown };
+    const valid = (value: unknown) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+    if (!valid(color) || !valid(symbolColor)) return;
+    window.setTitleBarOverlay({ color: color as string, symbolColor: symbolColor as string, height: TITLEBAR_HEIGHT });
+  });
+  ipcMain.handle('desktop:app-menu', (event, x: unknown, y: unknown) => {
+    senderInstance(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window && typeof x === 'number' && typeof y === 'number') popupAppMenu(window, x, y);
+  });
+  ipcMain.handle('desktop:instance-menu', (event, x: unknown, y: unknown) => {
+    senderInstance(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window && typeof x === 'number' && typeof y === 'number') popupInstanceMenu(window, x, y);
   });
   ipcMain.handle('desktop:open-manager', (event) => {
     senderInstance(event);

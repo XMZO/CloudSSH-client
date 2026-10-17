@@ -1,0 +1,573 @@
+/* ========== 自绘标题栏（两种界面主题共用；颜色全部取网页版主题变量） ========== */
+
+html.cs-chrome {
+  --cs-tb-height: 40px;
+  --cs-ui-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  --cs-chrome-bg: var(--bg-surface);
+  --cs-hover: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  --cs-press: color-mix(in srgb, var(--on-surface) 13%, transparent);
+}
+
+html.cs-chrome[data-cs-desk="classic"] {
+  --cs-chrome-bg: var(--bg-elevated);
+}
+
+/* 有系统边框的经典主题用网页版自己的顶栏 */
+html:not(.cs-chrome) .cs-tb {
+  display: none;
+}
+
+.cs-tb {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 96;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cs-tb-height);
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--cs-chrome-bg);
+  color: var(--on-surface);
+  font: 13px/1.2 var(--cs-ui-font);
+  user-select: none;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* 无边框窗口：系统窗口按钮占用右侧，可用区域由 Window Controls Overlay 给出 */
+html.cs-frameless .cs-tb {
+  left: env(titlebar-area-x, 0);
+  width: env(titlebar-area-width, 100%);
+}
+
+html.cs-frameless[data-cloudssh-platform="darwin"] .cs-tb {
+  padding-left: 78px;
+}
+
+html[data-ui-style="liquid"] .cs-tb {
+  background: color-mix(in srgb, var(--cs-chrome-bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+
+.cs-tb :is(button, input, select, .tab-item, a) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.cs-tb button {
+  font: inherit;
+  cursor: default;
+}
+
+.cs-dk-icon {
+  font-size: 19px;
+  line-height: 1;
+}
+
+/* ---------- 左侧：菜单、实例 ---------- */
+
+.cs-tb-lead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+}
+
+.cs-tb-menu,
+.cs-tb-instance,
+.cs-tb-home,
+.cs-tb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+:is(.cs-tb-menu, .cs-tb-instance, .cs-tb-home, .cs-tb-btn):hover:not(:disabled) {
+  background: var(--cs-hover);
+  color: var(--on-surface);
+}
+
+:is(.cs-tb-menu, .cs-tb-instance, .cs-tb-home, .cs-tb-btn):active:not(:disabled) {
+  background: var(--cs-press);
+}
+
+:is(.cs-tb-menu, .cs-tb-instance, .cs-tb-home, .cs-tb-btn):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cs-tb-menu {
+  width: 36px;
+}
+
+.cs-tb-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent, var(--bg));
+  font: 800 10px/1 var(--font-code, ui-monospace, monospace);
+  letter-spacing: -0.5px;
+}
+
+.cs-tb-instance {
+  gap: 2px;
+  max-width: 220px;
+  padding: 0 4px 0 8px;
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.cs-tb-instance-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-tb-instance .cs-dk-icon {
+  font-size: 18px;
+  color: var(--on-surface-variant);
+}
+
+/* ---------- 中间：服务器页、会话标签（工作台） ---------- */
+
+.cs-tb-nav {
+  display: none;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+html[data-cs-desk="workbench"] .cs-tb-nav {
+  display: flex;
+}
+
+.cs-tb-home {
+  flex: none;
+  gap: 6px;
+  padding: 0 10px 0 8px;
+}
+
+.cs-tb-home.is-on {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cs-tb-tabs {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+}
+
+/* 搬进来的网页版标签栏：保留它的结构与行为，只换外观 */
+html[data-cs-desk="workbench"] .cs-tb #tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 2px;
+  overflow-x: auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  /* 网页版的 custom-scrollbar 会强制显示细滚动条；标题栏里用滚轮横向滚动 */
+  scrollbar-width: none !important;
+  /* 滚到当前标签时让出右端固定的“+” */
+  scroll-padding-inline-end: 44px;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar.cs-scrolled {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px);
+  mask-image: linear-gradient(90deg, transparent, #000 24px);
+}
+
+/* 还没有会话时只剩“+”，与左边的“服务器”重复，整体隐藏 */
+html[data-cs-desk="workbench"] .cs-tb #tab-bar:not(:has(.tab-item)) {
+  display: none;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-item {
+  position: relative;
+  display: flex;
+  flex: 0 1 190px;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+  height: 30px;
+  margin: 0;
+  padding: 0 4px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: 13px/1 var(--cs-ui-font);
+  letter-spacing: normal;
+  text-transform: none;
+  box-shadow: none;
+  clip-path: none;
+  transform: none;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-item:hover {
+  background: var(--cs-hover);
+  color: var(--on-surface);
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-item.active {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--on-surface);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* 在服务器列表页时没有“当前”标签 */
+html[data-cs-desk="workbench"].cs-view-home .cs-tb #tab-bar .tab-item.active {
+  border-color: transparent;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-weight: 400;
+  box-shadow: none;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-item::before,
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-item::after {
+  display: none;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-label input {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--on-surface);
+  font: inherit;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-close {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  opacity: 0;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-item:is(:hover, .active) .tab-close {
+  opacity: 1;
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-close:hover {
+  background: var(--cs-press);
+  color: var(--on-surface);
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar .tab-close .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* “+”固定在标签栏右端，标签多到要滚动时也看得见 */
+html[data-cs-desk="workbench"] .cs-tb #tab-bar #new-tab-btn {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0 0 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--cs-chrome-bg);
+  color: var(--on-surface-variant);
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar.cs-overflow #new-tab-btn {
+  box-shadow: -10px 0 8px -4px var(--cs-chrome-bg);
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar #new-tab-btn:hover {
+  background: linear-gradient(var(--cs-hover), var(--cs-hover)), var(--cs-chrome-bg);
+  color: var(--on-surface);
+}
+
+html[data-cs-desk="workbench"] .cs-tb #tab-bar #new-tab-btn .material-symbols-outlined {
+  font-size: 19px;
+}
+
+/* ---------- 拖动区与右侧 ---------- */
+
+/* 标签再多也留一段能拖动窗口、双击最大化的空白 */
+.cs-tb-drag {
+  flex: 1;
+  min-width: 48px;
+  height: 100%;
+}
+
+.cs-tb-tools {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+}
+
+html[data-cs-desk="workbench"].cs-view-term .cs-tb-tools {
+  display: flex;
+}
+
+.cs-tb-btn {
+  width: 34px;
+}
+
+.cs-tb-btn[hidden] {
+  display: none;
+}
+
+.cs-tb-btn.is-on,
+.cs-tb-btn.is-open {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.cs-tb-btn.is-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  color: var(--error);
+}
+
+.cs-tb-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+.cs-tb-settings {
+  flex: none;
+  margin-left: 2px;
+}
+
+/* ---------- 页面整体让出标题栏 ---------- */
+
+/* 用 body 的内边距而不是 #app 的外边距：外边距会穿透 body（body 有 min-height: 100vh），整页多出一截滚动条 */
+html.cs-chrome body {
+  padding-top: var(--cs-tb-height);
+}
+
+html.cs-chrome :is(.cs-sb, .cs-sb-rail) {
+  top: var(--cs-tb-height);
+}
+
+html.cs-chrome #terminal-section {
+  height: calc(100vh - var(--cs-tb-height)) !important;
+}
+
+html.cs-chrome :is(#user-space-section, #auth-section) {
+  min-height: calc(100vh - var(--cs-tb-height)) !important;
+}
+
+/* 窗口拖窄后网页版切成手机布局，终端区改为 fixed 贴顶：同样让出标题栏 */
+@media (max-width: 767px), (max-width: 1180px) and (pointer: coarse) {
+  html.cs-chrome #terminal-section {
+    top: calc(var(--visual-viewport-offset-top, 0px) + var(--cs-tb-height)) !important;
+  }
+}
+
+/* 窄窗口：实例名、“服务器”只留图标，把位置让给会话标签 */
+@media (max-width: 900px) {
+  .cs-tb :is(.cs-tb-instance-name, .cs-tb-home-label) {
+    display: none;
+  }
+}
+
+/* ---------- 弹出面板（设置） ---------- */
+
+.cs-dk-popover {
+  position: fixed;
+  z-index: 140;
+  box-sizing: border-box;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  color: var(--on-surface);
+  font: 13px/1.4 var(--cs-ui-font);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.38), 0 2px 8px rgba(0, 0, 0, 0.2);
+  outline: none;
+  animation: cs-dk-pop-in 120ms ease-out;
+}
+
+@keyframes cs-dk-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-dk-popover {
+    animation: none;
+  }
+}
+
+.cs-dk-settings {
+  width: 320px;
+  padding: 8px;
+}
+
+.cs-dk-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.cs-dk-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.cs-dk-avatar.is-initial {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cs-dk-user-name {
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-dk-set-section {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+
+.cs-dk-set-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--on-surface-variant);
+}
+
+.cs-dk-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cs-dk-choice {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+}
+
+.cs-dk-choice:hover {
+  background: var(--cs-hover);
+}
+
+.cs-dk-choice.is-on {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cs-dk-actions {
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-dk-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  text-align: left;
+}
+
+.cs-dk-action:hover,
+.cs-dk-action:focus-visible {
+  background: var(--cs-hover);
+  outline: none;
+}
+
+.cs-dk-action .cs-dk-icon {
+  font-size: 18px;
+  color: var(--on-surface-variant);
+}
+
+.cs-dk-action.is-danger,
+.cs-dk-action.is-danger .cs-dk-icon {
+  color: var(--error);
+}

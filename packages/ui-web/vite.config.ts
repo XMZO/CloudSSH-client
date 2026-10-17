@@ -249,6 +249,8 @@ function uiManifest(target: Target): Plugin {
             entry: 'index.html',
             upstreamVersion: source?.version ?? null,
             upstreamCommit: source?.commit ?? null,
+            // 桌面构建自己画标题栏（overrides/desktop/titlebar），客户端据此去掉系统边框
+            ...(target === 'desktop' ? { desktopChrome: 1 } : {}),
             builtAt: new Date().toISOString(),
           },
           null,

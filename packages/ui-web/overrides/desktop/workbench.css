@@ -1,0 +1,146 @@
+/* ========== 工作台主题：页面布局（颜色全部取网页版主题变量，各配色都能用） ========== */
+
+html[data-cs-desk="workbench"] {
+  --cs-status-height: 26px;
+}
+
+/* 网页版的顶栏、页脚收起：会话标签与终端工具在标题栏，主题、语言、账户在设置面板 */
+html[data-cs-desk="workbench"] :is(
+    #terminal-section > header.terminal-app-header,
+    #terminal-section > footer.terminal-footer,
+    #user-space-section > header.user-space-header,
+    #user-space-section > footer.user-space-footer
+  ) {
+  display: none !important;
+}
+
+/* 侧栏与标题栏同一层“外框”：系统字体 */
+html[data-cs-desk="workbench"] :is(.cs-sb, .cs-sb-rail) {
+  background: var(--cs-chrome-bg);
+  font-family: var(--cs-ui-font);
+}
+
+/* ---------- 终端：占满可用区域 ---------- */
+
+html[data-cs-desk="workbench"] #terminal-section .terminal-main {
+  padding: 0 !important;
+}
+
+html[data-cs-desk="workbench"] #terminal-section .terminal-main > .scanline {
+  display: none;
+}
+
+html[data-cs-desk="workbench"] #terminal-wrapper {
+  display: flex;
+  flex-direction: column;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+html[data-cs-desk="workbench"] #terminal-area {
+  margin: 0 !important;
+  background: var(--cs-term-bg, transparent);
+}
+
+/* 终端与窗口边缘留一点呼吸空间（xterm 按容器尺寸计算行列） */
+html[data-cs-desk="workbench"] #terminal-area > [id^="terminal-container-"] {
+  inset: 6px 2px 2px 10px;
+}
+
+/* 状态栏：移到底部，一条细栏 */
+html[data-cs-desk="workbench"] #terminal-wrapper > .terminal-status-bar {
+  order: 2;
+  flex: none;
+  align-items: center;
+  height: var(--cs-status-height);
+  min-height: 0;
+  margin: 0 !important;
+  padding: 0 10px !important;
+  border: 0 !important;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0 !important;
+  background: var(--cs-chrome-bg) !important;
+  box-shadow: none !important;
+  color: var(--on-surface-variant);
+  font: 12px/1 var(--cs-ui-font);
+}
+
+html[data-cs-desk="workbench"] #terminal-wrapper > .terminal-status-bar * {
+  font-family: var(--cs-ui-font);
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* 一行显示，放不下时左边的连接信息截断、右边的延迟保留（终端让出宽度给抽屉时也不换行） */
+html[data-cs-desk="workbench"] #terminal-wrapper > .terminal-status-bar {
+  gap: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+html[data-cs-desk="workbench"] #terminal-wrapper > .terminal-status-bar > .terminal-status-details {
+  flex: 1 1 auto;
+  flex-wrap: nowrap !important;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+}
+
+html[data-cs-desk="workbench"] #terminal-wrapper > .terminal-status-bar > .terminal-status-details > * {
+  flex: none;
+}
+
+html[data-cs-desk="workbench"] #terminal-wrapper > .terminal-status-bar > :last-child {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+/* ---------- 右侧抽屉（SFTP、命令、AI）：从标题栏下面开始，停靠在终端右侧 ---------- */
+
+html[data-cs-desk="workbench"] :is(#sftp-panel, #agent-panel, #snippet-panel) {
+  top: var(--cs-tb-height) !important;
+  height: calc(100vh - var(--cs-tb-height)) !important;
+  max-height: none !important;
+  border-left: 1px solid var(--border);
+  box-shadow: none !important;
+}
+
+/* 打开抽屉时终端让出宽度（并排），而不是被盖住 */
+html[data-cs-desk="workbench"].cs-docked #terminal-section .terminal-main {
+  margin-right: var(--cs-dock-w);
+}
+
+html[data-cs-desk="workbench"].cs-docked #snippet-panel-backdrop {
+  display: none !important;
+}
+
+/* ---------- 服务器列表页：换成 home.ts 的表格 ---------- */
+
+html[data-cs-desk="workbench"] #user-space-section {
+  height: calc(100vh - var(--cs-tb-height));
+  min-height: 0 !important;
+  background: var(--bg);
+}
+
+html[data-cs-desk="workbench"] #user-space-section > .user-space-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+html[data-cs-desk="workbench"] #user-space-section > .user-space-main > :not(.cs-home) {
+  display: none !important;
+}
+
+html:not([data-cs-desk="workbench"]) .cs-home {
+  display: none;
+}

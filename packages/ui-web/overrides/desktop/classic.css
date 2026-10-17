@@ -1,0 +1,10 @@
+/* ========== 经典主题：沿用网页版布局，只修桌面窗口里放不下的地方 ========== */
+
+/* 卡片按可用宽度排列：网页版在宽屏固定三列，开着侧栏时卡片太窄，“连接”按钮被压成竖排 */
+html[data-cs-desk="classic"] #server-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)) !important;
+}
+
+html[data-cs-desk="classic"] .server-connect-button {
+  white-space: nowrap;
+}

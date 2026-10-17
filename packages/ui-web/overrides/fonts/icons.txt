@@ -1,4 +1,5 @@
 2d
+account_tree
 add
 add_box
 add_circle
@@ -26,6 +27,7 @@ close_fullscreen
 cloud
 code
 code_blocks
+colors
 content_copy
 content_paste
 create
@@ -99,6 +101,7 @@ mobile
 mode
 monitoring
 more
+more_horiz
 more_vert
 mouse
 movie
@@ -137,6 +140,7 @@ screen_rotation
 search
 search_off
 security
+select
 send
 settings
 share
@@ -153,6 +157,7 @@ swap_horiz
 swap_vert
 switch
 tab
+table
 target
 terminal
 text_decrease
@@ -169,4 +174,5 @@ visibility_off
 vpn_key
 warning
 water_drop
+web
 width

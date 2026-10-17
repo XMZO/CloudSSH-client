@@ -5,3 +5,10 @@
  * 示例：
  * html[data-cloudssh-client='desktop'] body { user-select: none; }
  */
+
+/* 窗口拖窄到 768px 以下时网页版会切成手机布局；用鼠标操作时终端下面那排手机快捷键（Esc、Ctrl、方向键）用不上 */
+@media (pointer: fine) {
+  html[data-cloudssh-client='desktop'] .mobile-terminal-toolbar {
+    display: none !important;
+  }
+}

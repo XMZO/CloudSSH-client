@@ -128,6 +128,28 @@ export function buildTray(): void {
   );
 }
 
+/** 自绘标题栏左侧的菜单按钮：弹出应用菜单（与系统菜单栏同一份） */
+export function popupAppMenu(window: BrowserWindow, x: number, y: number): void {
+  Menu.getApplicationMenu()?.popup({ window, x: Math.round(x), y: Math.round(y) });
+}
+
+/** 自绘标题栏上的实例名：切换实例、在新窗口打开、登录、实例管理 */
+export function popupInstanceMenu(window: BrowserWindow, x: number, y: number): void {
+  Menu.buildFromTemplate([
+    ...instanceSwitchItems(false),
+    { type: 'separator' },
+    { label: '在新窗口打开', submenu: instanceSwitchItems(true) },
+    {
+      label: '使用 GitHub 登录…',
+      click: () => {
+        const id = instanceIdOf(window);
+        if (id) void startLogin(id, window);
+      },
+    },
+    { label: '实例管理…', accelerator: 'CmdOrCtrl+Shift+M', click: () => openManagerWindow() },
+  ]).popup({ window, x: Math.round(x), y: Math.round(y) });
+}
+
 /** 实例列表或焦点变化时刷新菜单里的实例项 */
 export function refreshMenus(): void {
   buildAppMenu();

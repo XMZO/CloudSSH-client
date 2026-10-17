@@ -8,4 +8,9 @@ contextBridge.exposeInMainWorld('cloudsshDesktop', {
   /** { platform, appVersion, instance: { id, name, baseUrl } } */
   info: () => ipcRenderer.invoke('desktop:info'),
   openInstanceManager: () => ipcRenderer.invoke('desktop:open-manager'),
+  /** 自绘标题栏：系统窗口按钮的背景色与图标色（#rrggbb） */
+  setTitleBarColors: (color: string, symbolColor: string) => ipcRenderer.invoke('desktop:titlebar', { color, symbolColor }),
+  /** 在页面坐标 (x, y) 处弹出应用菜单 / 实例菜单 */
+  showAppMenu: (x: number, y: number) => ipcRenderer.invoke('desktop:app-menu', x, y),
+  showInstanceMenu: (x: number, y: number) => ipcRenderer.invoke('desktop:instance-menu', x, y),
 });

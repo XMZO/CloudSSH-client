@@ -11,11 +11,13 @@
  * - shared/language-picker.ts：语言按钮显示当前语言，点开下拉选择
  * - shared/web-fixes.css：网页版界面的通用修正（与手机端共用）
  * - shared/terminal/：内置终端字体与关键词高亮（与手机端共用）
+ * - desktop/：界面主题（工作台 / 经典）：自绘标题栏、表格化服务器列表、终端占满窗口
  */
 import './desktop.css';
 import './shared/web-fixes.css';
 import { installLanguagePicker, popoverLanguageMenu } from './shared/language-picker';
 import { installTerminalEnhancements } from './shared/terminal';
+import { mountDesktopShell } from './desktop';
 import { mountSidebar } from './sidebar/sidebar';
 
 document.documentElement.dataset.cloudsshClient = 'desktop';
@@ -33,3 +35,4 @@ window.cloudsshDesktop
 
 mountSidebar();
 installLanguagePicker(popoverLanguageMenu);
+void mountDesktopShell();
