@@ -47,6 +47,34 @@ function injectionsFor(target: Target): Injection[] {
  * 在不修改 upstream 源码的前提下注入定制脚本。
  * 想改样式/行为时优先在 overrides 里做，upstream 保持与 CloudSSH 主仓库逐字节一致。
  */
+/**
+ * 图标字体本地化：把 index.html 里在线加载 Material Symbols 的 <link> 原地换成内联 <style>
+ * （overrides/fonts/ 下的子集字体以 data URI 内嵌，由 scripts/update-icon-font.mjs 生成）。
+ * 原地替换保证层叠顺序不变：网页版大量用 text-[18px] 这类工具类控制图标大小，依赖图标 CSS 排在 style.css 之前。
+ */
+const ICON_FONT_LINK = /<link\s+href="https:\/\/fonts\.googleapis\.com\/css2\?family=Material\+Symbols\+Outlined[^"]*"\s+rel="stylesheet"\s*\/?>/;
+
+function localIconFont(html: string, warn: (message: string) => void): string {
+  const dir = path.join(packageDir, 'overrides', 'fonts');
+  const cssPath = path.join(dir, 'material-symbols.css');
+  const fontPath = path.join(dir, 'material-symbols-outlined.woff2');
+  if (!fs.existsSync(cssPath) || !fs.existsSync(fontPath)) {
+    warn('缺少内置图标字体（运行 pnpm update:icon-font 生成），继续使用在线字体');
+    return html;
+  }
+  if (!ICON_FONT_LINK.test(html)) {
+    warn('index.html 里没找到 Material Symbols 的在线字体链接（上游可能已变化），内置图标字体未生效');
+    return html;
+  }
+  const dataUri = `data:font/woff2;base64,${fs.readFileSync(fontPath).toString('base64')}`;
+  const css = fs
+    .readFileSync(cssPath, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace("url('./material-symbols-outlined.woff2')", `url(${dataUri})`)
+    .trim();
+  return html.replace(ICON_FONT_LINK, () => `<style data-cloudssh-icons>\n${css}\n</style>`);
+}
+
 function overrides(target: Target): Plugin {
   const injections = injectionsFor(target);
   return {
@@ -57,14 +85,15 @@ function overrides(target: Target): Plugin {
     transformIndexHtml: {
       // pre：让注入的脚本与上游入口一样参与打包（同一个入口里按文档顺序执行）
       order: 'pre',
-      handler() {
-        return injections
+      handler(html) {
+        const tags = injections
           .filter((item) => fs.existsSync(item.file))
           .map((item) => ({
             tag: 'script',
             attrs: { type: 'module', src: item.id },
             injectTo: item.injectTo,
           }));
+        return { html: localIconFont(html, (message) => console.warn(`[cloudssh] ${message}`)), tags };
       },
     },
   };

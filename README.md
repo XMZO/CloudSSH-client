@@ -269,6 +269,8 @@ pnpm sync:web-ui -- --source D:/path/CloudSSH
 pnpm install && pnpm build:ui
 ```
 
+同步后如果网页版用了新的图标，再运行 `pnpm update:icon-font` 重新生成内置图标字体（见下文“内置图标字体”）。
+
 脚本**只读**源仓库，同步内容包括：
 
 - `frontend/`
@@ -278,6 +280,16 @@ pnpm install && pnpm build:ui
 同步后会写入 `upstream/SOURCE.json`，记录提交和版本。实例管理里也会显示内置 UI 的上游版本。
 
 > **版本漂移提醒**：Worker 每天自动同步上游并重新部署。如果上游改了前后端协议（例如 WebSocket 消息格式），旧的内置 UI 可能和新 Worker 不兼容。此时运行 `pnpm sync:web-ui && pnpm build:ui`，或者先把实例切到 `remote`（跟随 Worker）即可恢复。
+
+### 内置图标字体
+
+网页版从 Google Fonts 在线加载 Material Symbols 图标字体；离线或访问不畅时，图标会退化成 “close”“search” 这样的文字。客户端（桌面与手机）改为内置：
+
+- `scripts/update-icon-font.mjs` 扫描网页版与 `overrides/` 源码里实际用到的图标名（约 150 个），向 Google Fonts 请求只含这些图标的子集，写入 `packages/ui-web/overrides/fonts/`（约 38KB）
+- 构建时把 `index.html` 里在线字体的 `<link>` 原地换成内联 `<style>`（字体以 data URI 内嵌）。原地替换保证层叠顺序不变——网页版用 `text-[18px]` 等工具类控制图标大小，依赖图标样式排在 `style.css` 之前
+- 网页版新增图标后运行 `pnpm update:icon-font`（需要能访问 Google Fonts，代理用 `HTTPS_PROXY`）；运行时拼出来的图标名扫描不到，可加到脚本里的 `EXTRA_ICONS`
+
+---
 
 ---
 
@@ -335,6 +347,7 @@ pnpm install && pnpm build:ui
 | 节点首页 | 代替网页版每页 3 张卡片的分页：搜索（名称、地址、标签），“最近连接”置顶，按标签分组并可折叠，显示系统图标与在线会话数 |
 | 调整排序 | 节点页顶部的排序按钮（或长按节点 → 调整排序）打开排序面板：拖动分组顺序，点分组拖动组内服务器顺序；按住 ⋮⋮ 立即拖、长按条目也能拖，被拖项浮起跟手、其余项动画让位，拖到边缘自动滚动；可恢复默认排序。顺序保存在本地，按实例区分 |
 | 多会话终端 | 网页版的标签页；节点页顶部显示“N 个会话进行中”一键回终端。点节点时已有会话就切过去，长按可“新建连接 / 切换会话 / 编辑 / 克隆 / 复制地址” |
+| 标签栏 | 一屏放 3 个标签，超出横向滚动，“+”固定在右侧；名称中间省略（保留开头和最后一段，如“宁宁云…NoLimit”）；右侧会话按钮打开会话列表，显示完整名称、地址与状态。防误触：只有当前标签显示小号关闭按钮，关闭仍在连接的会话前先确认 |
 | SFTP | 上传走系统文件选择器；下载与日志导出写入系统“下载”目录（Android 10+ 不需要存储权限），重名自动改名 |
 | 后台保活 | 有会话时启动前台服务（通知栏显示会话数），持有 CPU 与 Wi-Fi 唤醒锁，WebView 渲染进程保持重要优先级；设置里可一键申请“不受电池优化限制”。全部会话关闭后自动停止 |
 | 返回键 | 先关最上层的浮层（设置、对话框、抽屉、更多菜单）；在终端时回到节点页（会话保留）；在节点页时退到后台而不是退出 |
@@ -400,6 +413,7 @@ keyPassword=******
 | `pnpm build` | 构建内置 UI 和桌面端 |
 | `pnpm dist:win` | 打包 Windows 安装包和 zip |
 | `pnpm sync:web-ui` | 从 CloudSSH 主仓库同步网页版前端 |
+| `pnpm update:icon-font` | 重新生成内置图标字体（按源码实际用到的图标裁剪） |
 | `pnpm android:build` | 构建 Android 正式版 APK（arm64） |
 | `pnpm android:build:debug` | 构建 Android 调试版 APK（arm64 + x86_64） |
 | `pnpm android:install` | 把最近构建的 APK 安装到已连接的设备或模拟器 |

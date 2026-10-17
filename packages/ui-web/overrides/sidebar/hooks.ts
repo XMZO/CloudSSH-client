@@ -6,6 +6,7 @@
 interface TabInfoLike {
   id: string;
   label?: string;
+  state?: 'connecting' | 'connected' | 'disconnected' | string;
   hostInfo?: { host: string; port: number; username?: string; serverId?: number };
 }
 
@@ -18,8 +19,11 @@ interface ServerListLike {
 interface TabManagerLike {
   tabs?: Map<string, TabInfoLike>;
   switchTab?: (id: string) => void;
+  closeTab?: (id: string) => void;
   getActiveTab?: () => TabInfoLike | null;
 }
+
+export type TabInfo = TabInfoLike;
 
 function serverList(): ServerListLike | null {
   return ((globalThis as Record<string, unknown>).__cloudsshServerList as ServerListLike) ?? null;
@@ -99,5 +103,31 @@ export function focusSession(serverId: number): boolean {
   if (document.getElementById('terminal-section')?.classList.contains('hidden')) {
     document.getElementById('back-to-terminal-btn')?.click();
   }
+  return true;
+}
+
+/** 当前全部终端标签（按标签栏顺序） */
+export function listTabs(): TabInfo[] {
+  const tabs = tabManager()?.tabs;
+  return tabs instanceof Map ? [...tabs.values()] : [];
+}
+
+export function activeTabId(): string | null {
+  return tabManager()?.getActiveTab?.()?.id ?? null;
+}
+
+/** 切到指定标签；在服务器列表页时同时切回终端视图 */
+export function switchToTab(id: string): boolean {
+  const manager = tabManager();
+  if (!manager?.switchTab) return false;
+  manager.switchTab(id);
+  if (!terminalVisible()) document.getElementById('back-to-terminal-btn')?.click();
+  return true;
+}
+
+export function closeTabById(id: string): boolean {
+  const manager = tabManager();
+  if (!manager?.closeTab) return false;
+  manager.closeTab(id);
   return true;
 }

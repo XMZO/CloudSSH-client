@@ -15,6 +15,7 @@ import './mobile.css';
 import { mountNodes } from './nodes';
 import { keepAliveEnabled } from './settings';
 import { closeSheet, isSheetOpen } from './sheet';
+import { mountTabs } from './tabs';
 import { isTauri, native } from './tauri';
 
 // ---------- 返回键 ----------
@@ -146,6 +147,7 @@ if (isTauri()) {
   installFetchObserver();
   const start = () => {
     mountNodes();
+    mountTabs();
     installKeepAlive();
     installSystemBars();
     installDownloadNotices();

@@ -18,6 +18,7 @@
     "android:build": "node scripts/mobile.mjs build",
     "android:build:debug": "node scripts/mobile.mjs build --debug",
     "android:install": "node scripts/mobile.mjs install",
-    "android:dev": "node scripts/mobile.mjs dev"
+    "android:dev": "node scripts/mobile.mjs dev",
+    "update:icon-font": "node scripts/update-icon-font.mjs"
   }
 }

@@ -621,3 +621,155 @@ html.cs-nodes-on .cs-m-nodes {
     transition: none;
   }
 }
+
+/* ---------- 终端标签栏 ---------- */
+
+.cs-m-tabbar {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.cs-m-tabbar > #tab-bar {
+  flex: 1;
+  min-width: 0;
+  /* 自动滚到当前标签时，给右侧固定的 “+” 让出位置 */
+  scroll-padding-inline-end: 40px;
+  scrollbar-width: none;
+}
+
+.cs-m-tabbar > #tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+/* “+” 固定在标签栏右侧（标签多了也不会被挤出屏幕） */
+#tab-bar .tab-new-btn {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  flex: none;
+  background: var(--bg);
+}
+
+/* 一屏 3 个标签：总宽减去 “+”、会话按钮、内边距与当前标签多出的关闭按钮后三等分 */
+#tab-bar .tab-item {
+  flex: 0 0 auto;
+  width: calc((100vw - 124px) / 3);
+  max-width: none;
+  min-width: 0;
+  gap: 5px;
+  padding: 4px 4px 4px 8px;
+  letter-spacing: 0;
+}
+
+/* 当前标签多出关闭按钮的宽度，名称不被挤短 */
+#tab-bar .tab-item.active {
+  width: calc((100vw - 124px) / 3 + 26px);
+}
+
+#tab-bar .tab-label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+}
+
+.cs-m-tab-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-m-tab-tail {
+  flex: none;
+  max-width: 70%;
+  margin-left: 0.25em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 防误触：只有当前标签显示关闭按钮，且点击区域缩小，与名称留出间距 */
+#tab-bar .tab-item:not(.active) .tab-close {
+  display: none;
+}
+
+#tab-bar .tab-close {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  margin-left: 2px;
+  padding: 0;
+  opacity: 0.6;
+}
+
+.cs-m-tabs-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  padding: 0 6px;
+  border-top: 0;
+  border-left: 1px solid var(--border);
+  border-right: 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cs-m-tabs-btn .cs-m-icon {
+  font-size: 18px;
+}
+
+/* 会话列表 */
+.cs-m-session {
+  padding-right: 0;
+}
+
+.cs-m-session.is-current {
+  border-color: var(--accent);
+}
+
+.cs-m-session-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.cs-m-session-dot.is-connected {
+  background: var(--accent);
+}
+
+.cs-m-session-dot.is-connecting {
+  background: var(--warning, #e5a50a);
+}
+
+.cs-m-session-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+}
+
+.cs-m-session-close .cs-m-icon {
+  font-size: 20px;
+}
+
+.cs-m-sessions .cs-m-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
