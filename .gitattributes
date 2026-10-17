@@ -3,3 +3,4 @@ apps/mobile/src-tauri/gen/android/gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
 *.png binary
+*.woff2 binary
