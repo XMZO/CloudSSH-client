@@ -1,0 +1,175 @@
+/* ========== 工作台主题：命令片段面板改成紧凑列表 ==========
+   网页版的片段面板与 SFTP 同宽（420–600px），每条片段是一张带代码框的大卡片，停靠在终端旁边时
+   占掉近一半宽度、一屏只看得到四五条。这里收窄面板，一条片段压成两三行：名称与分类在一行，
+   命令最多显示两行（完整内容在悬停提示里），操作按钮悬停时才出现。结构与行为不变。 */
+
+html[data-cs-desk="workbench"] #snippet-panel {
+  width: clamp(320px, 28vw, 380px) !important;
+  font-family: var(--cs-ui-font);
+}
+
+/* 标题栏、工具栏、分类、底栏都收矮 */
+html[data-cs-desk="workbench"] #snippet-panel > .sftp-panel-header {
+  height: 40px;
+  padding: 0 8px 0 12px;
+}
+
+html[data-cs-desk="workbench"] #snippet-panel > .sftp-panel-header + div {
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+html[data-cs-desk="workbench"] #snippet-new-btn {
+  padding: 0 8px;
+  letter-spacing: normal;
+  font-family: var(--cs-ui-font);
+}
+
+html[data-cs-desk="workbench"] #snippet-category-chips {
+  gap: 4px;
+  padding: 5px 8px;
+}
+
+html[data-cs-desk="workbench"] #snippet-category-chips > button {
+  padding: 1px 8px;
+}
+
+html[data-cs-desk="workbench"] #snippet-panel > div:last-child {
+  height: 28px;
+  padding: 0 12px;
+}
+
+/* ---------- 列表 ---------- */
+
+html[data-cs-desk="workbench"] #snippet-list {
+  padding: 4px;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > * {
+  margin: 0 !important;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] {
+  position: relative;
+  padding: 6px 8px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: default;
+  transition: background-color 0.12s;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id]:hover {
+  background: var(--cs-hover);
+}
+
+/* 相邻两条之间一道细分隔线（悬停那条与它下面一条不画，免得和圆角背景打架） */
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] + [data-snippet-id]::before {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  content: "";
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id]:hover::before,
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id]:hover + [data-snippet-id]::before {
+  display: none;
+}
+
+/* 第一行：名称 · 分类 · 变量，放不下时分类和变量先省略 */
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child {
+  display: block;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :first-child > :first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :first-child > :last-child {
+  /* 只占名称剩下的宽度（基准为 0）：名称不会被挤掉零点几像素而无故出现省略号 */
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 变量说明（“含动态参数 ({{host}}, …)”）最长，放不下时以省略号结尾 */
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :first-child > :last-child > * {
+  flex-shrink: 0;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :first-child > :last-child > :last-child {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :first-child > :last-child > :last-child > :last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 操作按钮：悬停或键盘聚焦时浮在右上角，不占列表宽度 */
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :last-child {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  gap: 0;
+  padding-left: 14px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, transparent, var(--bg-surface) 14px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id]:is(:hover, :focus-within) > :first-child > :last-child {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :last-child > button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--bg-surface);
+}
+
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :first-child > :last-child > button:hover {
+  background: linear-gradient(var(--cs-press), var(--cs-press)), var(--bg-surface);
+}
+
+/* 命令：去掉代码框，最多两行 */
+html[data-cs-desk="workbench"] #snippet-list > [data-snippet-id] > :last-child:not(:first-child) {
+  display: -webkit-box;
+  max-height: none;
+  margin-top: 3px !important;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}

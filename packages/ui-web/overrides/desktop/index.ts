@@ -7,6 +7,7 @@
  *   home.ts      工作台的服务器列表（表格）
  *   workbench.css  工作台的页面布局（收起网页版顶栏页脚、终端占满、底部状态栏）
  *   classic.css    经典主题在桌面窗口里的排版修正
+ *   snippets.ts/css  命令片段面板：工作台下收窄成紧凑列表，双击填入终端
  *
  * 窗口有没有系统边框由客户端决定（内置界面才去掉边框）：没有边框时两种主题都显示标题栏；
  * 有边框时只有工作台显示（作为应用顶栏）。
@@ -14,10 +15,12 @@
 import type { ITheme } from '@xterm/xterm';
 import { getActiveTerminalTheme, onTerminalThemeChange } from '../../upstream/frontend/src/theme';
 import { mountHome } from './home';
+import { mountSnippetEnhancements } from './snippets';
 import { desktopSkin, SKIN_CHANGED_EVENT, trackView } from './state';
 import { mountTitlebar } from './titlebar';
 import './workbench.css';
 import './classic.css';
+import './snippets.css';
 
 export async function mountDesktopShell(): Promise<void> {
   const html = document.documentElement;
@@ -54,6 +57,7 @@ export async function mountDesktopShell(): Promise<void> {
       requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     });
     mountHome();
+    mountSnippetEnhancements();
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
