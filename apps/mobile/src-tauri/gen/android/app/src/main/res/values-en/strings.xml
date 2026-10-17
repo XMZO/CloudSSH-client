@@ -4,4 +4,6 @@
     <string name="keepalive_text">%1$d SSH session(s) connected</string>
     <string name="renderer_gone">The page renderer keeps stopping. Sessions were disconnected.</string>
     <string name="renderer_reload">Reload</string>
+    <string name="auth_tab_hint">After authorizing on GitHub, tap to return to CloudSSH</string>
+    <string name="auth_tab_done">Finish sign-in</string>
 </resources>

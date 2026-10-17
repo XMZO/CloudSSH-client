@@ -89,6 +89,14 @@ const zhCN = {
   batteryTitle: '电池优化',
   version: '版本',
   deleteInstance: '删除实例',
+  loginMethodTitle: '使用 GitHub 登录',
+  loginBrowser: '用浏览器登录（支持 passkey）',
+  loginInApp: '在应用内登录',
+  loginBrowserHint: '将在浏览器中打开 GitHub，passkey、密码管理器和浏览器里已登录的账号都能用。授权后页面会显示“Invalid state parameter”，这是正常的，点底部的“完成登录”回到应用。',
+  loginBrowserContinue: '继续',
+  loginCancelled: '已取消登录',
+  loginNotCallback: '还没有完成 GitHub 授权，请重新登录',
+  loginNoBrowser: '没有支持的浏览器，改用应用内登录',
 } as const;
 
 type Key = keyof typeof zhCN;
@@ -184,6 +192,14 @@ const dictionaries: Record<string, Record<Key, string>> = {
     batteryTitle: '電池最佳化',
     version: '版本',
     deleteInstance: '刪除實例',
+    loginMethodTitle: '使用 GitHub 登入',
+    loginBrowser: '用瀏覽器登入（支援 passkey）',
+    loginInApp: '在應用程式內登入',
+    loginBrowserHint: '將在瀏覽器中開啟 GitHub，passkey、密碼管理器和瀏覽器裡已登入的帳號都能用。授權後頁面會顯示「Invalid state parameter」，這是正常的，點底部的「完成登入」回到應用程式。',
+    loginBrowserContinue: '繼續',
+    loginCancelled: '已取消登入',
+    loginNotCallback: '還沒有完成 GitHub 授權，請重新登入',
+    loginNoBrowser: '沒有支援的瀏覽器，改用應用程式內登入',
   },
   'en-US': {
     nodes: 'Hosts',
@@ -273,6 +289,14 @@ const dictionaries: Record<string, Record<Key, string>> = {
     batteryTitle: 'Battery optimization',
     version: 'Version',
     deleteInstance: 'Delete instance',
+    loginMethodTitle: 'Sign in with GitHub',
+    loginBrowser: 'Sign in with the browser (passkeys supported)',
+    loginInApp: 'Sign in inside the app',
+    loginBrowserHint: 'GitHub opens in your browser, where passkeys, password managers and an existing GitHub sign-in all work. After you authorize, the page shows “Invalid state parameter”. That is expected: tap “Finish sign-in” at the bottom to return to the app.',
+    loginBrowserContinue: 'Continue',
+    loginCancelled: 'Sign-in cancelled',
+    loginNotCallback: 'GitHub authorization was not finished. Please sign in again.',
+    loginNoBrowser: 'No supported browser, signing in inside the app instead',
   },
 };
 

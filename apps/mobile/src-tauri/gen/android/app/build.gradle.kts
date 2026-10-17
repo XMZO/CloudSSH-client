@@ -124,6 +124,8 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    // 用浏览器登录 GitHub（Custom Tab，支持 passkey）
+    implementation("androidx.browser:browser:1.8.0")
 }
 
 // Tauri 的安卓库声明了 Material 组件，但它和本项目都没有任何代码或资源用到（主题用 AppCompat），

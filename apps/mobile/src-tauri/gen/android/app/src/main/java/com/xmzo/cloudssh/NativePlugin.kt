@@ -125,6 +125,26 @@ class NativePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /**
+     * 用浏览器登录：在 Custom Tab 里打开 url，一直等到用户点“完成登录”（返回 url 为当时的页面地址）
+     * 或关掉标签页（不带 url）。没有支持 Custom Tab 的浏览器时返回 error = no_browser。
+     */
+    @Command
+    fun openAuthTab(invoke: Invoke) {
+        val url = invoke.getArgs().getString("url", null)
+        val main = activity as? MainActivity
+        if (url.isNullOrEmpty() || main == null) {
+            invoke.resolve(JSObject().put("error", "no_browser"))
+            return
+        }
+        activity.runOnUiThread {
+            val opened = main.openAuthTab(url) { result ->
+                invoke.resolve(JSObject().apply { if (result != null) put("url", result) })
+            }
+            if (!opened) invoke.resolve(JSObject().put("error", "no_browser"))
+        }
+    }
+
     @Command
     fun moveToBackground(invoke: Invoke) {
         activity.runOnUiThread { activity.moveTaskToBack(true) }

@@ -49,7 +49,7 @@ pnpm android:build:debug   # 调试版（arm64 + x86_64，可装模拟器）
 pnpm android:build --uncompressed   # 动态库与 dex 不压缩：安装包大一倍，换来安装后占用最小（见下文“体积”）
 ```
 
-把 APK 传到手机上安装即可，系统会提示允许安装未知来源的应用。打开后点“使用 GitHub 登录”，在应用内完成授权。
+把 APK 传到手机上安装即可，系统会提示允许安装未知来源的应用。打开后点“使用 GitHub 登录”，选择用浏览器登录（支持 passkey）或在应用内登录。
 
 ---
 
@@ -76,7 +76,7 @@ CloudSSH-client/
 │   │       ├── src/
 │   │       │   ├── settings.rs    连接与配置层：实例、当前实例、代理（规则与 core/instance.ts 一致）
 │   │       │   ├── net.rs         网络层：代理 /api 与 SSH/SFTP WebSocket，按实例保存 Cookie、补同源 Origin
-│   │       │   ├── oauth.rs       GitHub 登录：拦截 OAuth 回调，session 只存在 Rust 侧
+│   │       │   ├── oauth.rs       GitHub 登录（应用内 / 浏览器）：重放 OAuth 回调，session 只存在 Rust 侧
 │   │       │   ├── native.rs      平台能力（调用下面的 Kotlin 插件）
 │   │       │   └── lib.rs         命令注册与装配
 │   │       └── gen/android/       Android 工程（Tauri 生成，含少量 Kotlin）
@@ -362,7 +362,7 @@ pnpm install && pnpm build:ui
 | WebSocket 必须带同源 `Origin` | `early.ts` 把 `/api/ssh*` 的 `WebSocket` 换成走 Rust 的实现，Rust 握手时带 `Origin: <Worker origin>` 和 Cookie |
 | 写接口校验同源 `Origin` | `fetch('/api/...')` 由 Rust 转发，统一补 `Origin`；只允许 `/api` 路径，不跟随重定向 |
 | HttpOnly `session` Cookie | Rust 按实例保存 Cookie 罐（应用私有目录），响应里的 `Set-Cookie` 不交给页面 |
-| OAuth 回调地址是 Worker 域名 | 点击登录时 Rust 先请求 `/api/auth/github`（`oauth_state` 进 Rust 的 Cookie 罐），WebView 打开 GitHub 授权页；跳回 `<Worker>/api/auth/callback` 时被拦下，由 Rust 带着 `oauth_state` 完成回调，再回到应用首页 |
+| OAuth 回调地址是 Worker 域名 | 点击登录时 Rust 先请求 `/api/auth/github`（`oauth_state` 进 Rust 的 Cookie 罐），WebView 打开 GitHub 授权页；跳回 `<Worker>/api/auth/callback` 时被拦下，由 Rust 带着 `oauth_state` 完成回调，再回到应用首页。用浏览器登录时授权页在 Custom Tab 里打开：浏览器没有 `oauth_state`，Worker 先校验 state 就拒绝回调（code 不会被用掉），用户点底部“完成登录”，浏览器把回调地址交回应用，再由 Rust 照样完成 |
 | 网页版校验 wsUrl 必须同源 | 构建时给 `validateWsUrl` 加一个扩展判断，放行当前实例的 `/api/ssh*`（只影响移动端构建） |
 
 ### 功能
@@ -380,6 +380,7 @@ pnpm install && pnpm build:ui
 | 关闭会话的确认 | “设置 → 终端 → 关闭会话前确认”可选：仅已连接的（默认）/ 总是 / 从不。默认只有真正连着的会话关闭前要确认，已断开、正在连接或重连中的直接关闭；关闭标签、会话列表里的 ×、黑曜“更多”里的“断开”都按这个设置 |
 | 多实例与代理 | 设置里新增/编辑/切换实例（删除在编辑页里）（“测试连接”显示延迟、登录方式与 OAuth 回调地址），每个实例独立 Cookie；可设 HTTP 代理 |
 | 剪贴板 | `navigator.clipboard` 由原生剪贴板实现，终端粘贴可用 |
+| GitHub 登录 | 点“使用 GitHub 登录”先选方式（记住上次的选择）。**用浏览器登录**：在系统浏览器的 Custom Tab 里登录与授权，passkey、密码管理器、浏览器里已登录的 GitHub 都能用；授权后页面显示“Invalid state parameter”是正常的，点底部“完成登录”回到应用。**在应用内登录**：GitHub 页面在应用的 WebView 里打开，WebView 不支持 passkey。两种方式都不需要改 Worker |
 | 设置 | 按使用频率分成五组：实例 → 终端（字号、关键词高亮、关闭确认）→ 连接（代理、后台保活、电池优化）→ 外观（主题、强调色、布局模块）→ 关于（版本、存储）；一项设置一行，左边标题右边控件。顶部的分组导航点一下直达，滚动时高亮当前分组。入口：节点页标题栏、匿名连接页右上角、终端“更多 → 界面设置” |
 | 全面屏与键盘 | 系统栏和键盘的空间由原生让出，键盘弹出时终端行数自动变化；系统栏颜色跟随网页主题 |
 

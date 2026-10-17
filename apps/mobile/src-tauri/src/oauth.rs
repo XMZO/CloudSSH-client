@@ -8,10 +8,16 @@
 //!   3. GitHub 跳回 <实例>/api/auth/callback?code&state → 拦下，由 Rust 带着 oauth_state 去请求，
 //!      Worker 返回的 HttpOnly session Cookie 直接进 Rust 的 Cookie 罐，然后回到应用首页
 //! GitHub 页面本身是普通网页，不经过任何代理；session 永远不会暴露给页面脚本。
+//!
+//! 另一种方式“用浏览器登录”（login_in_browser）：第 2 步改在系统浏览器的 Custom Tab 里完成，
+//! passkey、密码管理器、浏览器里已登录的 GitHub 都能用（应用内的 WebView 不支持 WebAuthn）。
+//! GitHub 会把标签页带到实例的回调地址：浏览器没有 oauth_state，Worker 先校验 state 就拒绝（403），
+//! 不会用掉 code；用户点标签页底部的“完成登录”，浏览器把当前地址交回应用，再由 Rust 照第 3 步重放。
 
 use crate::native;
 use crate::net::Net;
-use tauri::{Manager, Runtime, Webview};
+use crate::settings::Instance;
+use tauri::{AppHandle, Manager, Runtime, Webview};
 use url::Url;
 
 /// 应用自身页面的 origin（Android/Windows 为 tauri.localhost，开启了 https scheme）
@@ -97,27 +103,44 @@ fn app_url_with(home: &Url, query: &str) -> Url {
     target
 }
 
-async fn start_login<R: Runtime>(webview: Webview<R>, home: Url) {
-    let net = webview.state::<Net>();
-    let instance = net.current();
-    let start = Url::parse(&format!("{}/api/auth/github", instance.base_url)).expect("valid url");
-    match net.get_no_follow(&instance, &start).await {
-        Ok((status, Some(location))) if (300..400).contains(&status) => {
-            if let Ok(target) = Url::parse(&location) {
-                let _ = webview.navigate(target);
-                return;
-            }
-            let _ = webview.navigate(app_url_with(&home, "login_error=bad_redirect"));
-        }
+fn query_value(url: &Url, name: &str) -> Option<String> {
+    url.query_pairs().find(|(key, _)| key == name).map(|(_, value)| value.into_owned())
+}
+
+/// 第 1 步：请求实例的 /api/auth/github，oauth_state 存进 Rust 的 Cookie 罐，返回 GitHub 授权页地址。
+/// 错误为页面上 login_error 用的代码：bad_redirect / http_xxx / network
+async fn authorize_url(net: &Net, instance: &Instance) -> Result<Url, String> {
+    let start = Url::parse(&format!("{}/api/auth/github", instance.base_url)).map_err(|_| "bad_redirect".to_string())?;
+    match net.get_no_follow(instance, &start).await {
+        Ok((status, Some(location))) if (300..400).contains(&status) => Url::parse(&location).map_err(|_| "bad_redirect".to_string()),
         Ok((status, _)) => {
             log::warn!("login start returned {status}");
-            let _ = webview.navigate(app_url_with(&home, &format!("login_error=http_{status}")));
+            Err(format!("http_{status}"))
         }
         Err(error) => {
             log::warn!("login start failed: {error}");
-            let _ = webview.navigate(app_url_with(&home, "login_error=network"));
+            Err("network".into())
         }
     }
+}
+
+/// 第 3 步：带着 oauth_state 请求回调，Worker 返回的 HttpOnly session Cookie 进 Rust 的 Cookie 罐
+async fn complete_callback(net: &Net, instance: &Instance, callback: &Url) -> Result<(), String> {
+    match net.get_no_follow(instance, callback).await {
+        Ok(_) if net.has_session(instance) => Ok(()),
+        Ok((status, _)) => Err(format!("http_{status}")),
+        Err(_) => Err("network".into()),
+    }
+}
+
+async fn start_login<R: Runtime>(webview: Webview<R>, home: Url) {
+    let net = webview.state::<Net>();
+    let instance = net.current();
+    let target = match authorize_url(&net, &instance).await {
+        Ok(target) => target,
+        Err(code) => app_url_with(&home, &format!("login_error={code}")),
+    };
+    let _ = webview.navigate(target);
 }
 
 async fn finish_login<R: Runtime>(webview: Webview<R>, callback: Url) {
@@ -129,13 +152,45 @@ async fn finish_login<R: Runtime>(webview: Webview<R>, callback: Url) {
         .filter(is_app_url)
         .map(|u| app_home(&u))
         .unwrap_or_else(|| Url::parse(default_app_home()).unwrap());
-    let result = net.get_no_follow(&instance, &callback).await;
-    let target = match result {
-        Ok(_) if net.has_session(&instance) => app_url_with(&home, "login=ok"),
-        Ok((status, _)) => app_url_with(&home, &format!("login_error=http_{status}")),
-        Err(_) => app_url_with(&home, "login_error=network"),
+    let target = match complete_callback(&net, &instance, &callback).await {
+        Ok(()) => app_url_with(&home, "login=ok"),
+        Err(code) => app_url_with(&home, &format!("login_error={code}")),
     };
     let _ = webview.navigate(target);
+}
+
+/// 浏览器交回的地址必须是本实例的回调，并且 state 与这次登录发出的一致
+fn is_callback_for(instance: &Instance, url: &Url, state: &str) -> bool {
+    let Ok(base) = Url::parse(&instance.base_url) else {
+        return false;
+    };
+    url.origin() == base.origin()
+        && url.path() == "/api/auth/callback"
+        && query_value(url, "code").is_some_and(|code| !code.is_empty())
+        && query_value(url, "state").as_deref() == Some(state)
+}
+
+/// 用系统浏览器登录（见文件开头）。错误为代码：cancelled（关掉了标签页）/ not_callback（还没授权完就点了
+/// “完成登录”）/ no_browser（没有支持 Custom Tab 的浏览器）/ bad_redirect / http_xxx / network
+pub async fn login_in_browser<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let net = app.state::<Net>();
+    let instance = net.current();
+    let authorize = authorize_url(&net, &instance).await?;
+    let state = query_value(&authorize, "state").ok_or("bad_redirect")?;
+    let returned = {
+        let app = app.clone();
+        let url = authorize.to_string();
+        // 打开标签页后一直等到用户点“完成登录”或关掉它：放在阻塞线程池里等，不占异步线程
+        tauri::async_runtime::spawn_blocking(move || native::open_auth_tab(&app, &url))
+            .await
+            .map_err(|e| e.to_string())??
+    };
+    let returned = returned.ok_or("cancelled")?;
+    let callback = Url::parse(&returned).map_err(|_| "not_callback")?;
+    if !is_callback_for(&instance, &callback, &state) {
+        return Err("not_callback".into());
+    }
+    complete_callback(&net, &instance, &callback).await
 }
 
 pub fn default_app_home() -> &'static str {
@@ -143,5 +198,29 @@ pub fn default_app_home() -> &'static str {
         "https://tauri.localhost/"
     } else {
         "tauri://localhost/"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn instance(base_url: &str) -> Instance {
+        Instance { id: "t".into(), name: "t".into(), base_url: base_url.into() }
+    }
+
+    #[test]
+    fn accepts_only_the_callback_of_this_login() {
+        let bash = instance("https://bash.al");
+        let ok = Url::parse("https://bash.al/api/auth/callback?code=abc&state=s1").unwrap();
+        assert!(is_callback_for(&bash, &ok, "s1"));
+        // state 不一致、缺 code、别的域名、别的路径都不接受
+        assert!(!is_callback_for(&bash, &ok, "s2"));
+        assert!(!is_callback_for(&bash, &Url::parse("https://bash.al/api/auth/callback?state=s1").unwrap(), "s1"));
+        assert!(!is_callback_for(&bash, &Url::parse("https://bash.al/api/auth/callback?code=&state=s1").unwrap(), "s1"));
+        assert!(!is_callback_for(&bash, &Url::parse("https://evil.example/api/auth/callback?code=abc&state=s1").unwrap(), "s1"));
+        assert!(!is_callback_for(&bash, &Url::parse("http://bash.al/api/auth/callback?code=abc&state=s1").unwrap(), "s1"));
+        assert!(!is_callback_for(&bash, &Url::parse("https://bash.al/login?code=abc&state=s1").unwrap(), "s1"));
+        assert!(!is_callback_for(&bash, &Url::parse("https://github.com/login/oauth/authorize?state=s1").unwrap(), "s1"));
     }
 }

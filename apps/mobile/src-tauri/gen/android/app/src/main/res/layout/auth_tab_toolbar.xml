@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 用浏览器登录时 Custom Tab 底部的工具栏。由浏览器用 RemoteViews 显示，只能用 LinearLayout、TextView、Button 等 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#131313"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="16dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/auth_tab_hint"
+        android:textColor="#B8BCC6"
+        android:textSize="13sp" />
+
+    <Button
+        android:id="@+id/auth_tab_done"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_marginStart="12dp"
+        android:background="@drawable/auth_tab_button"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:text="@string/auth_tab_done"
+        android:textAllCaps="false"
+        android:textColor="#0C0E12"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+</LinearLayout>

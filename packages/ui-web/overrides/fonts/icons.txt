@@ -1,3 +1,4 @@
+2d
 add
 add_box
 add_circle
@@ -38,6 +39,7 @@ deployed_code
 description
 dns
 dock
+done
 download
 draft
 drag_indicator
@@ -50,6 +52,7 @@ error_outline
 expand
 expand_more
 explore
+filter
 folder
 folder_off
 folder_open
@@ -59,6 +62,7 @@ function
 gif
 group
 groups
+height
 highlight
 history
 history_edu
@@ -87,6 +91,7 @@ list
 lock
 login
 logout
+map
 markdown
 menu
 message
@@ -102,6 +107,7 @@ note
 note_add
 open_in_new
 palette
+passkey
 password
 pattern
 person
@@ -126,6 +132,7 @@ route
 rtt
 rule
 save
+scale
 screen_rotation
 search
 search_off
@@ -162,3 +169,4 @@ visibility_off
 vpn_key
 warning
 water_drop
+width

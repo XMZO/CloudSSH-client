@@ -57,6 +57,8 @@ export const native = {
     invoke<void>('ws_send_binary', bytes, { headers: { 'x-ws-id': String(id) } }),
   wsClose: (id: number, code?: number, reason?: string) => invoke<void>('ws_close', { id, code, reason }),
   keepAlive: (sessions: number) => invoke<void>('keep_alive', { sessions }),
+  /** 用浏览器登录 GitHub；失败时抛出错误代码（cancelled / not_callback / no_browser / http_xxx / network） */
+  githubLoginBrowser: () => invoke<void>('github_login_browser'),
   saveDownload: (name: string, mime: string, bytes: Uint8Array) =>
     invoke<string>('save_download', bytes, {
       headers: { 'x-file-name': encodeURIComponent(name), 'x-mime': mime || 'application/octet-stream' },

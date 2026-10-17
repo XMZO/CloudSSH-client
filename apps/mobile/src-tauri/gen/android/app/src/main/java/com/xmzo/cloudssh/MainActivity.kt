@@ -1,5 +1,7 @@
 package com.xmzo.cloudssh
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.net.Uri
@@ -16,10 +18,14 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.RemoteViews
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsClient
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -33,6 +39,9 @@ private const val TAG = "CloudSSH"
 /** 这段时间内渲染进程连续退出达到上限就不再自动重建，改为显示“重新加载”页，避免无限循环 */
 private const val CRASH_LOOP_WINDOW_MS = 60_000L
 private const val CRASH_LOOP_LIMIT = 3
+
+/** 用浏览器登录时，Custom Tab 底部“完成登录”发回本 Activity 的动作（浏览器会把当前页面地址放进 intent data） */
+private const val ACTION_AUTH_TAB_DONE = "com.xmzo.cloudssh.AUTH_TAB_DONE"
 
 class MainActivity : TauriActivity() {
   private val defaultBackground = Color.parseColor("#131313")
@@ -89,6 +98,74 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     raiseBackCallback()
+    // 从登录标签页回来却没点“完成登录”（返回键、关闭按钮）：当作取消。
+    // 点了“完成登录”时 onNewIntent 先于 onResume，已经交出结果
+    if (authTabLeft) finishAuthTab(null)
+  }
+
+  override fun onPause() {
+    super.onPause()
+    if (authTabResult != null) authTabLeft = true
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    if (intent.action == ACTION_AUTH_TAB_DONE) finishAuthTab(intent.dataString)
+  }
+
+  // ---------- 用浏览器登录（Custom Tab） ----------
+
+  /** 等待浏览器登录结果的回调：点“完成登录”时的页面地址，关掉标签页时为 null */
+  private var authTabResult: ((String?) -> Unit)? = null
+  /** 标签页已经盖住本页面（之后回到本页面就说明标签页关了） */
+  private var authTabLeft = false
+
+  /**
+   * 在系统浏览器的 Custom Tab 里打开登录页（passkey、密码管理器都能用），底部工具栏与菜单里有“完成登录”。
+   * 浏览器点击这类按钮时会把当前页面地址作为 intent data 发回来（singleTask：本 Activity 回到前台并关掉标签页）。
+   * 没有支持 Custom Tab 的浏览器时返回 false。
+   */
+  fun openAuthTab(url: String, onResult: (String?) -> Unit): Boolean {
+    val browser = CustomTabsClient.getPackageName(this, null) ?: return false
+    finishAuthTab(null)
+    val done = PendingIntent.getActivity(
+      this,
+      0,
+      Intent(this, MainActivity::class.java).setAction(ACTION_AUTH_TAB_DONE),
+      // 浏览器要把当前地址写进 intent data，必须可变；目标是显式的本 Activity
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+    )
+    val colors = CustomTabColorSchemeParams.Builder()
+      .setToolbarColor(defaultBackground)
+      .setSecondaryToolbarColor(defaultBackground)
+      .setNavigationBarColor(defaultBackground)
+      .build()
+    val tab = CustomTabsIntent.Builder()
+      .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+      .setDefaultColorSchemeParams(colors)
+      .setShowTitle(true)
+      .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
+      .setSecondaryToolbarViews(RemoteViews(packageName, R.layout.auth_tab_toolbar), intArrayOf(R.id.auth_tab_done), done)
+      .addMenuItem(getString(R.string.auth_tab_done), done)
+      .build()
+    tab.intent.setPackage(browser)
+    authTabResult = onResult
+    authTabLeft = false
+    return try {
+      tab.launchUrl(this, Uri.parse(url))
+      true
+    } catch (error: Exception) {
+      Log.w(TAG, "custom tab failed: $error")
+      authTabResult = null
+      false
+    }
+  }
+
+  private fun finishAuthTab(url: String?) {
+    val result = authTabResult ?: return
+    authTabResult = null
+    authTabLeft = false
+    result(url)
   }
 
   override fun onWebViewCreate(webView: WebView) {

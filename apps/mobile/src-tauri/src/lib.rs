@@ -206,6 +206,12 @@ async fn on_worker<R: Runtime, T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(move || call(&app)).await.map_err(|e| e.to_string())?
 }
 
+/// 用系统浏览器登录 GitHub（支持 passkey），完成后 session 已在 Rust 的 Cookie 罐里。错误代码见 oauth::login_in_browser
+#[tauri::command]
+async fn github_login_browser<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    oauth::login_in_browser(&app).await
+}
+
 #[tauri::command]
 async fn keep_alive<R: Runtime>(app: AppHandle<R>, sessions: u32) -> Result<(), String> {
     on_worker(app, move |app| native::keep_alive(app, sessions)).await
@@ -368,6 +374,7 @@ pub fn run() {
             ws_send,
             ws_send_binary,
             ws_close,
+            github_login_browser,
             keep_alive,
             save_download,
             clipboard_read,

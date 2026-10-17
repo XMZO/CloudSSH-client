@@ -4,7 +4,7 @@
  *
  *   node scripts/mock-worker.mjs [端口，默认 8788]
  *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist   # 同时托管构建好的界面，浏览器直接打开调试
- *   node scripts/mock-worker.mjs 8788 --anon                       # 未登录（匿名连接页）
+ *   node scripts/mock-worker.mjs 8788 --anon                       # 未登录（匿名连接页），可走一遍模拟的 GitHub 登录
  *
  * 客户端把实例地址设为 http://127.0.0.1:8788（安卓模拟器可配合 adb reverse tcp:8788 tcp:8788）。
  * 带 --ui 时，非 /api 的 GET 请求返回该目录下的文件（找不到就返回 index.html），浏览器打开 http://127.0.0.1:8788 即可。
@@ -99,6 +99,75 @@ const readBody = (req) =>
     });
   });
 
+// ---------- 模拟 GitHub OAuth（--anon 时） ----------
+// 与 Worker 的顺序一致：/api/auth/github 下发 oauth_state Cookie 并跳到授权页；回调先校验 state 再用 code，
+// state 不对直接 403（不会用掉 code）。授权页由假 Worker 自己提供，点“Authorize”回到回调地址。
+const oauthCodes = new Set();
+const sessions = new Set();
+const cookieOf = (req, name) =>
+  (req.headers.cookie ?? '')
+    .split(/;\s*/)
+    .map((part) => part.split('='))
+    .find(([key]) => key === name)?.[1] ?? null;
+
+function handleMockOauth(req, res, url) {
+  const base = `http://${req.headers.host}`;
+  if (url.pathname === '/api/auth/github') {
+    const state = crypto.randomUUID();
+    const params = new URLSearchParams({ client_id: 'mock', redirect_uri: `${base}/api/auth/callback`, scope: 'read:user', state });
+    res.writeHead(302, {
+      location: `${base}/mock-github/authorize?${params}`,
+      'set-cookie': `oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`,
+    });
+    res.end();
+    return true;
+  }
+  if (url.pathname === '/mock-github/authorize') {
+    const code = crypto.randomUUID();
+    oauthCodes.add(code);
+    const back = new URL(url.searchParams.get('redirect_uri') ?? `${base}/api/auth/callback`);
+    back.searchParams.set('code', code);
+    back.searchParams.set('state', url.searchParams.get('state') ?? '');
+    const href = back.toString().replace(/&/g, '&amp;');
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(
+      `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mock GitHub</title>` +
+        `<body style="font-family:sans-serif;padding:24px"><h2>Mock GitHub</h2><p>假 Worker 的授权页，模拟 GitHub 登录与授权。</p>` +
+        `<a id="authorize" href="${href}" style="display:block;margin-top:40px;padding:20px;background:#2da44e;color:#fff;text-align:center;border-radius:10px;font-size:22px;text-decoration:none">Authorize</a></body>`
+    );
+    return true;
+  }
+  if (url.pathname === '/api/auth/callback') {
+    const state = url.searchParams.get('state');
+    if (!state || state !== cookieOf(req, 'oauth_state')) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('Invalid state parameter (CSRF protection)');
+      return true;
+    }
+    const code = url.searchParams.get('code');
+    if (!code || !oauthCodes.delete(code)) {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('GitHub OAuth error: bad_verification_code');
+      return true;
+    }
+    const token = crypto.randomUUID();
+    sessions.add(token);
+    res.writeHead(302, {
+      location: `${base}/`,
+      'set-cookie': [`session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`, 'oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'],
+    });
+    res.end();
+    return true;
+  }
+  if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
+    sessions.delete(cookieOf(req, 'session'));
+    res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' });
+    res.end('{}');
+    return true;
+  }
+  return false;
+}
+
 async function handleHttp(req, res) {
   const url = new URL(req.url, 'http://mock');
   const path = url.pathname;
@@ -106,8 +175,9 @@ async function handleHttp(req, res) {
   console.log(method, path);
 
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sharingEnabled: false });
+  if (anonymous && handleMockOauth(req, res, url)) return;
   if (path === '/api/auth/me') {
-    if (anonymous) return json(res, 401, { error: 'Unauthorized' });
+    if (anonymous && !sessions.has(cookieOf(req, 'session'))) return json(res, 401, { error: 'Unauthorized' });
     return json(res, 200, { id: 1, github_id: 1, username: 'tester', avatar_url: null });
   }
   if (path === '/api/servers' && method === 'GET') return json(res, 200, servers);

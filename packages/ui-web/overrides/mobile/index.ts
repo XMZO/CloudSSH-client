@@ -3,7 +3,7 @@
  * - 节点分组首页（nodes.ts）与设置面板（settings.ts），匿名连接页的设置入口（auth-entry.ts）
  * - 返回键：关闭最上层浮层 → 终端回到节点页 → 退到后台（保持会话）
  * - 后台保活：有会话时让 Android 前台服务保持连接
- * - 登录结果、下载结果提示
+ * - GitHub 登录方式（浏览器 / 应用内，github-login.ts）、登录结果与下载结果提示
  */
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import { t } from '../../upstream/frontend/src/i18n';
@@ -15,6 +15,7 @@ import { installTerminalEnhancements } from '../shared/terminal';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
 import { mountAuthSettings } from './auth-entry';
+import { installGithubLogin } from './github-login';
 import { mt } from './i18n';
 import './mobile.css';
 import { mountNodes } from './nodes';
@@ -182,6 +183,7 @@ if (isTauri()) {
   const start = () => {
     mountNodes();
     mountAuthSettings();
+    installGithubLogin();
     mountTabs();
     startSkin();
     installLanguagePicker(sheetLanguageMenu);

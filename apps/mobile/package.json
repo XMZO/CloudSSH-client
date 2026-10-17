@@ -1,6 +1,6 @@
 {
   "name": "@cloudssh/mobile",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "CloudSSH 移动客户端（Tauri 2 + Rust）",
   "license": "Apache-2.0",

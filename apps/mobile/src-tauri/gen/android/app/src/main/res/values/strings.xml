@@ -6,4 +6,6 @@
     <string name="keepalive_text">%1$d 个 SSH 会话保持连接中</string>
     <string name="renderer_gone">页面渲染进程反复退出，会话已断开。</string>
     <string name="renderer_reload">重新加载</string>
+    <string name="auth_tab_hint">在 GitHub 授权后，点右边回到 CloudSSH</string>
+    <string name="auth_tab_done">完成登录</string>
 </resources>

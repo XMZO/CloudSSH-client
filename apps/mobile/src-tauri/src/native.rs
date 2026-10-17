@@ -69,6 +69,16 @@ struct NameResult {
     name: String,
 }
 
+/// Custom Tab 登录的结果：用户点“完成登录”时的页面地址；直接关掉标签页时为空
+#[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+struct AuthTabResult {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
 #[cfg(target_os = "android")]
 fn call<R: Runtime, T: serde::de::DeserializeOwned + Default>(app: &AppHandle<R>, method: &str, payload: impl Serialize) -> Result<T, String> {
     // run_mobile_plugin 会把调用投递到 Android 主线程再阻塞等结果：在主线程上调用必然永久死锁（ANR）。
@@ -133,6 +143,24 @@ pub fn clipboard_write<R: Runtime>(app: &AppHandle<R>, text: &str) -> Result<(),
     {
         let _ = (app, TextArgs { text });
         Ok(())
+    }
+}
+
+/// 在系统浏览器的 Custom Tab 里打开登录页并一直等待：用户点底部“完成登录”返回当时的页面地址，
+/// 直接关掉标签页返回 None。没有支持 Custom Tab 的浏览器时返回错误 no_browser。
+pub fn open_auth_tab<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<Option<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        let result = call::<R, AuthTabResult>(app, "openAuthTab", UrlArgs { url })?;
+        match result.error {
+            Some(error) => Err(error),
+            None => Ok(result.url),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, UrlArgs { url }, AuthTabResult::default());
+        Err("no_browser".into())
     }
 }
 

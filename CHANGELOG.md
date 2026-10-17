@@ -4,6 +4,20 @@
 
 版本号与代号统一由根目录的 `version.json` 管理（见 README“[版本号与版本代号](README.md#版本号与版本代号)”）。代号取自夜空中的亮星：次版本号或主版本号升级时换新代号，修订版沿用原代号。
 
+## [0.3.4] - 2026-10-17 · 牛郎 Altair
+
+### 新增
+
+- **手机端用浏览器登录 GitHub（支持 passkey）**：点“使用 GitHub 登录”时先选“用浏览器登录”或“在应用内登录”，记住上次的选择。应用内的 WebView 不支持 WebAuthn，GitHub 的 passkey 用不了；用浏览器登录时，在系统浏览器的 Custom Tab 里完成登录与授权，passkey、密码管理器、浏览器里已登录的 GitHub 都能用。不需要改 Worker：
+  - Rust 照旧请求 `/api/auth/github`，`oauth_state` 留在应用里；授权后 GitHub 把标签页带到回调地址，浏览器没有 `oauth_state`，Worker 先校验 state 就拒绝（页面显示 “Invalid state parameter”），code 不会被用掉
+  - 点标签页底部的“完成登录”，浏览器把当前地址交回应用；确认是本实例的回调、state 与这次登录一致后，由 Rust 带着 `oauth_state` 重放回调，拿到会话
+  - 关掉标签页算取消；还没授权就点“完成登录”会提示重新登录；没有支持 Custom Tab 的浏览器时自动改用应用内登录
+- 假 Worker 的 `--anon` 模式可以走完整的模拟 GitHub 登录：授权页、先校验 state 再用 code、一次性 code、会话 Cookie
+
+### 变更
+
+- 内置图标字体按源码重新生成（加入 passkey 图标）
+
 ## [0.3.3] - 2026-10-17 · 牛郎 Altair
 
 ### 修复
