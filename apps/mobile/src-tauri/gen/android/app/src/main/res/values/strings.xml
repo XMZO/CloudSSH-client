@@ -3,6 +3,8 @@
     <string name="main_activity_title">CloudSSH</string>
     <string name="keepalive_channel">SSH 会话保活</string>
     <string name="keepalive_channel_description">有 SSH 会话时常驻通知，防止切到后台后连接被系统断开</string>
+    <string name="events_channel">会话提醒</string>
+    <string name="events_channel_description">应用在后台时，长命令结束、终端响铃、会话断线与重连的提醒</string>
     <string name="keepalive_text">%1$d 个 SSH 会话保持连接中</string>
     <string name="renderer_gone">页面渲染进程反复退出，会话已断开。</string>
     <string name="renderer_reload">重新加载</string>

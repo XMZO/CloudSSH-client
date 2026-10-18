@@ -10,7 +10,7 @@ interface UiManifest {
 interface ManagerState {
   instances: InstanceConfig[];
   defaultInstanceId: string;
-  preferences: { closeToTray: boolean; showMenuBar: boolean };
+  preferences: { closeToTray: boolean; showMenuBar: boolean; quickConnectShortcut: string };
   openInstanceIds: string[];
   bundledUis: { id: string; manifest: UiManifest | null }[];
   appVersion: string;
@@ -18,6 +18,8 @@ interface ManagerState {
   appVersionLabel: string;
   electronVersion: string;
   configPath: string;
+  /** 快速连接的全局快捷键的注册结果（taken = 被其他程序占用） */
+  quickConnect?: { status: 'off' | 'on' | 'taken' | 'invalid' };
 }
 
 interface TestResult {
@@ -38,6 +40,7 @@ interface ManagerApi {
   clearData(id: string): Promise<void>;
   testInstance(baseUrl: string): Promise<TestResult>;
   setPreferences(patch: Partial<ManagerState['preferences']>): Promise<unknown>;
+  setShortcutRecording(recording: boolean): Promise<void>;
   pickDirectory(): Promise<string | null>;
   openPath(kind: 'config' | 'logs'): Promise<void>;
   onChanged(listener: (state: ManagerState) => void): () => void;
@@ -63,6 +66,84 @@ const testResult = $('test-result');
 const formError = $('form-error');
 const prefCloseToTray = $<HTMLInputElement>('pref-close-to-tray');
 const prefShowMenuBar = $<HTMLInputElement>('pref-show-menubar');
+const prefQuickConnect = $<HTMLButtonElement>('pref-quick-connect');
+const prefQuickConnectToggle = $<HTMLButtonElement>('pref-quick-connect-toggle');
+const DEFAULT_QUICK_CONNECT = 'CommandOrControl+Alt+T';
+let recordingShortcut = false;
+
+/** Control+Alt+T → Ctrl+Alt+T */
+function shortcutLabel(accelerator: string): string {
+  return accelerator
+    .split('+')
+    .map((part) => ({ CommandOrControl: 'Ctrl', Control: 'Ctrl', Super: 'Win', Command: 'Cmd' })[part] ?? part)
+    .join('+');
+}
+
+/** 按键事件 → Electron 加速键；只按了修饰键、或没有 Ctrl/Alt/Win 时返回 null */
+function acceleratorFrom(event: KeyboardEvent): string | null {
+  const mods: string[] = [];
+  if (event.ctrlKey) mods.push('Control');
+  if (event.altKey) mods.push('Alt');
+  if (event.shiftKey) mods.push('Shift');
+  if (event.metaKey) mods.push('Super');
+  if (!event.ctrlKey && !event.altKey && !event.metaKey) return null;
+  const code = event.code;
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) key = code;
+  else {
+    const named: Record<string, string> = {
+      Space: 'Space',
+      Backquote: '`',
+      Minus: '-',
+      Equal: '=',
+      BracketLeft: '[',
+      BracketRight: ']',
+      Semicolon: ';',
+      Quote: "'",
+      Comma: ',',
+      Period: '.',
+      Slash: '/',
+      Backslash: '\\',
+      Insert: 'Insert',
+      Home: 'Home',
+      End: 'End',
+      PageUp: 'PageUp',
+      PageDown: 'PageDown',
+    };
+    key = named[code] ?? null;
+  }
+  return key ? [...mods, key].join('+') : null;
+}
+
+function renderShortcut(): void {
+  if (!state) return;
+  const accelerator = state.preferences.quickConnectShortcut;
+  const status = state.quickConnect?.status ?? 'off';
+  prefQuickConnect.textContent = recordingShortcut ? '按下新的组合键…' : accelerator ? shortcutLabel(accelerator) : '未设置';
+  prefQuickConnect.classList.toggle('is-recording', recordingShortcut);
+  prefQuickConnectToggle.textContent = accelerator ? '关闭' : '恢复默认';
+  const hint = $('pref-quick-connect-hint');
+  hint.textContent = recordingShortcut
+    ? '按 Esc 取消，Backspace 关闭快捷键'
+    : status === 'taken'
+      ? '这个组合键已被其他程序占用，点上面换一个'
+      : status === 'invalid'
+        ? '这个组合键无效，点上面换一个'
+        : accelerator
+          ? '在任何程序里按下：叫出窗口并打开命令面板'
+          : '已关闭';
+  hint.classList.toggle('is-warning', !recordingShortcut && (status === 'taken' || status === 'invalid'));
+}
+
+async function stopRecording(next?: string): Promise<void> {
+  if (!recordingShortcut) return;
+  recordingShortcut = false;
+  if (next !== undefined) await run(() => api.setPreferences({ quickConnectShortcut: next }));
+  await api.setShortcutRecording(false);
+  renderShortcut();
+}
 
 let state: ManagerState | null = null;
 /** 当前编辑的实例 id；null 表示新增 */
@@ -201,6 +282,7 @@ function applyState(next: ManagerState): void {
   }
   prefCloseToTray.checked = next.preferences.closeToTray;
   prefShowMenuBar.checked = next.preferences.showMenuBar;
+  renderShortcut();
   $('app-meta').textContent = `客户端 ${next.appVersionLabel} · Electron ${next.electronVersion}`;
   renderList();
 }
@@ -317,6 +399,27 @@ $('delete-instance').addEventListener('click', () => {
 
 prefCloseToTray.addEventListener('change', () => void run(() => api.setPreferences({ closeToTray: prefCloseToTray.checked })));
 prefShowMenuBar.addEventListener('change', () => void run(() => api.setPreferences({ showMenuBar: prefShowMenuBar.checked })));
+prefQuickConnect.addEventListener('click', () => {
+  if (recordingShortcut) return;
+  recordingShortcut = true;
+  renderShortcut();
+  void api.setShortcutRecording(true);
+});
+prefQuickConnect.addEventListener('keydown', (event) => {
+  if (!recordingShortcut) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.key === 'Escape') void stopRecording();
+  else if (event.key === 'Backspace' || event.key === 'Delete') void stopRecording('');
+  else {
+    const accelerator = acceleratorFrom(event);
+    if (accelerator) void stopRecording(accelerator);
+  }
+});
+prefQuickConnect.addEventListener('blur', () => void stopRecording());
+prefQuickConnectToggle.addEventListener('click', () =>
+  void run(() => api.setPreferences({ quickConnectShortcut: state?.preferences.quickConnectShortcut ? '' : DEFAULT_QUICK_CONNECT }))
+);
 
 $('open-config').addEventListener('click', () => void api.openPath('config'));
 $('open-logs').addEventListener('click', () => void api.openPath('logs'));

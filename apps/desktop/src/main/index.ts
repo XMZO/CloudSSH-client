@@ -11,10 +11,13 @@ import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { configStore } from './config/store';
 import { createLogger } from './logger';
+import { registerDragOutIpc } from './platform/drag-out';
 import { registerIpc } from './platform/ipc';
 import { openManagerWindow } from './platform/manager-window';
 import { buildAppMenu, buildTray, refreshMenus } from './platform/menus';
+import { installGlobalShortcut } from './platform/shortcut';
 import { getUpdater } from './platform/updater';
+import { registerVaultIpc } from './platform/vault';
 import { versionLabel } from './platform/version';
 import {
   instanceWindows,
@@ -60,6 +63,9 @@ if (!app.requestSingleInstanceLock()) {
     log.info('配置文件', configStore.path);
 
     registerIpc();
+    registerVaultIpc();
+    registerDragOutIpc();
+    installGlobalShortcut();
     setOpenManagerHandler(() => openManagerWindow());
     buildAppMenu();
     buildTray();

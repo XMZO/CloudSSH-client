@@ -214,6 +214,12 @@ async function handleHttp(req, res) {
     const target = servers.find((s) => s.id === Number(serverPath[1]));
     if (!target) return json(res, 404, { error: 'Server not found' });
     const body = await readBody(req);
+    // 与 Worker 一致：凭据不能是空串；换认证方式时必须同时给新凭据
+    if (body.credential !== undefined && !body.credential) return json(res, 400, { error: '认证凭据不能为空' });
+    if (body.auth_method !== undefined && body.auth_method !== target.auth_method && !body.credential) {
+      return json(res, 400, { error: '切换认证方式时必须同时提供对应凭据' });
+    }
+    if (body.credential) console.log('  新凭据', body.auth_method ?? target.auth_method, `${body.credential.length} 字符`);
     if ((body.host !== undefined && body.host !== target.host) || (body.port !== undefined && body.port !== target.port)) target.os = null;
     for (const key of ['name', 'host', 'port', 'username', 'auth_method', 'region', 'jump_server_id', 'transport_type', 'cf_tunnel_host']) {
       if (body[key] !== undefined) target[key] = body[key];
@@ -315,6 +321,7 @@ function createSocket(socket, onMessage) {
     sendText: (text) => !socket.destroyed && socket.write(frame(0x1, text)),
     sendBinary: (bytes) => !socket.destroyed && socket.write(frame(0x2, bytes)),
     sendJson: (value) => api.sendText(JSON.stringify(value)),
+    destroy: () => socket.destroy(),
     close: (code = 1000) => {
       if (socket.destroyed) return;
       const payload = Buffer.alloc(2);
@@ -425,13 +432,27 @@ function boxMenu() {
 
 const HELP = [
   '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  size  clear  exit',
+  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
 
-function runCommand(line, write, term) {
+/** 返回毫秒数时，过这么久才回到提示符（模拟耗时命令） */
+function runCommand(line, write, term, ws) {
   const [command, ...args] = line.trim().split(/\s+/);
-  if (!command) return;
+  if (!command) return 0;
   switch (command) {
+    case 'sleep':
+      return Math.min(600, Math.max(0, Number(args[0]) || 1)) * 1000;
+    case 'bell':
+      write('\x07');
+      break;
+    case 'notify':
+      write(`\x1b]9;${args.join(' ') || 'done'}\x07`);
+      break;
+    case 'drop':
+      // 不发关闭帧直接断开 TCP：浏览器侧是异常断线，网页版会自动重连
+      setTimeout(() => ws.destroy(), 100);
+      break;
     case 'help':
       write(`${HELP}\r\n`);
       break;
@@ -481,6 +502,7 @@ function runCommand(line, write, term) {
     default:
       write(`\x1b[2m（模拟）已执行：${line.trim()}\x1b[0m\r\n`);
   }
+  return 0;
 }
 
 function attachShell(ws, url) {
@@ -535,9 +557,10 @@ function attachShell(ws, url) {
           setTimeout(() => ws.close(1000), 50);
           return;
         }
-        runCommand(line, write, term);
+        const delay = runCommand(line, write, term, ws);
         line = '';
-        write(PROMPT);
+        if (delay) setTimeout(() => write(PROMPT), delay);
+        else write(PROMPT);
       } else if (ch === '\x7f' || ch === '\b') {
         if (line.length) {
           line = [...line].slice(0, -1).join('');
@@ -556,40 +579,104 @@ function attachShell(ws, url) {
   };
 }
 
+// SFTP：内存里的小文件系统（所有连接共用），支持列目录、新建目录、上传、下载，够调试拖放上传/拖出下载
+const sftpTree = new Map();
+function sftpPut(path, type, size = 0, data = null) {
+  sftpTree.set(path, { type, size, data, mtime: Math.floor(now / 1000) - 3600 });
+}
+sftpPut('/root', 'dir');
+for (const name of ['.config', '.ssh', 'backups', 'www']) sftpPut(`/root/${name}`, 'dir');
+sftpPut('/root/.bashrc', 'file', 0, Buffer.from(['# ~/.bashrc', 'export PS1="\\u@\\h:\\w\\$ "', 'alias ll="ls -la"', ''].join('\n')));
+sftpPut('/root/deploy.sh', 'file', 0, Buffer.from(['#!/bin/sh', 'set -e', 'echo deploying...', 'sleep 1', 'echo done', ''].join('\n')));
+sftpPut('/root/notes.txt', 'file', 0, Buffer.from('CloudSSH mock notes\n'.repeat(40)));
+sftpPut('/root/data.tar.gz', 'file', 73400320);
+for (const node of sftpTree.values()) if (node.data) node.size = node.data.length;
+
+function sftpParent(path) {
+  const index = path.lastIndexOf('/');
+  return index <= 0 ? '/' : path.slice(0, index);
+}
+
+function sftpEntries(dir) {
+  const prefix = dir === '/' ? '/' : `${dir}/`;
+  return [...sftpTree.entries()]
+    .filter(([path]) => path !== dir && path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
+    .map(([path, node]) => {
+      const name = path.slice(prefix.length);
+      const isDir = node.type === 'dir';
+      const size = node.size;
+      return {
+        name,
+        type: node.type,
+        size,
+        sizeFormatted: isDir ? '-' : size > 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`,
+        permissions: isDir ? 'drwxr-xr-x' : '-rw-r--r--',
+        permissionsRaw: isDir ? 0o40755 : 0o100644,
+        modifiedTime: node.mtime,
+        isDir,
+        isLink: false,
+      };
+    });
+}
+
 function attachSftp(ws) {
   ws.sendJson({ type: 'sftp_socket_ready' });
-  const entries = [
-    ['.config', 'dir'],
-    ['.ssh', 'dir'],
-    ['backups', 'dir'],
-    ['www', 'dir'],
-    ['.bashrc', 'file', 3771],
-    ['deploy.sh', 'file', 2140],
-    ['notes.txt', 'file', 815],
-    ['data.tar.gz', 'file', 73400320],
-  ].map(([name, type, size = 0]) => ({
-    name,
-    type,
-    size,
-    sizeFormatted: type === 'dir' ? '-' : size > 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`,
-    permissions: type === 'dir' ? 'drwxr-xr-x' : '-rw-r--r--',
-    permissionsRaw: type === 'dir' ? 0o40755 : 0o100644,
-    modifiedTime: Math.floor(now / 1000) - 3600,
-    isDir: type === 'dir',
-    isLink: false,
-  }));
+  let upload = null;
   return (data) => {
-    if (typeof data !== 'string') return;
+    if (typeof data !== 'string') {
+      if (!upload) return;
+      upload.chunks.push(Buffer.from(data));
+      upload.loaded += data.length;
+      ws.sendJson({ type: 'sftp_upload_progress', loaded: upload.loaded, total: upload.size });
+      return;
+    }
     let msg;
     try {
       msg = JSON.parse(data);
     } catch {
       return;
     }
+    const error = (operation, message) => ws.sendJson({ type: 'sftp_error', operation, message });
     if (msg.type === 'sftp_init') ws.sendJson({ type: 'sftp_ready', isTunnel: false });
     else if (msg.type === 'sftp_list') {
       const path = !msg.path || msg.path === '~' ? '/root' : msg.path;
-      ws.sendJson({ type: 'sftp_list_result', path, entries: path === '/root' ? entries : [] });
+      if (sftpTree.get(path)?.type !== 'dir') return error('list', 'No such file');
+      ws.sendJson({ type: 'sftp_list_result', path, entries: sftpEntries(path) });
+    } else if (msg.type === 'sftp_mkdir') {
+      if (sftpTree.has(msg.path)) return error('mkdir', 'Failure');
+      if (sftpTree.get(sftpParent(msg.path))?.type !== 'dir') return error('mkdir', 'No such file');
+      sftpPut(msg.path, 'dir');
+      ws.sendJson({ type: 'sftp_mkdir_result', path: msg.path, success: true });
+    } else if (msg.type === 'sftp_upload_start') {
+      const existing = sftpTree.get(msg.path);
+      if (sftpTree.get(sftpParent(msg.path))?.type !== 'dir') return error('upload', 'No such file');
+      if (existing && !msg.overwrite) return ws.sendJson({ type: 'sftp_upload_conflict', path: msg.path, existingSize: existing.size });
+      upload = { path: msg.path, size: msg.size, loaded: 0, chunks: [] };
+      ws.sendJson({ type: 'sftp_upload_ready', isTunnel: false });
+      if (msg.size === 0) ws.sendJson({ type: 'sftp_upload_progress', loaded: 0, total: 0 });
+    } else if (msg.type === 'sftp_upload_end' && upload) {
+      sftpPut(upload.path, 'file', 0, Buffer.concat(upload.chunks));
+      sftpTree.get(upload.path).size = upload.loaded;
+      sftpTree.get(upload.path).mtime = Math.floor(Date.now() / 1000);
+      console.log('SFTP 上传', upload.path, upload.loaded, 'bytes');
+      ws.sendJson({ type: 'sftp_upload_complete', path: upload.path, hash: null, hashMatch: null });
+      upload = null;
+    } else if (msg.type === 'sftp_upload_cancel') {
+      upload = null;
+      ws.sendJson({ type: 'sftp_upload_cancelled' });
+    } else if (msg.type === 'sftp_download') {
+      const node = sftpTree.get(msg.path);
+      if (!node || node.type !== 'file') return error('download', 'No such file');
+      const filename = msg.path.slice(msg.path.lastIndexOf('/') + 1);
+      const bytes = node.data ?? Buffer.alloc(node.size, 0x2e);
+      ws.sendJson({ type: 'sftp_download_start', filename, size: bytes.length });
+      const CHUNK = 256 * 1024;
+      for (let offset = 0; offset < bytes.length; offset += CHUNK) {
+        ws.sendBinary(bytes.subarray(offset, offset + CHUNK));
+        ws.sendJson({ type: 'sftp_download_progress', loaded: Math.min(offset + CHUNK, bytes.length), total: bytes.length });
+      }
+      ws.sendJson({ type: 'sftp_download_done', filename });
+      console.log('SFTP 下载', msg.path, bytes.length, 'bytes');
     } else if (msg.type === 'sftp_close') ws.close(1000);
   };
 }

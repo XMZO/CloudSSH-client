@@ -15,4 +15,31 @@ contextBridge.exposeInMainWorld('cloudsshDesktop', {
   /** 菜单命令：switch-instance / new-window（参数为实例 id）、login、manager、reload、force-reload、devtools、
    *  zoom-reset / zoom-in / zoom-out、fullscreen、open-config、open-logs、quit */
   command: (command: string, argument?: string) => ipcRenderer.invoke('desktop:command', command, argument),
+  /** 系统全局快捷键：打开命令面板（toggle 为 true 表示窗口本来就在前台，再按一次应关闭面板） */
+  onPalette: (callback: (toggle: boolean) => void) => {
+    ipcRenderer.on('desktop:palette', (_event, toggle: unknown) => callback(toggle === true));
+    // 快捷键打开的新窗口：页面装好命令面板后再打开
+    void ipcRenderer.invoke('desktop:palette-pending').then((pending: unknown) => pending === true && callback(false));
+  },
+  /** 把本窗口叫到前台（点系统通知后） */
+  focusWindow: () => ipcRenderer.invoke('desktop:focus'),
+  /** 凭据预设的本地保管（仅内置界面可用）：列表 JSON 的读写与系统加密 */
+  vault: {
+    available: () => ipcRenderer.invoke('desktop:vault', 'available'),
+    read: () => ipcRenderer.invoke('desktop:vault', 'read'),
+    write: (data: string) => ipcRenderer.invoke('desktop:vault', 'write', data),
+    encrypt: (text: string) => ipcRenderer.invoke('desktop:vault', 'encrypt', text),
+    decrypt: (data: string) => ipcRenderer.invoke('desktop:vault', 'decrypt', data),
+  },
+  /** 把 SFTP 文件拖到桌面：登记 → 网页版照常下载（主进程存进临时目录）→ 准备好后开始系统拖放 */
+  dragOut: {
+    prepare: (token: string, names: string[]) => ipcRenderer.invoke('desktop:drag-prepare', token, names),
+    start: (token: string) => ipcRenderer.send('desktop:drag-start', token),
+    release: (token: string) => ipcRenderer.invoke('desktop:drag-release', token),
+    onReady: (callback: (token: string, ok: boolean) => void) => {
+      ipcRenderer.on('desktop:drag-ready', (_event, token: unknown, ok: unknown) => {
+        if (typeof token === 'string') callback(token, ok === true);
+      });
+    },
+  },
 });

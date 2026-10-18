@@ -1,6 +1,8 @@
 <resources>
     <string name="keepalive_channel">SSH session keep-alive</string>
     <string name="keepalive_channel_description">Shown while SSH sessions are open so the system keeps them connected in the background</string>
+    <string name="events_channel">Session alerts</string>
+    <string name="events_channel_description">While the app is in the background: long commands finishing, terminal bells, disconnects and reconnects</string>
     <string name="keepalive_text">%1$d SSH session(s) connected</string>
     <string name="renderer_gone">The page renderer keeps stopping. Sessions were disconnected.</string>
     <string name="renderer_reload">Reload</string>

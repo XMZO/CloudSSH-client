@@ -13,6 +13,7 @@ import { onColorSchemeChange } from '../../upstream/frontend/src/theme';
 import { toggleAppMenu, toggleInstanceMenu } from './app-menus';
 import { el, icon, iconButton, opaqueHex } from './dom';
 import { dt, onLocaleChange } from './i18n';
+import { togglePalette } from './palette';
 import { toggleSettings } from './settings';
 import { clickById, currentView, desktopSkin, SKIN_CHANGED_EVENT, VIEW_CHANGED_EVENT } from './state';
 import './titlebar.css';
@@ -168,11 +169,16 @@ export function mountTitlebar(env: ChromeEnv): void {
     return button;
   });
   tools.append(...toolButtons.slice(0, 3), el('span', 'cs-tb-sep'), ...toolButtons.slice(3));
+  const palette = iconButton('manage_search', dt('paletteShortcut'), 'cs-tb-btn cs-tb-palette');
+  palette.setAttribute('aria-haspopup', 'dialog');
+  // 先于 click 处理：面板开着时按下按钮，面板会因点到外面而关闭，click 再打开就成了关不掉
+  palette.addEventListener('pointerdown', (event) => event.preventDefault());
+  palette.addEventListener('click', () => togglePalette());
   const settings = iconButton('settings', dt('settings'), 'cs-tb-btn cs-tb-settings');
   settings.setAttribute('aria-haspopup', 'dialog');
   settings.addEventListener('click', () => toggleSettings(settings));
 
-  bar.append(lead, nav, drag, tools, settings);
+  bar.append(lead, nav, drag, tools, palette, settings);
   document.body.prepend(bar);
 
   // ---------- 同步 ----------
@@ -183,6 +189,8 @@ export function mountTitlebar(env: ChromeEnv): void {
     instance.setAttribute('aria-label', `${dt('instanceMenu')}：${env.instanceName}`);
     settings.title = dt('settings');
     settings.setAttribute('aria-label', dt('settings'));
+    palette.title = dt('paletteShortcut');
+    palette.setAttribute('aria-label', dt('paletteShortcut'));
     TOOLS.forEach((tool, index) => {
       toolButtons[index].title = tool.label();
       toolButtons[index].setAttribute('aria-label', tool.label());

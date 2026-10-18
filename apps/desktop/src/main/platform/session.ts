@@ -9,6 +9,7 @@ import { app, session, type Session } from 'electron';
 import path from 'node:path';
 import { createLogger, isDebug } from '../logger';
 import { resolveUi, type ResolvedUi } from '../ui/providers';
+import { claimDragDownload } from './drag-out';
 import { applyOriginBridge } from './origin-bridge';
 
 const log = createLogger('session');
@@ -62,7 +63,9 @@ function configureSession(ses: Session): void {
   // SFTP 下载、终端日志导出、审计导出都走 <a download>：弹出系统保存对话框，默认目录为“下载”。
   // 设置 CLOUDSSH_DOWNLOAD_DIR 时直接保存到该目录、不弹对话框（自动化测试/批量下载用）。
   const downloadDir = process.env.CLOUDSSH_DOWNLOAD_DIR;
-  ses.on('will-download', (_event, item) => {
+  ses.on('will-download', (_event, item, webContents) => {
+    // 正在准备拖到桌面的 SFTP 文件：存进临时目录，不弹保存框（drag-out.ts）
+    if (claimDragDownload(item, webContents)) return;
     if (downloadDir) {
       item.setSavePath(path.join(path.resolve(downloadDir), path.basename(item.getFilename())));
     } else {

@@ -5,6 +5,8 @@
  */
 import { getLocale, setLocale } from '../../upstream/frontend/src/i18n';
 import { LANGUAGE_CHOICES } from '../shared/language-picker';
+import { notificationsEnabled, setNotificationsEnabled } from '../shared/session-notify';
+import { openPresetManager, presetText } from '../shared/credential-presets';
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
 import { el, icon } from './dom';
@@ -133,10 +135,25 @@ export function toggleSettings(anchor: HTMLElement): void {
     );
     panel.append(language);
 
+    const notices = section(dt('notifications'));
+    notices.title = dt('notificationsHint');
+    notices.append(
+      choiceRow(
+        [
+          { value: 'on', label: dt('notificationsOn'), hint: dt('notificationsHint') },
+          { value: 'off', label: dt('notificationsOff') },
+        ],
+        notificationsEnabled() ? 'on' : 'off',
+        (value) => setNotificationsEnabled(value === 'on')
+      )
+    );
+    panel.append(notices);
+
     const actions = el('div', 'cs-dk-actions');
     const ai = document.getElementById('ai-config-btn');
     if (ai && loggedIn()) actions.append(action('psychology', dt('aiSettings'), () => ai.click()));
     actions.append(action('format_color_text', ht('title'), () => openHighlightEditor()));
+    actions.append(action('key', presetText('title'), () => void openPresetManager()));
     const bridge = window.cloudsshDesktop;
     if (bridge?.openInstanceManager) actions.append(action('dns', dt('instanceManager'), () => void bridge.openInstanceManager?.()));
     if (loggedIn() && document.getElementById('logout-btn')) actions.append(action('logout', dt('logout'), () => clickById('logout-btn'), true));

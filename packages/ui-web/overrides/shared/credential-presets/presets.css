@@ -1,0 +1,499 @@
+/* ========== 凭据预设（桌面端居中对话框，手机端近全屏）；颜色全用网页版主题变量 ========== */
+
+.cs-cp-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.55);
+  /* 桌面无边框窗口：盖住标题栏的拖动区，点外面是关闭而不是拖动窗口 */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.cs-cp-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: min(760px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  color: var(--on-surface);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+
+.cs-cp-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-cp-head .cs-cp-iconbtn[hidden] {
+  display: none;
+}
+
+.cs-cp-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 0 6px;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-cp-body {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.cs-cp-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-cp-foot:empty {
+  display: none;
+}
+
+.cs-cp-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.cs-cp-iconbtn {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.cs-cp-iconbtn:is(:hover, :focus-visible) {
+  background: var(--accent-bg);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-cp-iconbtn.is-danger:is(:hover, :focus-visible) {
+  background: var(--error-bg, rgba(248, 81, 73, 0.12));
+  color: var(--error, #f85149);
+}
+
+.cs-cp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--on-surface);
+  font: 600 13px/1 var(--font-ui, system-ui, sans-serif);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cs-cp-btn:is(:hover, :focus-visible) {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-cp-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+}
+
+.cs-cp-btn.is-primary:is(:hover, :focus-visible) {
+  color: var(--on-accent, #fff);
+  filter: brightness(1.08);
+}
+
+.cs-cp-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+}
+
+.cs-cp-note {
+  margin: 0 0 8px;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.cs-cp-note.is-warning {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--error-bg, rgba(248, 81, 73, 0.12));
+  color: var(--on-surface);
+}
+
+.cs-cp-empty {
+  padding: 28px 0;
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+
+/* ---------- 列表 ---------- */
+
+.cs-cp-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.cs-cp-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.cs-cp-card-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cs-cp-card-main > .cs-cp-icon {
+  color: var(--accent);
+}
+
+.cs-cp-card-text {
+  min-width: 0;
+}
+
+.cs-cp-card-name {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-cp-card-sub {
+  overflow: hidden;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-cp-card-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.cs-cp-card-actions .cs-cp-btn {
+  min-height: 30px;
+  margin-right: 4px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ---------- 编辑 ---------- */
+
+.cs-cp-form {
+  display: grid;
+  gap: 14px;
+}
+
+.cs-cp-field {
+  display: grid;
+  gap: 6px;
+}
+
+.cs-cp-field[hidden] {
+  display: none;
+}
+
+.cs-cp-label {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cs-cp-hint {
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+.cs-cp-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--on-surface);
+  font: 13px/1.4 var(--font-ui, system-ui, sans-serif);
+}
+
+.cs-cp-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cs-cp-key {
+  min-height: 120px;
+  font: 11.5px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  resize: vertical;
+}
+
+.cs-cp-keybox {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.cs-cp-segment {
+  display: inline-flex;
+  justify-self: start;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--on-surface) 7%, transparent);
+}
+
+.cs-cp-segment-btn {
+  min-height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: 600 12.5px/1 var(--font-ui, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.cs-cp-segment-btn.is-on {
+  background: var(--bg-elevated);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* ---------- 选服务器 ---------- */
+
+.cs-cp-apply-preset {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.cs-cp-apply-head {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cs-cp-servers {
+  display: grid;
+  gap: 2px;
+}
+
+.cs-cp-server {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.cs-cp-server:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.cs-cp-server input {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.cs-cp-server-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cs-cp-server-name,
+.cs-cp-server-sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-cp-server-sub {
+  color: var(--on-surface-variant);
+  font: 11.5px/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.cs-cp-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.cs-cp-tag.is-muted {
+  background: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  color: var(--on-surface-variant);
+}
+
+.cs-cp-count {
+  flex: 1;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+}
+
+/* ---------- 服务器表单里的预设选择 ---------- */
+
+.cs-cp-pick {
+  margin-bottom: 14px;
+}
+
+.cs-cp-pick[hidden] {
+  display: none;
+}
+
+.cs-cp-pick-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cs-cp-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cs-cp-pick-btn {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cs-cp-pick-btn.is-icon {
+  width: 32px;
+  padding: 0;
+}
+
+.cs-cp-pick-btn .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.cs-cp-pick-btn:is(:hover, :focus-visible) {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-cp-pick-note {
+  margin-top: 6px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.cs-cp-pick-note[hidden] {
+  display: none;
+}
+
+/* ---------- 手机：近全屏，按钮更大 ---------- */
+
+@media (max-width: 600px) {
+  .cs-cp-root {
+    align-items: stretch;
+    padding: max(10px, env(safe-area-inset-top)) 8px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .cs-cp-dialog {
+    max-height: none;
+    border-radius: 18px;
+  }
+
+  .cs-cp-body {
+    padding: 12px 14px 16px;
+  }
+
+  .cs-cp-iconbtn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .cs-cp-btn {
+    min-height: 40px;
+  }
+
+  .cs-cp-input {
+    min-height: 42px;
+    font-size: 16px;
+  }
+
+  .cs-cp-card {
+    flex-wrap: wrap;
+  }
+
+  .cs-cp-card-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .cs-cp-pick-btn {
+    min-height: 38px;
+  }
+
+  .cs-cp-pick-btn.is-icon {
+    width: 38px;
+  }
+}

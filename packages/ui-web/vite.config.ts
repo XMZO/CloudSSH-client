@@ -195,6 +195,12 @@ const COMMON_HOOKS: Hook[] = [
     inject: '    if ((globalThis as any).__cloudsshKeepSnippetPanel?.() === true) return;\n',
   },
   {
+    // 命令面板（overrides/desktop/palette.ts）搜索命令片段、填入终端时复用网页版自己的列表与插入流程（含 {{参数}} 录入）
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: '  constructor(private readonly deps: SnippetManagerDeps) {\n',
+    inject: '    (globalThis as any).__cloudsshSnippetManager = this;\n',
+  },
+  {
     // 连接后识别出系统：网页版只改自己的列表，这里同时通知侧栏、服务器表格、手机节点页立即换上系统图标
     file: '/upstream/frontend/src/server-list.ts',
     anchor: '  updateServerOS(serverId: number, os: string | null): void {\n',

@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('managerApi', {
   clearData: (id: string) => ipcRenderer.invoke('manager:clear-data', id),
   testInstance: (baseUrl: string) => ipcRenderer.invoke('manager:test-instance', baseUrl),
   setPreferences: (patch: unknown) => ipcRenderer.invoke('manager:set-preferences', patch),
+  /** 录制全局快捷键期间暂停旧快捷键（否则按下时被系统截走，窗口收不到） */
+  setShortcutRecording: (recording: boolean) => ipcRenderer.invoke('manager:shortcut-recording', recording),
   pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
   openPath: (kind: 'config' | 'logs') => ipcRenderer.invoke('manager:open-path', kind),
   checkUpdate: () => ipcRenderer.invoke('manager:check-update'),

@@ -35,6 +35,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import org.json.JSONObject
 import kotlin.math.max
 
 /** 应用自身页面的主机名（打包的界面；tauri dev 时是本机 Vite） */
@@ -121,6 +122,8 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     raiseBackCallback()
+    // 人回来了：收起已发的后台提醒
+    EventNotifications.clear(this)
     // 从登录标签页回来却没点“完成登录”（返回键、关闭按钮、多任务切换）：等拿到窗口焦点后看看剪贴板里
     // 有没有复制的回调地址（浏览器不显示“完成登录”时的兜底），没有就当作取消。
     // 点了“完成登录”时 onNewIntent 先于 onResume，已经交出结果
@@ -145,6 +148,16 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     if (intent.action == ACTION_AUTH_TAB_DONE) finishAuthTab(intent.dataString)
+    if (intent.action == EventNotifications.ACTION_OPEN_TAB) openTabFromNotification(intent.getStringExtra(EventNotifications.EXTRA_TAB))
+  }
+
+  /** 点了后台提醒：让页面切到发提醒的会话标签（overrides/mobile/notifications.ts 监听） */
+  private fun openTabFromNotification(tab: String?) {
+    if (tab.isNullOrEmpty()) return
+    webView?.evaluateJavascript(
+      "window.dispatchEvent(new CustomEvent('cloudssh:notification-open',{detail:${JSONObject.quote(tab)}}))",
+      null,
+    )
   }
 
   // ---------- 用浏览器登录（Custom Tab） ----------

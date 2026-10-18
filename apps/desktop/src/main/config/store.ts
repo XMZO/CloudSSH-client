@@ -30,6 +30,8 @@ export interface Preferences {
   closeToTray: boolean;
   /** 显示窗口菜单栏（默认隐藏，快捷键照常可用） */
   showMenuBar: boolean;
+  /** 系统全局快捷键（Electron 加速键写法，如 Control+Alt+T；空串表示关闭）：唤出窗口与命令面板，快速连接服务器 */
+  quickConnectShortcut: string;
 }
 
 export interface AppConfig {
@@ -43,6 +45,7 @@ export interface AppConfig {
 export const DEFAULT_PREFERENCES: Preferences = {
   closeToTray: false,
   showMenuBar: false,
+  quickConnectShortcut: 'CommandOrControl+Alt+T',
 };
 
 const DEFAULT_WINDOW: WindowState = { width: 1280, height: 820, maximized: false };
@@ -109,6 +112,10 @@ function normalizeConfig(raw: unknown): AppConfig {
     preferences: {
       closeToTray: typeof prefs.closeToTray === 'boolean' ? prefs.closeToTray : DEFAULT_PREFERENCES.closeToTray,
       showMenuBar: typeof prefs.showMenuBar === 'boolean' ? prefs.showMenuBar : DEFAULT_PREFERENCES.showMenuBar,
+      quickConnectShortcut:
+        typeof prefs.quickConnectShortcut === 'string' && prefs.quickConnectShortcut.length <= 48
+          ? prefs.quickConnectShortcut
+          : DEFAULT_PREFERENCES.quickConnectShortcut,
     },
   };
 }
@@ -210,6 +217,9 @@ class ConfigStore extends EventEmitter {
     const next = { ...this.config.preferences };
     if (typeof patch.closeToTray === 'boolean') next.closeToTray = patch.closeToTray;
     if (typeof patch.showMenuBar === 'boolean') next.showMenuBar = patch.showMenuBar;
+    if (typeof patch.quickConnectShortcut === 'string' && patch.quickConnectShortcut.length <= 48) {
+      next.quickConnectShortcut = patch.quickConnectShortcut;
+    }
     this.config.preferences = next;
     this.persist();
     this.emit('preferences-changed', next);

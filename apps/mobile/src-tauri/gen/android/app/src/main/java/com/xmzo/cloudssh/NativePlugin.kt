@@ -45,6 +45,33 @@ class NativePlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve()
     }
 
+    /** 后台提醒：标题、正文与点通知后要切到的标签 id（见 EventNotifications） */
+    @Command
+    fun notify(invoke: Invoke) {
+        val args = invoke.getArgs()
+        EventNotifications.show(activity, args.optString("title", "CloudSSH"), args.optString("text", ""), args.optString("tab", ""))
+        invoke.resolve()
+    }
+
+    /** 凭据预设：用 Keystore 里的密钥加密 / 解密（见 SecretBox） */
+    @Command
+    fun secretEncrypt(invoke: Invoke) {
+        try {
+            invoke.resolve(JSObject().put("text", SecretBox.encrypt(invoke.getArgs().optString("text", ""))))
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "加密失败", error)
+        }
+    }
+
+    @Command
+    fun secretDecrypt(invoke: Invoke) {
+        try {
+            invoke.resolve(JSObject().put("text", SecretBox.decrypt(invoke.getArgs().optString("text", ""))))
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "解密失败", error)
+        }
+    }
+
     /** Android 13+ 的通知权限只主动问一次；拒绝后前台服务照常运行，只是通知栏不显示 */
     private fun askNotificationPermissionOnce() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return

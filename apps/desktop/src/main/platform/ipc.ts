@@ -20,6 +20,7 @@ import { refreshMenus } from './menus';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
 import { clearInstanceData } from './session';
+import { applyGlobalShortcut, isAcceleratorText, shortcutStatus } from './shortcut';
 import { getUpdater } from './updater';
 import {
   applyMenuBarVisibility,
@@ -29,6 +30,7 @@ import {
   instanceWindows,
   openInstance,
   reloadInstance,
+  showWindow,
   startLogin,
   TITLEBAR_HEIGHT,
 } from './windows';
@@ -65,6 +67,7 @@ function managerState() {
     appVersionLabel: versionLabel(),
     electronVersion: process.versions.electron,
     configPath: configStore.path,
+    quickConnect: { status: shortcutStatus() },
   };
 }
 
@@ -167,6 +170,12 @@ export function registerIpc(): void {
     senderInstance(event);
     openManagerWindow();
   });
+  // 点了系统通知：把发通知的窗口叫到前台（托盘里隐藏的、最小化的也恢复）
+  ipcMain.handle('desktop:focus', (event) => {
+    senderInstance(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) showWindow(window);
+  });
 
   // ---------- 实例管理 ----------
   ipcMain.handle('manager:state', (event) => {
@@ -255,10 +264,25 @@ export function registerIpc(): void {
 
   ipcMain.handle('manager:set-preferences', (event, patch: Partial<Preferences>) => {
     assertManager(event);
+    const before = configStore.preferences;
+    if (patch.quickConnectShortcut !== undefined && !isAcceleratorText(patch.quickConnectShortcut)) {
+      throw new Error('快捷键无效');
+    }
     const prefs = configStore.setPreferences(patch);
     applyMenuBarVisibility(prefs.showMenuBar);
+    // 改了快捷键（或重新录了同一个，例如占用它的程序已退出）都重新注册
+    if (patch.quickConnectShortcut !== undefined || prefs.quickConnectShortcut !== before.quickConnectShortcut) {
+      applyGlobalShortcut(prefs.quickConnectShortcut);
+    }
     broadcastChanged();
     return prefs;
+  });
+
+  // 录制新快捷键期间先注销旧的：系统全局快捷键会截走按键，管理窗口收不到
+  ipcMain.handle('manager:shortcut-recording', (event, recording: unknown) => {
+    assertManager(event);
+    applyGlobalShortcut(recording === true ? '' : configStore.preferences.quickConnectShortcut);
+    broadcastChanged();
   });
 
   ipcMain.handle('manager:pick-directory', async (event) => {

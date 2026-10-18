@@ -217,6 +217,29 @@ async fn keep_alive<R: Runtime>(app: AppHandle<R>, sessions: u32) -> Result<(), 
     on_worker(app, move |app| native::keep_alive(app, sessions)).await
 }
 
+/// 后台提醒：标题、正文按字符截断，点通知后切到 tab（会话标签 id）
+#[tauri::command]
+async fn notify<R: Runtime>(app: AppHandle<R>, title: String, text: String, tab: String) -> Result<(), String> {
+    let title: String = title.chars().take(120).collect();
+    let text: String = text.chars().take(400).collect();
+    let tab: String = tab.chars().take(128).collect();
+    on_worker(app, move |app| native::notify(app, &title, &text, &tab)).await
+}
+
+/// 凭据预设的加解密（只有 Android 支持，其他平台返回 unsupported）
+#[tauri::command]
+async fn secret_encrypt<R: Runtime>(app: AppHandle<R>, text: String) -> Result<String, String> {
+    if text.len() > 64 * 1024 {
+        return Err("凭据太长".into());
+    }
+    on_worker(app, move |app| native::secret_encrypt(app, &text)).await
+}
+
+#[tauri::command]
+async fn secret_decrypt<R: Runtime>(app: AppHandle<R>, text: String) -> Result<String, String> {
+    on_worker(app, move |app| native::secret_decrypt(app, &text)).await
+}
+
 /// 下载：请求体为文件内容，文件名（encodeURIComponent）与 MIME 放在头里
 #[tauri::command]
 async fn save_download<R: Runtime>(app: AppHandle<R>, request: Request<'_>) -> Result<String, String> {
@@ -376,6 +399,9 @@ pub fn run() {
             ws_close,
             github_login_browser,
             keep_alive,
+            notify,
+            secret_encrypt,
+            secret_decrypt,
             save_download,
             clipboard_read,
             clipboard_write,

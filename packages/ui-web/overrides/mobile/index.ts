@@ -26,6 +26,8 @@ import { startSkin } from './skin';
 import { keepAliveEnabled } from './settings';
 import { closeSheet, isSheetOpen, showActions } from './sheet';
 import { mountTabs } from './tabs';
+import { configurePresets, installCredentialPresets, localVault } from '../shared/credential-presets';
+import { installMobileNotifications } from './notifications';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
 
@@ -176,6 +178,29 @@ const sheetLanguageMenu: LanguageMenu = (_anchor, choices, current, pick) =>
     mt('cancel')
   );
 
+// ---------- 凭据预设 ----------
+
+/** 密码和私钥用 Android Keystore 里的密钥加密后存在 localStorage；预设与服务器的关联按实例分开记 */
+function installPresets(): void {
+  let supported: Promise<boolean> | null = null;
+  const vault = localVault({
+    available: () => {
+      supported ??= native
+        .secretEncrypt('probe')
+        .then(() => true)
+        .catch(() => false);
+      return supported;
+    },
+    encrypt: (text) => native.secretEncrypt(text),
+    decrypt: (text) => native.secretDecrypt(text),
+  });
+  installCredentialPresets({ vault });
+  native
+    .state()
+    .then((state) => configurePresets({ scope: `instance:${state.currentId}` }))
+    .catch(() => undefined);
+}
+
 // ---------- 启动 ----------
 
 // 内置终端字体与关键词高亮：要在网页版创建第一个终端之前装好
@@ -197,6 +222,8 @@ if (isTauri()) {
       ['tag picker', installTagPicker],
       ['terminal touch', installTerminalTouch],
       ['keep alive', installKeepAlive],
+      ['notifications', installMobileNotifications],
+      ['credential presets', installPresets],
       ['system bars', installSystemBars],
       ['downloads', installDownloadNotices],
       ['login result', reportLoginResult],

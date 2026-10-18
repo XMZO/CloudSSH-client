@@ -30,6 +30,13 @@ struct TextArgs<'a> {
 }
 
 #[derive(Serialize)]
+struct NotifyArgs<'a> {
+    title: &'a str,
+    text: &'a str,
+    tab: &'a str,
+}
+
+#[derive(Serialize)]
 struct UrlArgs<'a> {
     url: &'a str,
 }
@@ -102,6 +109,45 @@ pub fn keep_alive<R: Runtime>(app: &AppHandle<R>, sessions: u32) -> Result<(), S
     {
         let _ = (app, args);
         Ok(())
+    }
+}
+
+/// 后台提醒（长命令结束、断线、重连）：点通知回到应用并切到 tab 对应的会话标签
+pub fn notify<R: Runtime>(app: &AppHandle<R>, title: &str, text: &str, tab: &str) -> Result<(), String> {
+    let args = NotifyArgs { title, text, tab };
+    #[cfg(target_os = "android")]
+    {
+        call::<R, serde_json::Value>(app, "notify", args).map(|_| ())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, args);
+        Ok(())
+    }
+}
+
+/// 凭据预设的加密（Android Keystore 里的 AES-GCM 密钥）；其他平台不支持
+pub fn secret_encrypt<R: Runtime>(app: &AppHandle<R>, text: &str) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        call::<R, TextResult>(app, "secretEncrypt", TextArgs { text }).map(|r| r.text)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, TextArgs { text });
+        Err("unsupported".into())
+    }
+}
+
+pub fn secret_decrypt<R: Runtime>(app: &AppHandle<R>, text: &str) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        call::<R, TextResult>(app, "secretDecrypt", TextArgs { text }).map(|r| r.text)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, TextArgs { text });
+        Err("unsupported".into())
     }
 }
 

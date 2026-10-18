@@ -15,6 +15,21 @@ interface Window {
     setTitleBarColors?(color: string, symbolColor: string): Promise<void>;
     menuState?(): Promise<CloudSSHDesktopMenuState>;
     command?(command: string, argument?: string): Promise<void>;
+    onPalette?(callback: (toggle: boolean) => void): void;
+    focusWindow?(): Promise<void>;
+    vault?: {
+      available(): Promise<boolean>;
+      read(): Promise<string | null>;
+      write(data: string): Promise<void>;
+      encrypt(text: string): Promise<string>;
+      decrypt(data: string): Promise<string>;
+    };
+    dragOut?: {
+      prepare(token: string, names: string[]): Promise<void>;
+      start(token: string): void;
+      release(token: string): Promise<void>;
+      onReady(callback: (token: string, ok: boolean) => void): void;
+    };
   };
 }
 

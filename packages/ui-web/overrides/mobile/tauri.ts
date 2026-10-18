@@ -57,6 +57,11 @@ export const native = {
     invoke<void>('ws_send_binary', bytes, { headers: { 'x-ws-id': String(id) } }),
   wsClose: (id: number, code?: number, reason?: string) => invoke<void>('ws_close', { id, code, reason }),
   keepAlive: (sessions: number) => invoke<void>('keep_alive', { sessions }),
+  /** 后台提醒；tab 为点通知后要切到的会话标签 id */
+  notify: (title: string, text: string, tab: string) => invoke<void>('notify', { title, text, tab }),
+  /** 凭据预设的加解密（Android Keystore；其他平台报 unsupported） */
+  secretEncrypt: (text: string) => invoke<string>('secret_encrypt', { text }),
+  secretDecrypt: (text: string) => invoke<string>('secret_decrypt', { text }),
   /** 用浏览器登录 GitHub；失败时抛出错误代码（cancelled / not_callback / no_browser / http_xxx / network） */
   githubLoginBrowser: () => invoke<void>('github_login_browser'),
   saveDownload: (name: string, mime: string, bytes: Uint8Array) =>

@@ -11,15 +11,23 @@
  *   drawers.ts/css   右侧抽屉（SFTP、命令片段、AI 助手）拖动左边缘调宽，按面板记住宽度
  *   app-menus.ts     标题栏左上角的应用菜单、实例菜单（页面里画，不用系统原生菜单）
  *   links.ts         终端里的链接用系统浏览器打开
+ *   palette.ts/css   命令面板（Ctrl+Shift+P / 系统全局快捷键）：搜服务器、会话、命令片段与操作
+ *   notifications.ts 窗口不在前台时，长命令结束、响铃、断线与重连发系统通知
+ *   sftp-drop.ts/css 文件/文件夹拖到终端或 SFTP 面板上传；SFTP 文件拖到桌面下载
+ * 凭据预设（shared/credential-presets）的密码与私钥用系统加密（safeStorage）保存在配置目录。
  *
  * 窗口有没有系统边框由客户端决定（内置界面才去掉边框）：没有边框时两种主题都显示标题栏；
  * 有边框时只有工作台显示（作为应用顶栏）。
  */
 import type { ITheme } from '@xterm/xterm';
 import { getActiveTerminalTheme, onTerminalThemeChange } from '../../upstream/frontend/src/theme';
+import { installCredentialPresets, openPresetManager, presetText } from '../shared/credential-presets';
 import { mountDrawerResizers } from './drawers';
 import { mountHome } from './home';
 import { installExternalLinks } from './links';
+import { installDesktopNotifications } from './notifications';
+import { installPalette, registerPaletteAction } from './palette';
+import { installSftpDragDrop } from './sftp-drop';
 import { mountSnippetEnhancements } from './snippets';
 import { desktopSkin, SKIN_CHANGED_EVENT, trackView } from './state';
 import { mountTitlebar } from './titlebar';
@@ -67,6 +75,16 @@ export async function mountDesktopShell(): Promise<void> {
     mountHome();
     mountSnippetEnhancements();
     mountDrawerResizers();
+    installPalette();
+    installDesktopNotifications();
+    installSftpDragDrop();
+    installCredentialPresets({ vault: bridge?.vault ?? null, scope: info?.instance.id ? `instance:${info.instance.id}` : null });
+    registerPaletteAction(() => ({
+      title: presetText('title'),
+      icon: 'key',
+      keywords: 'credential preset password key 凭据 密码 私钥',
+      run: () => void openPresetManager(),
+    }));
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();

@@ -15,6 +15,8 @@ import { CLOSE_CONFIRM_MODES, closeConfirmMode, setCloseConfirmMode, type CloseC
 import { openHighlightEditor } from '../shared/terminal';
 import { loadSettings as loadHighlight, saveSettings as saveHighlight } from '../shared/terminal/highlight-rules';
 import { ht } from '../shared/terminal/i18n';
+import { notificationsEnabled, setNotificationsEnabled } from '../shared/session-notify';
+import { openPresetManager } from '../shared/credential-presets';
 import { mt } from './i18n';
 import { groupNav, segmented, settingsGroup, settingsRow, smallButton, splitToggleRow, toggleRow } from './settings-ui';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
@@ -296,7 +298,21 @@ function connectionGroup(state: MobileState): HTMLElement {
       window.dispatchEvent(new CustomEvent('cloudssh:keepalive-changed'));
     },
   });
-  return settingsGroup('connection', mt('grpConnection'), [proxyRow(state), keepAlive, batteryRow()]);
+  const notices = toggleRow({
+    title: mt('notifications'),
+    sub: mt('notificationsHint'),
+    checked: notificationsEnabled(),
+    onChange: (on) => setNotificationsEnabled(on),
+  });
+  const presets = settingsRow({
+    title: mt('presets'),
+    sub: mt('presetsHint'),
+    onClick: () => {
+      closeSheet();
+      void openPresetManager();
+    },
+  });
+  return settingsGroup('connection', mt('grpConnection'), [proxyRow(state), presets, keepAlive, notices, batteryRow()]);
 }
 
 // ---------- 关于 ----------

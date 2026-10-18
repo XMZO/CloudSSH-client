@@ -34,6 +34,7 @@ create
 create_new_folder
 css
 dark_mode
+dashboard
 data_object
 database
 delete
@@ -42,6 +43,7 @@ description
 dns
 dock
 done
+done_all
 download
 draft
 drag_indicator
@@ -94,6 +96,7 @@ list
 lock
 login
 logout
+manage_search
 markdown
 menu
 message
@@ -108,6 +111,7 @@ movie
 my_location
 note
 note_add
+notifications
 open_in_new
 palette
 passkey
@@ -167,6 +171,7 @@ text_increase
 title
 today
 toolbar
+translate
 trending_up
 tune
 upload
