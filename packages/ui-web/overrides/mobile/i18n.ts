@@ -101,6 +101,13 @@ const zhCN = {
   sortCustom: '自定义',
   sortModeHint: '当前按“{mode}”排序，拖动调整后会改为自定义顺序',
   loginBrowserUnfinished: '浏览器登录没有完成。授权后要点浏览器里的“完成登录”；浏览器没有这个按钮时，复制地址栏里的链接再切回 CloudSSH。也可以改用“在应用内登录”。',
+  selCopy: '复制',
+  selAll: '全选',
+  selPaste: '粘贴',
+  selAsk: '问 AI',
+  selCopied: '已复制 {n} 个字符',
+  selNothing: '没有可复制的内容',
+  fontSizeHud: '字号 {n}',
 } as const;
 
 type Key = keyof typeof zhCN;
@@ -208,6 +215,13 @@ const dictionaries: Record<string, Record<Key, string>> = {
     sortCustom: '自訂',
     sortModeHint: '目前依「{mode}」排序，拖動調整後會改為自訂順序',
     loginBrowserUnfinished: '瀏覽器登入沒有完成。授權後要點瀏覽器裡的「完成登入」；瀏覽器沒有這個按鈕時，複製網址列裡的連結再切回 CloudSSH。也可以改用「在應用程式內登入」。',
+    selCopy: '複製',
+    selAll: '全選',
+    selPaste: '貼上',
+    selAsk: '問 AI',
+    selCopied: '已複製 {n} 個字元',
+    selNothing: '沒有可複製的內容',
+    fontSizeHud: '字級 {n}',
   },
   'en-US': {
     nodes: 'Hosts',
@@ -309,6 +323,13 @@ const dictionaries: Record<string, Record<Key, string>> = {
     sortCustom: 'Custom',
     sortModeHint: 'Sorted by “{mode}”. Dragging switches to a custom order.',
     loginBrowserUnfinished: 'Browser sign-in was not finished. After authorizing, tap “Finish sign-in” in the browser; if it has no such button, copy the address bar link and switch back to CloudSSH. You can also use “Sign in inside the app”.',
+    selCopy: 'Copy',
+    selAll: 'Select all',
+    selPaste: 'Paste',
+    selAsk: 'Ask AI',
+    selCopied: 'Copied {n} characters',
+    selNothing: 'Nothing to copy',
+    fontSizeHud: 'Font size {n}',
   },
 };
 

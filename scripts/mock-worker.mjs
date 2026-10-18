@@ -4,6 +4,7 @@
  *
  *   node scripts/mock-worker.mjs [端口，默认 8788]
  *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist   # 同时托管构建好的界面，浏览器直接打开调试
+ *   node scripts/mock-worker.mjs 8788 --servers 90                 # 补足到 90 台服务器，看节点很多时的流畅度
  *   node scripts/mock-worker.mjs 8788 --anon                       # 未登录（匿名连接页），可走一遍模拟的 GitHub 登录
  *
  * 客户端把实例地址设为 http://127.0.0.1:8788（安卓模拟器可配合 adb reverse tcp:8788 tcp:8788）。
@@ -60,6 +61,15 @@ const servers = [
   // 连接会一直卡在认证、永远到不了 Shell 就绪：用来测试“正在连接”状态（例如关闭时是否确认）
   server('Slow-1 卡在认证', [], '10.0.0.9', { stall: true }),
 ];
+// --servers <N>：补足到 N 台（按地区分组），用来看节点很多时的流畅度
+const serverCountArg = args.indexOf('--servers');
+const wantServers = serverCountArg >= 0 ? Number(args[serverCountArg + 1]) || 0 : 0;
+const REGIONS = [['美国 🇺🇸', 'US'], ['德国 🇩🇪', 'DE'], ['荷兰 🇳🇱', 'NL'], ['新加坡 🇸🇬', 'SG'], ['英国 🇬🇧', 'UK'], ['印度 🇮🇳', 'IN']];
+for (let i = servers.length; i < wantServers; i++) {
+  const [tag, code] = REGIONS[i % REGIONS.length];
+  servers.push(server(`${code}-${String(i).padStart(2, '0')} 节点`, [tag], `192.0.2.${(i % 250) + 1}`, { os: i % 3 ? 'debian' : 'ubuntu' }));
+}
+
 // JP-D 经 JP-C 跳板连接：用来测试“被用作跳板的服务器不能删”
 servers.find((s) => s.name.startsWith('JP-D')).jump_server_id = servers.find((s) => s.name.startsWith('JP-C')).id;
 
@@ -370,17 +380,53 @@ const SAMPLE_LOGS = [
   '\x1b[1;34mbin\x1b[0m  \x1b[1;32mdeploy.sh\x1b[0m  error.log  ok.txt  (ls 自己着色的部分保持原样)',
 ].join('\r\n');
 
+/** 终端里的显示宽度：中日韩全角字符占 2 列 */
+const cellWidth = (text) => [...text].reduce((sum, ch) => sum + (/[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1), 0);
+const padCells = (text, width) => text + ' '.repeat(Math.max(0, width - cellWidth(text)));
+
+/** 仿常见一键脚本的固定宽度菜单（60 列，中英混排、框线），用来看窄屏下的排版 */
+function boxMenu() {
+  const inner = 58;
+  const rows = [
+    ['', ''],
+    ['  VPS 补货频道', 't.me/example'],
+    ['  VPS 测评数据', 'example.com'],
+    null,
+    ['  1. 一键调优', 'Auto-tune (recommended)   ~10 min'],
+    ['  2. 基础调优', 'Base tuning only           ~1 min'],
+    ['  3. 拐点测试', 'Policer sweep              ~8 min'],
+    ['  4. 加 swap', 'Add swap (low-memory box)'],
+    null,
+    ['  5. 查看状态', 'Status'],
+    ['  0. 退出', 'Exit'],
+  ];
+  const out = [`╔${'═'.repeat(inner)}╗`];
+  for (const row of rows) {
+    if (!row) out.push(`╟${'─'.repeat(inner)}╢`);
+    else out.push(`║${padCells(padCells(row[0], 18) + row[1], inner)}║`);
+  }
+  out.push(`╚${'═'.repeat(inner)}╝`, '  Machine   1 core / 1965 MB / 7.2.11-example-bbrv3', '', '请选择 / Select [0-5] [1]: ');
+  return out.join('\r\n');
+}
+
 const HELP = [
-  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  clear  exit',
+  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  size  clear  exit',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
 
-function runCommand(line, write) {
+function runCommand(line, write, term) {
   const [command, ...args] = line.trim().split(/\s+/);
   if (!command) return;
   switch (command) {
     case 'help':
       write(`${HELP}\r\n`);
+      break;
+    case 'size':
+      // 与 stty size 一样：行 列（客户端最近一次 resize 报告的尺寸）
+      write(`${term.rows} ${term.cols}\r\n`);
+      break;
+    case 'menu':
+      write(`${boxMenu()}\r\n`);
       break;
     case 'ls':
       write('\x1b[1;34mbin\x1b[0m  \x1b[1;34metc\x1b[0m  \x1b[1;34mhome\x1b[0m  notes.txt  \x1b[1;32mdeploy.sh\x1b[0m  data.tar.gz\r\n');
@@ -439,11 +485,14 @@ function attachShell(ws, url) {
   if (!stall) setTimeout(() => write(`欢迎使用 CloudSSH 假 shell（输入 help 查看命令）\r\n${PROMPT}`), 60 * (steps.length + 1));
 
   let line = '';
+  /** 客户端报告的终端尺寸（resize 消息），size 命令显示它 */
+  const term = { cols: 80, rows: 24 };
   return (data) => {
     if (typeof data === 'string' && data.startsWith('{')) {
       try {
         const msg = JSON.parse(data);
         if (msg.type === 'ping') ws.sendJson({ type: 'pong', ...(msg.id ? { id: msg.id } : {}) });
+        if (msg.type === 'resize' && Number(msg.cols) > 0 && Number(msg.rows) > 0) Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
         return;
       } catch {
         // 不是 JSON，当作键盘输入
@@ -465,7 +514,7 @@ function attachShell(ws, url) {
           setTimeout(() => ws.close(1000), 50);
           return;
         }
-        runCommand(line, write);
+        runCommand(line, write, term);
         line = '';
         write(PROMPT);
       } else if (ch === '\x7f' || ch === '\b') {

@@ -23,7 +23,8 @@ export const MODULE_IDS = ['hosts', 'chrome', 'sheets', 'commands', 'dock', 'gla
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 /** 终端字号：0 表示自动（跟随网页版的屏幕宽度规则） */
-export const FONT_SIZE_MIN = 10;
+/** 最小 8：一键脚本的菜单常是 60～80 列宽，竖屏要缩到这么小才放得下（网页版的字号钩子接受 8～24） */
+export const FONT_SIZE_MIN = 8;
 export const FONT_SIZE_MAX = 18;
 
 export interface SkinState {

@@ -460,8 +460,8 @@ html[data-cs-skin][data-cs-mods~="glass"] .cs-m-sheet .cs-set-card {
 
 html[data-cs-skin][data-cs-mods~="glass"] .cs-set-nav {
   background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: var(--cs-glass-backdrop);
+  backdrop-filter: var(--cs-glass-backdrop);
 }
 
 html[data-cs-skin][data-cs-mods~="glass"] .cs-m-sheet :is(.cs-set-seg, .cs-set-input, .cs-ob-font-stepper) {

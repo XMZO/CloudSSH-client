@@ -1,16 +1,17 @@
 /* ========== 黑曜 · 液态玻璃（html[data-cs-mods~="glass"]） ==========
    一层玻璃 = 磨砂（模糊 + 提饱和 + 提亮背后内容）+ 半透明底色 + 顶部高光 + 渐变描边（左上亮、右下暗）
-   + 内外阴影；底部栏和“回到终端”胶囊额外叠加边缘折射（滤镜由 glass.ts 按尺寸生成）。
-   节点页加一层强调色的环境光，玻璃才有颜色可“折”。 */
+   + 内外阴影。节点页加一层强调色的环境光，玻璃才透得出颜色。
+   模糊是手机上最贵的效果之一（背后的内容每变一帧就要重算）：半径尽量小，只用在背后真的有内容的地方，
+   终端上方的栏不用（下面没有东西在动）。 */
 
 html[data-cs-mods~="glass"] {
   --cs-glass-fill: color-mix(in srgb, var(--bg-elevated) 50%, transparent);
   --cs-glass-fill-strong: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
-  --cs-glass-backdrop: blur(18px) saturate(190%) brightness(1.1);
-  /* 浮动控件用“清透”玻璃：模糊轻、看得见背后的内容，边缘折射才明显（与 iOS 26 的底栏一致） */
+  --cs-glass-backdrop: blur(12px) saturate(180%) brightness(1.08);
+  /* 浮动控件用“清透”玻璃：模糊轻、看得见背后的内容（与 iOS 26 的底栏一致） */
   --cs-glass-backdrop-clear: blur(5px) saturate(180%) brightness(1.08);
   --cs-glass-fill-clear: color-mix(in srgb, var(--bg-elevated) 34%, transparent);
-  --cs-glass-backdrop-strong: blur(30px) saturate(170%) brightness(1.04);
+  --cs-glass-backdrop-strong: blur(16px) saturate(160%) brightness(1.04);
   --cs-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 42%, rgba(255, 255, 255, 0) 62%);
   --cs-glass-rim: linear-gradient(
     150deg,
@@ -64,7 +65,7 @@ html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes :is(.cs-m-nodes-bar, 
   box-shadow: var(--cs-glass-depth);
 }
 
-/* 玻璃层：磨砂 + 底色 + 顶部高光，边缘折射滤镜作用在这一层 */
+/* 玻璃层：磨砂 + 底色 + 顶部高光 */
 html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes :is(.cs-m-nodes-bar, .cs-m-banner)::before {
   content: "";
   position: absolute;
@@ -74,7 +75,6 @@ html[data-cs-skin][data-cs-mods~="glass"] #cs-mobile-nodes :is(.cs-m-nodes-bar, 
   background: var(--cs-glass-sheen), var(--cs-glass-fill-clear);
   -webkit-backdrop-filter: var(--cs-glass-backdrop-clear);
   backdrop-filter: var(--cs-glass-backdrop-clear);
-  filter: var(--cs-glass-lens, none);
   pointer-events: none;
 }
 
@@ -120,11 +120,10 @@ html[data-cs-skin][data-cs-mods~="glass"] .cs-m-nodes-bar .cs-ob-add {
 
 /* ---------- 终端页：紧凑栏、快捷命令、按键栏 ---------- */
 
+/* 终端上方的栏下面没有滚动的内容，不用模糊，颜色调得与原来的磨砂效果接近 */
 html[data-cs-skin][data-cs-mods~="glass"] .cs-ob-bar {
   border-bottom: 0;
-  background: var(--cs-glass-sheen), color-mix(in srgb, var(--bg-elevated) 82%, transparent);
-  -webkit-backdrop-filter: var(--cs-glass-backdrop);
-  backdrop-filter: var(--cs-glass-backdrop);
+  background: var(--cs-glass-sheen), color-mix(in srgb, var(--bg-elevated) 94%, transparent);
   box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.07), 0 8px 22px rgba(0, 0, 0, 0.32);
 }
 

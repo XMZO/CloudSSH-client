@@ -4,6 +4,7 @@
  * - 返回键：关闭最上层浮层 → 终端回到节点页 → 退到后台（保持会话）
  * - 后台保活：有会话时让 Android 前台服务保持连接
  * - GitHub 登录方式（浏览器 / 应用内，github-login.ts）、登录结果与下载结果提示
+ * - 终端触摸操作：长按选中复制、双击选词、双指缩放字号（terminal-touch.ts）
  */
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import { t } from '../../upstream/frontend/src/i18n';
@@ -24,6 +25,7 @@ import { startSkin } from './skin';
 import { keepAliveEnabled } from './settings';
 import { closeSheet, isSheetOpen, showActions } from './sheet';
 import { mountTabs } from './tabs';
+import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
 
 // ---------- 返回键 ----------
@@ -181,17 +183,29 @@ installTerminalEnhancements();
 if (isTauri()) {
   installFetchObserver();
   const start = () => {
-    mountNodes();
-    mountAuthSettings();
-    installGithubLogin();
-    mountTabs();
-    startSkin();
-    installLanguagePicker(sheetLanguageMenu);
-    installKeepAlive();
-    installSystemBars();
-    installDownloadNotices();
-    reportLoginResult();
-    void installBackButton().catch((error: unknown) => console.warn('[cloudssh] back button', error));
+    // 返回键最先注册：没注册上时系统会直接结束 Activity（原生层已兜底改为退到后台）。
+    // 其余各项互不影响，某一项出错不能让后面的都装不上
+    const steps: [string, () => void][] = [
+      ['back button', () => void installBackButton().catch((error: unknown) => console.warn('[cloudssh] back button', error))],
+      ['nodes', mountNodes],
+      ['auth settings', mountAuthSettings],
+      ['github login', installGithubLogin],
+      ['tabs', mountTabs],
+      ['skin', startSkin],
+      ['language', () => installLanguagePicker(sheetLanguageMenu)],
+      ['terminal touch', installTerminalTouch],
+      ['keep alive', installKeepAlive],
+      ['system bars', installSystemBars],
+      ['downloads', installDownloadNotices],
+      ['login result', reportLoginResult],
+    ];
+    for (const [name, step] of steps) {
+      try {
+        step();
+      } catch (error) {
+        console.error(`[cloudssh] ${name}`, error);
+      }
+    }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();

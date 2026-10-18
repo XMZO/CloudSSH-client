@@ -164,6 +164,10 @@ html.cs-nodes-on .cs-m-nodes {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-surface);
+  /* 屏幕外的分组不排版、不绘制：节点多时回到节点页（要从头排版整个列表）和滚动都轻很多。
+     放在组的内容上而不是整组：它自己的阴影不受裁剪。auto 会记住上次的实际高度，滚动条不跳 */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 480px;
 }
 
 .cs-m-row-item {

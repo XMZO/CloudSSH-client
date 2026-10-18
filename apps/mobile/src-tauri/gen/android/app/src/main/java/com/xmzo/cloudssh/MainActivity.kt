@@ -105,7 +105,9 @@ class MainActivity : TauriActivity() {
         return
       }
       isEnabled = false
-      onBackPressedDispatcher.onBackPressed()
+      // 页面还没注册返回监听（启动中、页面忙不过来）时，系统默认会结束 Activity，而结束时 Tauri 的
+      // Rust 端会因“FORTIFY: pthread_mutex_lock called on a destroyed mutex”崩溃：改为退到后台（会话保留）
+      if (onBackPressedDispatcher.hasEnabledCallbacks()) onBackPressedDispatcher.onBackPressed() else moveTaskToBack(true)
       isEnabled = true
     }
   }

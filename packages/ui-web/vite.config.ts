@@ -159,6 +159,19 @@ const COMMON_HOOKS: Hook[] = [
     inject: '    (globalThis as any).__cloudsshTerminalDisposed?.(this.terminal);\n',
   },
   {
+    // AI 面板的 hide() 无论原来开没开都会在下一帧重新适配终端；回到服务器列表时网页版对每个标签都调一次，
+    // 白白重排所有终端（手机上一次要几十毫秒，页面切换因此卡一下）。面板原本就没开时布局没变，跳过适配。
+    // 两段注入用实例属性传值：任一锚点失效时条件不成立，行为与网页版一致
+    file: '/upstream/frontend/src/agent/agent-panel.ts',
+    anchor: '  hide(): void {\n    this.rejectPendingConfirmation(false);\n',
+    inject: '    (this as any).__cloudsshWasVisible = this.isVisible;\n',
+  },
+  {
+    file: '/upstream/frontend/src/agent/agent-panel.ts',
+    anchor: "      }, 320);\n    }\n    document.body.classList.remove('agent-panel-open');\n",
+    inject: '    if ((this as any).__cloudsshWasVisible === false) return;\n',
+  },
+  {
     // 网页版拉取服务器列表失败时会把列表清空，断网一次后，客户端节点页/侧栏（显示的是另一份缓存）
     // 点节点就找不到服务器、什么也不发生。网络失败（fetch 抛 TypeError）时保留已有列表；
     // 服务端明确返回错误（未登录等）时仍按网页版原样清空

@@ -1,0 +1,106 @@
+/* ========== 终端触摸操作：选区拖动柄、操作栏、字号提示（terminal-touch.ts） ========== */
+
+.cs-sel-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: none;
+  pointer-events: none;
+}
+
+.cs-sel-layer.is-on {
+  display: block;
+}
+
+.cs-sel-layer > * {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: auto;
+}
+
+/* 拖动柄：安卓式水滴，尖角对准选区的左下 / 右下角；外围留出更大的触摸范围 */
+.cs-sel-handle {
+  width: 44px;
+  height: 44px;
+  margin: -2px 0 0 -22px;
+  touch-action: none;
+}
+
+.cs-sel-handle::before {
+  position: absolute;
+  top: 2px;
+  width: 20px;
+  height: 20px;
+  background: var(--accent, #6366f1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  content: "";
+}
+
+.cs-sel-handle.is-start::before {
+  right: 22px;
+  border-radius: 50% 0 50% 50%;
+}
+
+.cs-sel-handle.is-end::before {
+  left: 22px;
+  border-radius: 0 50% 50% 50%;
+}
+
+/* 操作栏 */
+.cs-sel-bar {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.12));
+  border-radius: 14px;
+  background: var(--bg-elevated, #1e1f24);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
+
+.cs-sel-bar button {
+  min-width: 56px;
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--on-surface, #e5e2e1);
+  font: 500 14px/1 system-ui, sans-serif;
+}
+
+.cs-sel-bar button:active {
+  background: color-mix(in srgb, var(--accent, #6366f1) 22%, transparent);
+}
+
+.cs-sel-bar button:first-child {
+  color: var(--accent, #818cf8);
+  font-weight: 600;
+}
+
+/* 浮动栏显示时，网页版的“询问 AI 助手”气泡收进浮动栏（它会盖住拖动柄） */
+html.cs-sel-on #ask-ai-selection-btn {
+  display: none !important;
+}
+
+/* 双指缩放时的字号提示 */
+.cs-pinch-hud {
+  position: fixed;
+  top: 28%;
+  left: 50%;
+  z-index: 131;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(10, 12, 16, 0.78);
+  color: #fff;
+  font: 600 15px/1 system-ui, sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 0.15s;
+}
+
+.cs-pinch-hud.is-on {
+  opacity: 1;
+}

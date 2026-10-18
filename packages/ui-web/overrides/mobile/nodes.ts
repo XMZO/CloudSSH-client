@@ -148,30 +148,49 @@ function renderGroup(key: string, label: string, servers: ServerConfig[], sessio
   return group;
 }
 
+/** 排序、语言变化时加一，计入内容签名 */
+let orderVersion = 0;
+let localeVersion = 0;
+let lastSignature = '';
+
 /**
- * 内容没变就不动 DOM。回到节点页时会连着来好几次刷新（标签栏变化、页面切换、网页版重新拉取列表），
- * 每次都整体替换会让列表闪几下，也会打断正在按下的行。列表上的点击、长按都委托在外层，保留旧节点没有问题。
+ * 决定列表长什么样的全部数据。签名没变就不动 DOM：回到节点页时会连着来好几次刷新（标签栏变化、页面切换、
+ * 网页版重新拉取列表），每次都重建会让列表闪几下、打断正在按下的行。以前是先建一遍 DOM 再比较 innerHTML，
+ * 几十台服务器时每次都要几十毫秒；比较数据只要不到 1 毫秒。
  */
-function replaceIfChanged(target: HTMLElement, nodes: Node[]): void {
-  const next = document.createElement('div');
-  next.append(...nodes);
-  if (next.innerHTML !== target.innerHTML) target.replaceChildren(...next.childNodes);
+function contentSignature(servers: ServerConfig[], sessions: Map<number, string[]>, activeId: number | null, tabs: number): string {
+  return JSON.stringify([
+    servers,
+    [...sessions].map(([id, list]) => [id, list.length]),
+    activeId,
+    tabs,
+    state.query,
+    [...state.collapsed],
+    orderVersion,
+    localeVersion,
+  ]);
 }
 
 function render(): void {
   const servers = getServers();
   document.documentElement.classList.toggle('cs-nodes-on', servers !== null);
-  if (!servers) return;
+  if (!servers) {
+    lastSignature = '';
+    return;
+  }
   const sessions = sessionsByServer();
   const activeId = activeServerId();
   const tabs = tabCount();
+  const signature = contentSignature(servers, sessions, activeId, tabs);
+  if (signature === lastSignature) return;
+  lastSignature = signature;
   banner.hidden = tabs === 0;
-  replaceIfChanged(banner, [
+  banner.replaceChildren(
     icon('terminal'),
     el('span', '', mt(tabs === 1 ? 'sessionsBannerOne' : 'sessionsBanner', { n: tabs })),
     el('span', 'cs-m-banner-go', mt('backToTerminal')),
-    icon('arrow_forward'),
-  ]);
+    icon('arrow_forward')
+  );
 
   const fragment = document.createDocumentFragment();
   if (!state.query) {
@@ -192,16 +211,30 @@ function render(): void {
   }
   for (const group of groups) fragment.append(renderGroup(group.key, group.label, group.servers, sessions, activeId));
   if (total === 0) fragment.append(el('div', 'cs-m-empty', servers.length ? mt('noMatch') : mt('empty')));
-  replaceIfChanged(list, [fragment]);
+  list.replaceChildren(fragment);
+}
+
+/** 节点页是否在显示：在终端页时不渲染（看不见，还会和终端抢主线程），回来时再补 */
+function pageVisible(): boolean {
+  const section = document.getElementById('user-space-section');
+  return !!section && !section.classList.contains('hidden');
 }
 
 let frame = 0;
+let dirty = true;
+
+function flush(): void {
+  if (frame) cancelAnimationFrame(frame);
+  frame = 0;
+  if (!dirty) return;
+  dirty = false;
+  render();
+}
+
 function scheduleRender(): void {
-  if (frame) return;
-  frame = requestAnimationFrame(() => {
-    frame = 0;
-    render();
-  });
+  dirty = true;
+  if (frame || !pageVisible()) return;
+  frame = requestAnimationFrame(flush);
 }
 
 // ---------- 交互 ----------
@@ -300,18 +333,26 @@ export function mountNodes(): void {
   }
   toolbar.after(root);
   applyTexts();
-  window.addEventListener(ORDER_CHANGED_EVENT, scheduleRender);
+  window.addEventListener(ORDER_CHANGED_EVENT, () => {
+    orderVersion++;
+    scheduleRender();
+  });
   subscribe(scheduleRender);
   onLocaleChange(() => {
+    localeVersion++;
     applyTexts();
     scheduleRender();
   });
-  const observer = new MutationObserver(scheduleRender);
   const tabBar = document.getElementById('tab-bar');
-  if (tabBar) observer.observe(tabBar, { childList: true, subtree: true });
+  if (tabBar) new MutationObserver(scheduleRender).observe(tabBar, { childList: true, subtree: true });
+  // 页面切换：回到节点页时在这一帧画出来之前就补上渲染，不和进场动画抢同一帧
+  const sections = new MutationObserver(() => {
+    if (pageVisible()) flush();
+  });
   for (const id of ['terminal-section', 'user-space-section']) {
     const node = document.getElementById(id);
-    if (node) observer.observe(node, { attributes: true, attributeFilter: ['class'] });
+    if (node) sections.observe(node, { attributes: true, attributeFilter: ['class'] });
   }
   render();
+  dirty = false;
 }

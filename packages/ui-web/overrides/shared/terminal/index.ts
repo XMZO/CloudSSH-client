@@ -55,6 +55,14 @@ function onDisposed(term: Terminal): void {
   highlighters.delete(term);
 }
 
+/** 页面上某个节点所在的终端（手机端的长按选择、双指缩放用） */
+export function terminalFor(node: Element | null): Terminal | null {
+  const element = node?.closest('.xterm');
+  if (!element) return null;
+  for (const term of highlighters.keys()) if (term.element === element) return term;
+  return null;
+}
+
 /** 字体在终端打开之后才加载完时，让 xterm 重新测量字宽并按新字宽重排 */
 async function loadFont(): Promise<void> {
   try {
