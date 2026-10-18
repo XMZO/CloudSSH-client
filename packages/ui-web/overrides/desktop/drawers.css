@@ -42,3 +42,41 @@ html.cs-resizing * {
   cursor: col-resize !important;
   user-select: none !important;
 }
+
+/* ---------- 面板拖窄后的排版（AI 助手） ---------- */
+
+/* 按面板自己的宽度调整（面板可以拖到 320px），不看窗口宽度 */
+html[data-cs-desk="workbench"] #agent-panel {
+  container: cs-agent / inline-size;
+}
+
+/* 快捷提问换行显示，不再横向裁掉后面几个（网页版只在手机布局下换行） */
+html[data-cs-desk="workbench"] #agent-quick-chips {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  overflow-x: visible;
+}
+
+@container cs-agent (max-width: 460px) {
+  #agent-panel .agent-panel-header {
+    padding-right: 10px;
+    padding-left: 12px;
+  }
+
+  /* 标题已经被截成“AI Ag…”：只留机器人图标 */
+  #agent-panel .agent-panel-title {
+    display: none;
+  }
+
+  #agent-panel .agent-panel-composer {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
+
+@container cs-agent (max-width: 360px) {
+  /* “交互 / Auto”只留图标，悬停仍有说明 */
+  #agent-panel .agent-mode-btn-text {
+    display: none;
+  }
+}
