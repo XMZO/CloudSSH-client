@@ -356,8 +356,17 @@ interface Press {
 let press: Press | null = null;
 /** 长按后正在拖动扩大选区 */
 let dragging: { term: Terminal; pointerId: number; word: [Cell, Cell]; x: number; y: number } | null = null;
-const touches = new Map<number, { x: number; y: number }>();
-let pinch: { term: Terminal; startDistance: number; startSize: number; size: number } | null = null;
+/**
+ * 双指缩放。手指数用 TouchEvent.touches（系统维护的、此刻真正按在屏幕上的手指）判断，不自己记指针：
+ * 部分机型偶尔漏发一次抬起事件，自己记的列表里就会残留一根“手指”，之后单指上下拖动会被当成捏合、改了字号。
+ * 另外两根手指要几乎同时按下（防止握持时贴在曲面屏边缘的手掌算成第二根手指），
+ * 间距变化超过阈值才开始调字号（防止双指轻触时字号跳动）。
+ */
+let pinch: { term: Terminal; startDistance: number; startSize: number; size: number; active: boolean } | null = null;
+const PINCH_START_WINDOW_MS = 400;
+const PINCH_THRESHOLD = 24;
+/** 每根手指按下的时间（Touch.identifier → 时间） */
+const touchStarts = new Map<number, number>();
 let swallowUntil = 0;
 let lastTouchOnTerminal = 0;
 /** 上一次轻点（判断双击）：双击选中一个词。xterm 自己的双击选词会走“Linux 主选区”逻辑——安卓的 platform 是 Linux——
@@ -366,10 +375,7 @@ let lastTap: { term: Terminal; x: number; y: number; time: number } | null = nul
 const DOUBLE_TAP_MS = 320;
 const DOUBLE_TAP_DISTANCE = 28;
 
-const distance = () => {
-  const [a, b] = [...touches.values()];
-  return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
-};
+const touchDistance = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 
 function beginLongPress(pending: Press): void {
   press = null;
@@ -415,7 +421,7 @@ function showHud(size: number): void {
   hudTimer = window.setTimeout(() => hud.classList.remove('is-on'), 700);
 }
 
-function startPinch(term: Terminal): void {
+function startPinch(term: Terminal, startDistance: number): void {
   if (press) window.clearTimeout(press.timer);
   press = null;
   dragging = null;
@@ -423,9 +429,57 @@ function startPinch(term: Terminal): void {
   // 字号设置只在黑曜主题生效（经典主题保持网页版的自动字号）
   if (skinState().skin !== 'obsidian') return;
   const size = skinState().fontSize || currentTerminalFontSize();
-  pinch = { term, startDistance: Math.max(1, distance()), startSize: size, size };
-  if (uiShown) clearSelection();
+  pinch = { term, startDistance: Math.max(1, startDistance), startSize: size, size, active: false };
+}
+
+function endPinch(): void {
+  if (!pinch) return;
+  const { size, active } = pinch;
+  pinch = null;
+  swallowUntil = Date.now() + SWALLOW_MS;
+  if (active && size !== skinState().fontSize) {
+    updateSkin((draft) => {
+      draft.fontSize = size;
+    });
+  }
+}
+
+const onTerminalScreen = (touch: Touch) => !!(touch.target as Element | null)?.closest?.('.xterm-screen');
+
+function onTouchStart(event: TouchEvent): void {
+  const now = Date.now();
+  const live = new Set([...event.touches].map((touch) => touch.identifier));
+  for (const id of touchStarts.keys()) if (!live.has(id)) touchStarts.delete(id);
+  for (const touch of event.changedTouches) touchStarts.set(touch.identifier, now);
+  if (pinch || event.touches.length !== 2) return;
+  const [a, b] = [...event.touches];
+  const term = terminalFor(a.target as Element);
+  if (!term || terminalFor(b.target as Element) !== term || !onTerminalScreen(a) || !onTerminalScreen(b)) return;
+  const startedApart = Math.abs((touchStarts.get(a.identifier) ?? 0) - (touchStarts.get(b.identifier) ?? 0));
+  if (startedApart > PINCH_START_WINDOW_MS) return;
+  startPinch(term, touchDistance(a, b));
+}
+
+function onTouchMove(event: TouchEvent): void {
+  if (!pinch || event.touches.length < 2) return;
+  const distance = touchDistance(event.touches[0], event.touches[1]);
+  if (!pinch.active) {
+    if (Math.abs(distance - pinch.startDistance) < PINCH_THRESHOLD) return;
+    pinch.active = true;
+    if (uiShown) clearSelection();
+  }
+  const size = clamp(Math.round(pinch.startSize * (distance / pinch.startDistance)), FONT_SIZE_MIN, FONT_SIZE_MAX);
+  if (size !== pinch.size) {
+    pinch.size = size;
+    applyFontLive(size);
+  }
   showHud(size);
+}
+
+function onTouchEnd(event: TouchEvent): void {
+  for (const touch of event.changedTouches) touchStarts.delete(touch.identifier);
+  // 抬起一根手指时停止缩放，但等全部抬起再交还给网页版（否则剩下那根手指会接着滚动，画面跳一下）
+  if (pinch && event.touches.length === 0) endPinch();
 }
 
 function onPointerDown(event: PointerEvent): void {
@@ -434,13 +488,14 @@ function onPointerDown(event: PointerEvent): void {
   if (!term || !(event.target as Element).closest('.xterm-screen')) return;
   lastTouchOnTerminal = Date.now();
   watch(term);
-  touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  if (touches.size === 2) {
-    startPinch(term);
-    event.stopImmediatePropagation();
+  // 第二根及以后的手指：不是长按（可能是双指缩放，由 touch 事件判断）
+  if (!event.isPrimary) {
+    if (press) window.clearTimeout(press.timer);
+    press = null;
     return;
   }
-  if (touches.size > 2 || pinch) return;
+  // 新的第一根手指按下：上一次缩放必定已经结束（兜底，正常由 touchend 结束）
+  if (pinch) endPinch();
   // 网页版的选择模式开着时由它自己处理拖动选择
   if (term.element?.closest('.mobile-selection-mode')) return;
   const pending: Press = {
@@ -456,18 +511,10 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  if (!touches.has(event.pointerId)) return;
-  touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (event.pointerType !== 'touch') return;
   if (pinch) {
-    // 两根手指都由这里处理，不让网页版拿去滚动
+    // 缩放中两根手指的移动都不交给网页版（不滚动）
     event.stopImmediatePropagation();
-    if (touches.size < 2) return;
-    const size = clamp(Math.round(pinch.startSize * (distance() / pinch.startDistance)), FONT_SIZE_MIN, FONT_SIZE_MAX);
-    if (size !== pinch.size) {
-      pinch.size = size;
-      applyFontLive(size);
-      showHud(size);
-    }
     return;
   }
   if (dragging && dragging.pointerId === event.pointerId) {
@@ -486,20 +533,7 @@ function onPointerMove(event: PointerEvent): void {
 }
 
 function onPointerUp(event: PointerEvent): void {
-  if (!touches.delete(event.pointerId)) return;
-  if (pinch) {
-    if (touches.size === 0) {
-      const size = pinch.size;
-      pinch = null;
-      swallowUntil = Date.now() + SWALLOW_MS;
-      if (size !== skinState().fontSize) {
-        updateSkin((draft) => {
-          draft.fontSize = size;
-        });
-      }
-    }
-    return;
-  }
+  if (event.pointerType !== 'touch' || pinch) return;
   if (dragging && dragging.pointerId === event.pointerId) {
     const term = dragging.term;
     dragging = null;
@@ -551,6 +585,10 @@ export function installTerminalTouch(): void {
   document.addEventListener('pointermove', onPointerMove, true);
   document.addEventListener('pointerup', onPointerUp, true);
   document.addEventListener('pointercancel', onPointerUp, true);
+  document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+  document.addEventListener('touchmove', onTouchMove, { capture: true, passive: true });
+  document.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
+  document.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: true });
   for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) document.addEventListener(type, swallow, true);
   document.addEventListener(
     'touchend',
