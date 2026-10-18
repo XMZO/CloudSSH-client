@@ -1,0 +1,44 @@
+/* ========== 工作台主题：右侧抽屉左边缘的拖动条（drawers.ts） ========== */
+
+/* 平时透明，悬停、键盘聚焦或拖动时显示一条强调色细线 */
+.cs-drawer-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.cs-drawer-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--accent, var(--primary));
+  opacity: 0;
+  transition: opacity 0.12s;
+  content: "";
+}
+
+.cs-drawer-resizer:is(:hover, :focus-visible, .is-dragging)::after {
+  opacity: 0.8;
+}
+
+.cs-drawer-resizer:focus-visible {
+  outline: none;
+}
+
+html:not([data-cs-desk="workbench"]) .cs-drawer-resizer {
+  display: none;
+}
+
+/* 拖动时整页保持调宽光标、不选中文字 */
+html.cs-resizing,
+html.cs-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}

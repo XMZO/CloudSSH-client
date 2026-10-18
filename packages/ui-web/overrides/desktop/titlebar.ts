@@ -34,6 +34,10 @@ const DRAWERS: Record<string, string> = {
 /** 停靠后终端至少要留这么宽，窗口太窄（或开着侧栏）时抽屉照网页版那样盖在终端上 */
 const MIN_DOCKED_TERMINAL = 420;
 
+function panelsOf(id: string): NodeListOf<HTMLElement> {
+  return document.querySelectorAll<HTMLElement>(`[id="${id}"]`);
+}
+
 let dockWidth = 0;
 let dockFrame = 0;
 function syncDock(): void {
@@ -41,7 +45,8 @@ function syncDock(): void {
   if (desktopSkin() === 'workbench' && currentView() === 'term') {
     for (const [button, panel] of Object.entries(DRAWERS)) {
       if (!document.getElementById(button)?.classList.contains('active')) continue;
-      width = Math.max(width, document.getElementById(panel)?.offsetWidth ?? 0);
+      // SFTP、AI 助手的面板每个会话标签各一个（id 相同），别的标签收起的 AI 面板是 display: none、宽度为 0
+      for (const node of panelsOf(panel)) width = Math.max(width, node.offsetWidth);
     }
     const area = document.getElementById('terminal-section')?.clientWidth ?? window.innerWidth;
     if (area - width < MIN_DOCKED_TERMINAL) width = 0;
@@ -196,16 +201,17 @@ export function mountTitlebar(env: ChromeEnv): void {
       if (button.classList.contains('is-toggle')) button.setAttribute('aria-pressed', String(on));
     }
   };
-  // 面板宽度会变（命令片段面板可以拖动调宽）；窗口缩放、侧栏开合后重新判断放不放得下
+  // 面板宽度会变（拖动左边缘调宽，见 drawers.ts）；窗口缩放、侧栏开合后重新判断放不放得下
   const panelResize = new ResizeObserver(() => syncDock());
   const observedPanels = new WeakSet<Element>();
-  // 有的面板第一次打开时才创建（命令片段），每次开合抽屉时补上观察
+  // 面板第一次打开时才创建（每个会话标签各一个），每次开合抽屉时补上观察
   const observePanels = () => {
     for (const panel of Object.values(DRAWERS)) {
-      const node = document.getElementById(panel);
-      if (!node || observedPanels.has(node)) continue;
-      observedPanels.add(node);
-      panelResize.observe(node);
+      for (const node of panelsOf(panel)) {
+        if (observedPanels.has(node)) continue;
+        observedPanels.add(node);
+        panelResize.observe(node);
+      }
     }
   };
   observePanels();
