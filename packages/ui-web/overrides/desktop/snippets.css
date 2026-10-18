@@ -3,9 +3,53 @@
    占掉近一半宽度、一屏只看得到四五条。这里收窄面板，一条片段压成两三行：名称与分类在一行，
    命令最多显示两行（完整内容在悬停提示里），操作按钮悬停时才出现。结构与行为不变。 */
 
+/* 默认 300px；拖动左边缘可调（snippets.ts 把宽度写在面板的 --cs-snippet-w 上并记住） */
 html[data-cs-desk="workbench"] #snippet-panel {
-  width: clamp(320px, 28vw, 380px) !important;
+  width: min(var(--cs-snippet-w, 300px), 100vw) !important;
   font-family: var(--cs-ui-font);
+}
+
+/* 左边缘的拖动条：平时透明，悬停或拖动时显示一条强调色细线 */
+.cs-drawer-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.cs-drawer-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--accent, var(--primary));
+  opacity: 0;
+  transition: opacity 0.12s;
+  content: "";
+}
+
+.cs-drawer-resizer:is(:hover, :focus-visible, .is-dragging)::after {
+  opacity: 0.8;
+}
+
+.cs-drawer-resizer:focus-visible {
+  outline: none;
+}
+
+html:not([data-cs-desk="workbench"]) .cs-drawer-resizer {
+  display: none;
+}
+
+/* 拖动时整页保持调宽光标、不选中文字 */
+html.cs-resizing,
+html.cs-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 /* 标题栏、工具栏、分类、底栏都收矮 */
@@ -19,10 +63,21 @@ html[data-cs-desk="workbench"] #snippet-panel > .sftp-panel-header + div {
   padding: 6px 8px;
 }
 
+/* “新建片段”只留“+”图标（文字仍给读屏软件，悬停有提示），把宽度让给搜索框 */
 html[data-cs-desk="workbench"] #snippet-new-btn {
-  padding: 0 8px;
-  letter-spacing: normal;
-  font-family: var(--cs-ui-font);
+  position: relative;
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+}
+
+html[data-cs-desk="workbench"] #snippet-new-btn-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 html[data-cs-desk="workbench"] #snippet-category-chips {

@@ -56,6 +56,7 @@ const zhCN = {
   groupByTag: '按标签分组',
   shortcutHint: '双击或回车连接 · 右键更多操作',
   snippetHint: '双击填入终端（不回车）',
+  resizeHint: '拖动调整宽度，双击恢复默认',
 };
 
 type Key = keyof typeof zhCN;
@@ -115,6 +116,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     groupByTag: '依標籤分組',
     shortcutHint: '按兩下或 Enter 連線 · 右鍵更多操作',
     snippetHint: '按兩下填入終端機（不送出）',
+    resizeHint: '拖曳調整寬度，按兩下恢復預設',
   },
   'en-US': {
     menu: 'Menu',
@@ -171,6 +173,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     groupByTag: 'Group by tag',
     shortcutHint: 'Double-click or Enter to connect · right-click for more',
     snippetHint: 'Double-click to insert into the terminal (without Enter)',
+    resizeHint: 'Drag to resize, double-click to reset',
   },
 };
 

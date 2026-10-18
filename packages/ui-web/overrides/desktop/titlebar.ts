@@ -196,18 +196,26 @@ export function mountTitlebar(env: ChromeEnv): void {
       if (button.classList.contains('is-toggle')) button.setAttribute('aria-pressed', String(on));
     }
   };
+  // 面板宽度会变（命令片段面板可以拖动调宽）；窗口缩放、侧栏开合后重新判断放不放得下
+  const panelResize = new ResizeObserver(() => syncDock());
+  const observedPanels = new WeakSet<Element>();
+  // 有的面板第一次打开时才创建（命令片段），每次开合抽屉时补上观察
+  const observePanels = () => {
+    for (const panel of Object.values(DRAWERS)) {
+      const node = document.getElementById(panel);
+      if (!node || observedPanels.has(node)) continue;
+      observedPanels.add(node);
+      panelResize.observe(node);
+    }
+  };
+  observePanels();
   const drawerBar = document.getElementById('terminal-drawer-segmented-bar');
   if (drawerBar) {
     new MutationObserver(() => {
+      observePanels();
       syncTools();
       syncDock();
     }).observe(drawerBar, { subtree: true, attributes: true, attributeFilter: ['class'] });
-  }
-  // 面板可以拖动改宽度；窗口缩放、侧栏开合后重新判断放不放得下
-  const panelResize = new ResizeObserver(() => syncDock());
-  for (const panel of Object.values(DRAWERS)) {
-    const node = document.getElementById(panel);
-    if (node) panelResize.observe(node);
   }
   const section = document.getElementById('terminal-section');
   if (section) panelResize.observe(section);
