@@ -12,6 +12,7 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import '../desktop.css';
 import '../shared/web-fixes.css';
 import { installLanguagePicker, type LanguageMenu } from '../shared/language-picker';
+import { installAgentOutput } from '../shared/agent-output';
 import { installCompactServerForm } from '../shared/server-form';
 import { installTagPicker } from '../shared/server-tags';
 import { installTerminalEnhancements } from '../shared/terminal';
@@ -222,6 +223,7 @@ if (isTauri()) {
       ['language', () => installLanguagePicker(sheetLanguageMenu)],
       ['tag picker', installTagPicker],
       ['server form', installCompactServerForm],
+      ['agent output', installAgentOutput],
       ['terminal touch', installTerminalTouch],
       ['keep alive', installKeepAlive],
       ['notifications', installMobileNotifications],

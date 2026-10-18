@@ -26,6 +26,7 @@ import { mountDrawerResizers } from './drawers';
 import { mountHome } from './home';
 import { installExternalLinks } from './links';
 import { installDesktopNotifications } from './notifications';
+import { agentOutputText, openStyleEditor } from '../shared/agent-output';
 import { qt } from '../shared/qr-sync/i18n';
 import { installPalette, registerPaletteAction } from './palette';
 import { openQrSync } from './qr-sync';
@@ -86,6 +87,12 @@ export async function mountDesktopShell(): Promise<void> {
       icon: 'key',
       keywords: 'credential preset password key 凭据 密码 私钥',
       run: () => void openPresetManager(),
+    }));
+    registerPaletteAction(() => ({
+      title: agentOutputText('button'),
+      icon: 'format_paint',
+      keywords: 'ai reply style prompt format 回复 风格 提示词',
+      run: () => openStyleEditor(),
     }));
     registerPaletteAction(() => ({
       title: qt('title'),

@@ -25,6 +25,7 @@ import {
 } from '../shared/session-notify';
 import { openPresetManager } from '../shared/credential-presets';
 import { openQrScanner } from './qr-sync';
+import { agentOutputText, openStyleEditor } from '../shared/agent-output';
 import { mt } from './i18n';
 import { groupNav, segmented, settingsGroup, settingsRow, smallButton, splitToggleRow, toggleRow } from './settings-ui';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
@@ -239,7 +240,15 @@ function terminalGroup(): HTMLElement {
     ),
   });
 
-  return settingsGroup('terminal', mt('grpTerminal'), [fontRow, highlightRow, closeRow]);
+  const aiStyleRow = settingsRow({
+    title: agentOutputText('button'),
+    sub: agentOutputText('settingsHint'),
+    onClick: () => {
+      closeSheet();
+      openStyleEditor();
+    },
+  });
+  return settingsGroup('terminal', mt('grpTerminal'), [fontRow, highlightRow, aiStyleRow, closeRow]);
 }
 
 // ---------- 连接 ----------

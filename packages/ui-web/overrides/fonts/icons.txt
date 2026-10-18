@@ -63,6 +63,7 @@ folder_off
 folder_open
 folder_zip
 format_color_text
+format_paint
 fullscreen
 fullscreen_exit
 function
@@ -119,6 +120,7 @@ palette
 passkey
 password
 pattern
+pending
 person
 php
 picture_as_pdf

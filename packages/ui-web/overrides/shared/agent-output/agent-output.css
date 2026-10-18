@@ -1,0 +1,356 @@
+/* ========== AI 助手回复的配色与状态高亮（agent-output，电脑与手机共用） ==========
+   网页版把正文、标题、表格、加粗全用 --agent-agent-color；这里改成正文普通文字色、层次分明，
+   AI 主题色只留给加粗的关键标签、链接和少量点缀。全部用主题变量，各配色方案自动适配。
+   选择器前加 :root 提高优先级，不依赖样式表的加载顺序。 */
+
+:root {
+  /* 状态色与正文色混合：深色主题里偏亮、浅色主题里偏暗，对比度都够 */
+  --cs-tone-ok: color-mix(in srgb, #2ea043 72%, var(--on-surface));
+  --cs-tone-warn: color-mix(in srgb, #d29922 72%, var(--on-surface));
+  --cs-tone-bad: color-mix(in srgb, var(--error, #f85149) 82%, var(--on-surface));
+}
+
+:root .agent-md-content {
+  color: var(--on-surface);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+/* ---------- 标题：普通文字色，靠字号、字重与左侧短竖条区分层级 ---------- */
+
+:root .agent-md-content :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--on-surface);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+:root .agent-md-content h1 {
+  font-size: 17px;
+}
+
+:root .agent-md-content h2 {
+  font-size: 15.5px;
+}
+
+:root .agent-md-content h3 {
+  font-size: 14.5px;
+}
+
+:root .agent-md-content :is(h4, h5, h6) {
+  color: var(--on-surface-variant);
+  font-size: 13.5px;
+}
+
+:root .agent-md-content :is(h1, h2, h3) {
+  position: relative;
+  padding-left: 10px;
+}
+
+:root .agent-md-content :is(h1, h2, h3)::before {
+  position: absolute;
+  top: 0.22em;
+  bottom: 0.22em;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--agent-agent-color);
+  content: "";
+}
+
+/* ---------- 正文元素 ---------- */
+
+/* 加粗多是“主机：”“结论：”这类关键标签：保留 AI 主题色作为高亮 */
+:root .agent-md-content strong {
+  color: var(--agent-agent-color);
+  font-weight: 650;
+}
+
+:root .agent-md-content :is(h1, h2, h3, h4, h5, h6, th) strong {
+  color: inherit;
+}
+
+:root .agent-md-content :is(a, a.agent-md-link) {
+  color: var(--agent-agent-color);
+  text-underline-offset: 2px;
+}
+
+:root .agent-md-content .agent-md-inline-code {
+  border: 1px solid color-mix(in srgb, var(--on-surface) 12%, transparent);
+  background: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  color: var(--on-surface);
+  font-size: 12px;
+}
+
+:root .agent-md-content .agent-md-pre {
+  color: var(--on-surface);
+}
+
+:root .agent-md-content li::marker {
+  color: var(--on-surface-variant);
+}
+
+/* 引用：次要文字色；中文不用斜体（中文斜体是把字硬拉斜，很难看） */
+:root .agent-md-content blockquote {
+  border-left-color: color-mix(in srgb, var(--agent-agent-color) 45%, transparent);
+  background: color-mix(in srgb, var(--on-surface) 4%, transparent);
+  color: var(--on-surface-variant);
+  font-style: normal;
+}
+
+:root .agent-md-content blockquote :is(p, em) {
+  font-style: normal;
+}
+
+:root .agent-md-content hr {
+  border-color: var(--border);
+}
+
+/* ---------- 表格：表头弱化，数字等宽对齐 ---------- */
+
+:root .agent-md-content table {
+  border-top: 1px solid var(--border-strong, var(--border));
+  font-variant-numeric: tabular-nums;
+}
+
+:root .agent-md-content th {
+  border-bottom-color: var(--border-strong, var(--border));
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+:root .agent-md-content td {
+  border-bottom-color: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  color: var(--on-surface);
+}
+
+:root .agent-md-content tbody tr:hover td {
+  background: color-mix(in srgb, var(--on-surface) 4%, transparent);
+}
+
+/* ---------- 状态高亮（index.ts 按内容打标记） ---------- */
+
+:root .agent-md-content td[data-cs-tone] {
+  font-weight: 600;
+}
+
+:root .agent-md-content td[data-cs-tone="ok"] {
+  color: var(--cs-tone-ok);
+}
+
+:root .agent-md-content td[data-cs-tone="warn"] {
+  color: var(--cs-tone-warn);
+}
+
+:root .agent-md-content td[data-cs-tone="bad"] {
+  color: var(--cs-tone-bad);
+}
+
+/* 以 ⚠️ / ❌ 开头的列表项、段落：浅色底，问题一眼可见 */
+:root .agent-md-content [data-cs-callout] {
+  margin-left: -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+:root .agent-md-content li[data-cs-callout] {
+  margin-left: 0;
+}
+
+:root .agent-md-content [data-cs-callout="warn"] {
+  background: color-mix(in srgb, #d29922 12%, transparent);
+}
+
+:root .agent-md-content [data-cs-callout="bad"] {
+  background: color-mix(in srgb, var(--error, #f85149) 12%, transparent);
+}
+
+/* 手机等窄屏上 AI 面板标题栏本来就挤：不放这个按钮，入口在“设置 → 终端 → AI 回复风格” */
+@media (max-width: 600px) {
+  .cs-agent-style-btn {
+    display: none !important;
+  }
+}
+
+/* ---------- 回复风格编辑框（style.ts） ---------- */
+
+.cs-as-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.55);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.cs-as-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  color: var(--on-surface);
+  font: 13px/1.5 var(--cs-ui-font, var(--font-ui, system-ui, sans-serif));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+
+.cs-as-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-as-title {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.cs-as-close {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.cs-as-close:is(:hover, :focus-visible) {
+  background: var(--accent-bg);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-as-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+
+.cs-as-intro {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+}
+
+.cs-as-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cs-as-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.cs-as-label {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cs-as-prompt {
+  width: 100%;
+  min-height: 214px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--on-surface);
+  font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  resize: vertical;
+}
+
+.cs-as-prompt:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cs-as-prompt:disabled {
+  opacity: 0.55;
+}
+
+.cs-as-meta {
+  margin-top: -4px;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+.cs-as-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-as-spacer {
+  flex: 1;
+}
+
+.cs-as-btn {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cs-as-btn:is(:hover, :focus-visible) {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-as-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+}
+
+@media (max-width: 600px) {
+  .cs-as-root {
+    padding: max(10px, env(safe-area-inset-top)) 8px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .cs-as-prompt {
+    font-size: 14px;
+  }
+
+  .cs-as-btn,
+  .cs-as-close {
+    min-height: 40px;
+  }
+
+  .cs-as-close {
+    width: 40px;
+  }
+}

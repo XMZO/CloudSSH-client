@@ -17,6 +17,7 @@
 import './desktop.css';
 import './shared/web-fixes.css';
 import { installLanguagePicker, popoverLanguageMenu } from './shared/language-picker';
+import { installAgentOutput } from './shared/agent-output';
 import { installCompactServerForm } from './shared/server-form';
 import { installTagPicker } from './shared/server-tags';
 import { installTerminalEnhancements } from './shared/terminal';
@@ -37,6 +38,8 @@ window.cloudsshDesktop
   });
 
 mountSidebar();
+// AI 助手回复的配色、状态高亮与回复风格提示
+installAgentOutput();
 installLanguagePicker(popoverLanguageMenu);
 // 添加 / 编辑服务器：点选已有标签、紧凑排版（一屏放下，不加宽）
 const installServerForm = () => {

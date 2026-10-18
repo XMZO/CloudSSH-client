@@ -505,6 +505,56 @@ function runCommand(line, write, term, ws) {
   return 0;
 }
 
+// AI 助手：打印收到的完整 message（调试客户端附加的回复风格提示），再流式返回一份固定的巡检报告（调试回复配色与状态高亮）
+const AGENT_REPLY = [
+  '我将并行采集 CPU、内存、磁盘三类信息。',
+  '',
+  '## 系统资源巡检报告',
+  '',
+  '**主机**: mock-pi (aarch64)  **运行时长**: 1 天 16 小时  **结论**: ✅ 三个维度都在健康区间，无需干预。',
+  '',
+  '### 一、CPU',
+  '',
+  '| 指标 | 数值 | 评估 |',
+  '|---|---|---|',
+  '| 核心数 | 4 | — |',
+  '| load average | 0.17 / 0.08 / 0.02 | 极低，远低于 4 核阈值 |',
+  '| 用户态占用 | 1.8% us | 正常 |',
+  '| 空闲 | 93.0% id | 充裕 |',
+  '| I/O 等待 | 0.0% wa | 无异常 |',
+  '| 温度 | 71.2 °C | 偏高 |',
+  '| 风扇 | 0 RPM | 异常 |',
+  '| 交换分区 | 1.9 GiB 已用 | 不正常 |',
+  '',
+  '> 采样瞬间 `top` 自身占 7.7% CPU，属采集程序噪声，不代表实际负载。',
+  '',
+  '### 二、磁盘',
+  '',
+  '- ✅ `/` 已用 41%（12G / 29G）',
+  '- ⚠️ `/var/log` 增长较快，近 7 天新增 2.1G',
+  '- ❌ `/boot/firmware` 只剩 3% 可用空间',
+  '',
+  '### 建议',
+  '',
+  '1. 清理旧日志：',
+  '',
+  '```bash',
+  'sudo journalctl --vacuum-time=7d',
+  '```',
+].join('\n');
+
+function mockAgentReply(ws, msg) {
+  console.log('AGENT 收到的 message ↓\n' + msg.message + '\nAGENT ↑');
+  const frame = (subType, extra = {}) => ws.sendJson({ type: 'agent_frame', runId: 'mock-run', requestId: msg.requestId, subType, ...extra });
+  frame('run_start');
+  const pieces = AGENT_REPLY.match(/[\s\S]{1,60}/g);
+  pieces.forEach((piece, index) => setTimeout(() => frame('stream_chunk', { content: piece }), 40 * (index + 1)));
+  setTimeout(() => {
+    frame('stream_end', { content: AGENT_REPLY });
+    frame('run_end', { outcome: 'completed' });
+  }, 40 * (pieces.length + 2));
+}
+
 function attachShell(ws, url) {
   const sessionId = `session:mock:${crypto.randomUUID()}`;
   const write = (text) => ws.sendBinary(Buffer.from(text, 'utf8'));
@@ -536,6 +586,7 @@ function attachShell(ws, url) {
         const msg = JSON.parse(data);
         if (msg.type === 'ping') ws.sendJson({ type: 'pong', ...(msg.id ? { id: msg.id } : {}) });
         if (msg.type === 'resize' && Number(msg.cols) > 0 && Number(msg.rows) > 0) Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
+        if (msg.type === 'agent_start') mockAgentReply(ws, msg);
         return;
       } catch {
         // 不是 JSON，当作键盘输入

@@ -194,6 +194,16 @@ const COMMON_HOOKS: Hook[] = [
     anchor: "      notify(t('snippets.insertFailed'), { variant: 'warning' });\n      return;\n    }\n",
     inject: '    if ((globalThis as any).__cloudsshKeepSnippetPanel?.() === true) return;\n',
   },
+  // AI 回复风格提示（overrides/shared/agent-output）：网页版组 agent_start 请求时，在 message 后面展开一个同名字段换掉它，
+  // 发给 AI 的内容 = 用户原话 + 风格提示（网页版发送终端选区时也是这样扩展发出的内容，对话里仍显示原话）。
+  // 新消息与“编辑后重发”两处；返回 undefined（关闭或钩子未装）时不改动
+  ...['message: outboundMessage', 'message: newText'].map(
+    (field): Hook => ({
+      file: '/upstream/frontend/src/agent/agent-panel.ts',
+      anchor: `      type: 'agent_start',\n      ${field},\n`,
+      inject: `      ...((globalThis as any).__cloudsshAgentOutbound?.(${field.split(': ')[1]}) ?? {}),\n`,
+    })
+  ),
   {
     // 命令面板（overrides/desktop/palette.ts）搜索命令片段、填入终端时复用网页版自己的列表与插入流程（含 {{参数}} 录入）
     file: '/upstream/frontend/src/snippet-manager.ts',
