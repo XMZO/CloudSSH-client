@@ -17,6 +17,7 @@
 import './desktop.css';
 import './shared/web-fixes.css';
 import { installLanguagePicker, popoverLanguageMenu } from './shared/language-picker';
+import { installCompactServerForm } from './shared/server-form';
 import { installTagPicker } from './shared/server-tags';
 import { installTerminalEnhancements } from './shared/terminal';
 import { mountDesktopShell } from './desktop';
@@ -37,7 +38,11 @@ window.cloudsshDesktop
 
 mountSidebar();
 installLanguagePicker(popoverLanguageMenu);
-// 添加 / 编辑服务器时点选已有标签
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installTagPicker, { once: true });
-else installTagPicker();
+// 添加 / 编辑服务器：点选已有标签、紧凑排版（一屏放下，不加宽）
+const installServerForm = () => {
+  installTagPicker();
+  installCompactServerForm();
+};
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installServerForm, { once: true });
+else installServerForm();
 void mountDesktopShell();

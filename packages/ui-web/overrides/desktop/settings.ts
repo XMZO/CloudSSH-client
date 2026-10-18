@@ -5,7 +5,14 @@
  */
 import { getLocale, setLocale } from '../../upstream/frontend/src/i18n';
 import { LANGUAGE_CHOICES } from '../shared/language-picker';
-import { notificationsEnabled, setNotificationsEnabled } from '../shared/session-notify';
+import {
+  NOTICE_KINDS,
+  noticeKindEnabled,
+  noticeKindText,
+  notificationsEnabled,
+  setNoticeKindEnabled,
+  setNotificationsEnabled,
+} from '../shared/session-notify';
 import { openPresetManager, presetText } from '../shared/credential-presets';
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
@@ -135,8 +142,15 @@ export function toggleSettings(anchor: HTMLElement): void {
     );
     panel.append(language);
 
+    // 后台通知：总开关 + 三个分项（总开关关掉时分项变灰）
     const notices = section(dt('notifications'));
     notices.title = dt('notificationsHint');
+    const kinds = el('div', 'cs-dk-checks');
+    const syncKinds = () => {
+      const off = !notificationsEnabled();
+      kinds.classList.toggle('is-off', off);
+      kinds.querySelectorAll('input').forEach((box) => (box.disabled = off));
+    };
     notices.append(
       choiceRow(
         [
@@ -144,9 +158,25 @@ export function toggleSettings(anchor: HTMLElement): void {
           { value: 'off', label: dt('notificationsOff') },
         ],
         notificationsEnabled() ? 'on' : 'off',
-        (value) => setNotificationsEnabled(value === 'on')
+        (value) => {
+          setNotificationsEnabled(value === 'on');
+          syncKinds();
+        }
       )
     );
+    for (const kind of NOTICE_KINDS) {
+      const { title, hint } = noticeKindText(kind);
+      const row = el('label', 'cs-dk-check');
+      row.title = hint;
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = noticeKindEnabled(kind);
+      box.addEventListener('change', () => setNoticeKindEnabled(kind, box.checked));
+      row.append(box, el('span', '', title));
+      kinds.append(row);
+    }
+    syncKinds();
+    notices.append(kinds);
     panel.append(notices);
 
     const actions = el('div', 'cs-dk-actions');

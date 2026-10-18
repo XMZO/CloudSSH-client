@@ -66,9 +66,14 @@ export function installPresetPicker(): void {
   const select = el('select', 'terminal-input cs-cp-select');
   select.id = 'cs-credential-preset';
   label.htmlFor = select.id;
-  const saveAs = el('button', 'cs-cp-pick-btn', pt('saveAs'));
+  // 窄屏（手机）只显示图标，给下拉框留出宽度
+  const saveAs = el('button', 'cs-cp-pick-btn is-save');
   saveAs.type = 'button';
   saveAs.title = pt('saveAsTitle');
+  saveAs.setAttribute('aria-label', pt('saveAs'));
+  const saveIcon = el('span', 'material-symbols-outlined', 'bookmark_add');
+  saveIcon.setAttribute('aria-hidden', 'true');
+  saveAs.append(saveIcon, el('span', 'cs-cp-pick-text', pt('saveAs')));
   const manage = el('button', 'cs-cp-pick-btn is-icon');
   manage.type = 'button';
   manage.title = pt('manage');

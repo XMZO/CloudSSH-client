@@ -4,6 +4,7 @@
  *   - 终端响铃（\a），以及程序主动发的通知（OSC 9、OSC 777;notify，例如 printf '\e]9;构建完成\a'）
  *   - 会话断开（连着的会话掉线超过 3 秒），以及断线后重新连上
  * 点通知回到对应的会话标签。人在窗口前、但长命令结束在别的标签里时，只在页面上提示一下。
+ * 设置里有总开关，以及三个分项（长命令完成、响铃与程序通知、断线与重连），分项默认都开。
  *
  * “回到提示符”的判断：有输出、随后安静了一会儿，且光标所在行的光标左边以 $ # % > ❯ » 之一（加空格）结尾。
  * 不依赖 Shell 集成脚本，所以偶尔会漏（自定义了奇特的提示符）或多报（程序输出恰好以这些字符结尾后停住）。
@@ -44,6 +45,12 @@ const texts = {
     downRetry: '{name} · 正在自动重连',
     up: '已重新连接',
     inTab: '{name}：命令已完成（{time}）',
+    kindCommand: '长命令完成',
+    kindCommandHint: '回车后超过 10 秒才回到提示符',
+    kindBell: '响铃与程序通知',
+    kindBellHint: '终端响铃，以及程序用 OSC 9 / 777 发的通知',
+    kindConnection: '断线与重连',
+    kindConnectionHint: '会话断开超过 3 秒，以及之后重新连上',
   },
   'zh-TW': {
     done: '指令已完成：{cmd}',
@@ -54,6 +61,12 @@ const texts = {
     downRetry: '{name} · 正在自動重新連線',
     up: '已重新連線',
     inTab: '{name}：指令已完成（{time}）',
+    kindCommand: '長指令完成',
+    kindCommandHint: '按 Enter 後超過 10 秒才回到提示字元',
+    kindBell: '響鈴與程式通知',
+    kindBellHint: '終端機響鈴，以及程式用 OSC 9 / 777 發的通知',
+    kindConnection: '中斷與重新連線',
+    kindConnectionHint: '工作階段中斷超過 3 秒，以及之後重新連上',
   },
   'en-US': {
     done: 'Command finished: {cmd}',
@@ -64,6 +77,12 @@ const texts = {
     downRetry: '{name} · reconnecting',
     up: 'Reconnected',
     inTab: '{name}: command finished ({time})',
+    kindCommand: 'Long commands finished',
+    kindCommandHint: 'Back at the prompt more than 10 seconds after Enter',
+    kindBell: 'Bells and program alerts',
+    kindBellHint: 'Terminal bells and OSC 9 / 777 notifications sent by programs',
+    kindConnection: 'Disconnects and reconnects',
+    kindConnectionHint: 'A session drops for more than 3 seconds, and when it comes back',
   },
 };
 
@@ -87,6 +106,43 @@ export function setNotificationsEnabled(enabled: boolean): void {
   } catch {
     // 忽略
   }
+}
+
+/** 分项开关（默认都开）；总开关关掉时一律不发 */
+export type NoticeKind = 'command' | 'bell' | 'connection';
+export const NOTICE_KINDS: readonly NoticeKind[] = ['command', 'bell', 'connection'];
+
+const KIND_KEYS: Record<NoticeKind, string> = {
+  command: 'cloudssh_notify_command',
+  bell: 'cloudssh_notify_bell',
+  connection: 'cloudssh_notify_connection',
+};
+
+export function noticeKindEnabled(kind: NoticeKind): boolean {
+  try {
+    return localStorage.getItem(KIND_KEYS[kind]) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function setNoticeKindEnabled(kind: NoticeKind, enabled: boolean): void {
+  try {
+    if (enabled) localStorage.removeItem(KIND_KEYS[kind]);
+    else localStorage.setItem(KIND_KEYS[kind], 'off');
+  } catch {
+    // 忽略
+  }
+}
+
+/** 设置界面用的名称与说明 */
+export function noticeKindText(kind: NoticeKind): { title: string; hint: string } {
+  const key = kind === 'command' ? 'kindCommand' : kind === 'bell' ? 'kindBell' : 'kindConnection';
+  return { title: nt(key), hint: nt(`${key}Hint`) };
+}
+
+function shouldNotify(kind: NoticeKind): boolean {
+  return notificationsEnabled() && noticeKindEnabled(kind);
 }
 
 export function formatDuration(ms: number, locale = getLocale()): string {
@@ -157,8 +213,8 @@ function tabName(tab: TabInfo): string {
 export function installSessionNotifications(sink: NoticeSink): void {
   const tracks = new Map<string, Track>();
 
-  const send = (notice: SessionNotice) => {
-    if (!notificationsEnabled()) return;
+  const send = (kind: NoticeKind, notice: SessionNotice) => {
+    if (!shouldNotify(kind)) return;
     try {
       sink.show(notice);
     } catch (error) {
@@ -187,19 +243,19 @@ export function installSessionNotifications(sink: NoticeSink): void {
         track.lastOutput = Date.now();
       }),
       term.onBell(() => {
-        if (sink.away()) send({ title: nt('bell'), body: tabName(tab), tabId: tab.id });
+        if (sink.away()) send('bell', { title: nt('bell'), body: tabName(tab), tabId: tab.id });
       }),
       // OSC 9;<消息>（ConEmu / Windows Terminal 的 9;4 是进度条，不算）
       term.parser.registerOscHandler(9, (data) => {
         if (/^4;/.test(data) || !data.trim()) return false;
-        if (sink.away()) send({ title: nt('message', { name: tabName(tab) }), body: data.slice(0, 200), tabId: tab.id });
+        if (sink.away()) send('bell', { title: nt('message', { name: tabName(tab) }), body: data.slice(0, 200), tabId: tab.id });
         return true;
       }),
       // OSC 777;notify;<标题>;<正文>（rxvt / foot / kitty）
       term.parser.registerOscHandler(777, (data) => {
         const [kind, title, ...rest] = data.split(';');
         if (kind !== 'notify') return false;
-        if (sink.away()) send({ title: (title || tabName(tab)).slice(0, 100), body: rest.join(';').slice(0, 200), tabId: tab.id });
+        if (sink.away()) send('bell', { title: (title || tabName(tab)).slice(0, 100), body: rest.join(';').slice(0, 200), tabId: tab.id });
         return true;
       }),
     ];
@@ -220,15 +276,15 @@ export function installSessionNotifications(sink: NoticeSink): void {
     const time = formatDuration(took);
     const title = text.slice(0, 80);
     if (sink.away()) {
-      send({ title: nt('done', { cmd: title }), body: nt('doneIn', { name: tabName(tab), time }), tabId: tab.id });
-    } else if (elsewhere(tab.id) && notificationsEnabled()) {
+      send('command', { title: nt('done', { cmd: title }), body: nt('doneIn', { name: tabName(tab), time }), tabId: tab.id });
+    } else if (elsewhere(tab.id) && shouldNotify('command')) {
       notify(nt('inTab', { name: tabName(tab), time }), { title, variant: 'success' });
     }
   };
 
   const checkConnection = (tab: TabInfo, track: Track, now: number) => {
     if (sessionIsConnected(tab)) {
-      if (track.downNotified && sink.away()) send({ title: nt('up'), body: tabName(tab), tabId: tab.id });
+      if (track.downNotified && sink.away()) send('connection', { title: nt('up'), body: tabName(tab), tabId: tab.id });
       track.everConnected = true;
       track.downSince = null;
       track.downNotified = false;
@@ -242,7 +298,7 @@ export function installSessionNotifications(sink: NoticeSink): void {
     if (track.downNotified || now - track.downSince < DOWN_GRACE_MS || !sink.away()) return;
     track.downNotified = true;
     const retrying = tab.state === 'connecting';
-    send({ title: nt('down'), body: retrying ? nt('downRetry', { name: tabName(tab) }) : tabName(tab), tabId: tab.id });
+    send('connection', { title: nt('down'), body: retrying ? nt('downRetry', { name: tabName(tab) }) : tabName(tab), tabId: tab.id });
   };
 
   const tick = () => {

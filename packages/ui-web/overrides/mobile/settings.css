@@ -94,6 +94,12 @@
   display: none;
 }
 
+/* 某个开关下面的分项（例如后台提醒的三类）：缩进一级、行高略小 */
+.cs-set-row.is-sub {
+  min-height: 46px;
+  padding-left: 30px;
+}
+
 button.cs-set-row:active,
 label.cs-set-row:active,
 .cs-set-split-main:active {

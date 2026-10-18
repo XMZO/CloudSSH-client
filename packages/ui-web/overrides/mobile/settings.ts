@@ -15,7 +15,14 @@ import { CLOSE_CONFIRM_MODES, closeConfirmMode, setCloseConfirmMode, type CloseC
 import { openHighlightEditor } from '../shared/terminal';
 import { loadSettings as loadHighlight, saveSettings as saveHighlight } from '../shared/terminal/highlight-rules';
 import { ht } from '../shared/terminal/i18n';
-import { notificationsEnabled, setNotificationsEnabled } from '../shared/session-notify';
+import {
+  NOTICE_KINDS,
+  noticeKindEnabled,
+  noticeKindText,
+  notificationsEnabled,
+  setNoticeKindEnabled,
+  setNotificationsEnabled,
+} from '../shared/session-notify';
 import { openPresetManager } from '../shared/credential-presets';
 import { mt } from './i18n';
 import { groupNav, segmented, settingsGroup, settingsRow, smallButton, splitToggleRow, toggleRow } from './settings-ui';
@@ -298,12 +305,26 @@ function connectionGroup(state: MobileState): HTMLElement {
       window.dispatchEvent(new CustomEvent('cloudssh:keepalive-changed'));
     },
   });
+  // 后台提醒：总开关下面跟三个分项，总开关关掉时分项收起
+  const kindRows = NOTICE_KINDS.map((kind) => {
+    const { title, hint } = noticeKindText(kind);
+    const row = toggleRow({ title, sub: hint, checked: noticeKindEnabled(kind), onChange: (on) => setNoticeKindEnabled(kind, on) });
+    row.classList.add('is-sub');
+    return row;
+  });
+  const syncKinds = (on: boolean) => {
+    for (const row of kindRows) row.hidden = !on;
+  };
   const notices = toggleRow({
     title: mt('notifications'),
     sub: mt('notificationsHint'),
     checked: notificationsEnabled(),
-    onChange: (on) => setNotificationsEnabled(on),
+    onChange: (on) => {
+      setNotificationsEnabled(on);
+      syncKinds(on);
+    },
   });
+  syncKinds(notificationsEnabled());
   const presets = settingsRow({
     title: mt('presets'),
     sub: mt('presetsHint'),
@@ -312,7 +333,7 @@ function connectionGroup(state: MobileState): HTMLElement {
       void openPresetManager();
     },
   });
-  return settingsGroup('connection', mt('grpConnection'), [proxyRow(state), presets, keepAlive, notices, batteryRow()]);
+  return settingsGroup('connection', mt('grpConnection'), [proxyRow(state), presets, keepAlive, notices, ...kindRows, batteryRow()]);
 }
 
 // ---------- 关于 ----------

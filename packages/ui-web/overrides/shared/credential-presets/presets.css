@@ -433,6 +433,11 @@
   font-size: 17px;
 }
 
+.cs-cp-pick-btn.is-save {
+  gap: 4px;
+  padding-left: 8px;
+}
+
 .cs-cp-pick-btn:is(:hover, :focus-visible) {
   border-color: var(--accent);
   color: var(--accent);
@@ -495,5 +500,15 @@
 
   .cs-cp-pick-btn.is-icon {
     width: 38px;
+  }
+
+  /* “存为预设”只留图标（悬停 / 读屏照样有说明），给下拉框留出宽度 */
+  .cs-cp-pick-btn.is-save {
+    width: 38px;
+    padding: 0;
+  }
+
+  .cs-cp-pick-btn.is-save .cs-cp-pick-text {
+    display: none;
   }
 }
