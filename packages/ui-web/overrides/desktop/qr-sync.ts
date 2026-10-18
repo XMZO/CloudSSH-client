@@ -18,7 +18,8 @@ const KEYS = {
   collapsed: 'cloudssh_desktop_sidebar_collapsed_groups',
 };
 const FRAME_MS = 300;
-const QR_PIXELS = 288;
+/** 二维码在页面上的边长（CSS 像素，固定） */
+const QR_PIXELS = 224;
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -66,27 +67,48 @@ async function currentUserId(): Promise<number | null> {
   }
 }
 
-/** 画一张二维码：白底黑块，四周留 4 格静区（屏幕再暗的主题也好扫） */
-function drawQr(canvas: HTMLCanvasElement, text: string): void {
-  const qr = qrcode(0, 'L');
+type QrCode = ReturnType<typeof qrcode>;
+type QrVersion = Parameters<typeof qrcode>[0];
+
+function makeQr(text: string, version: QrVersion): QrCode {
+  const qr = qrcode(version, 'L');
   qr.addData(text, 'Alphanumeric');
   qr.make();
+  return qr;
+}
+
+/**
+ * 一组二维码统一用同一个版本（按最长的那张选）：最后一张数据短，自动选版本会变小一号，
+ * 轮播时格子大小跟着跳。
+ */
+function makeQrSet(frames: string[]): QrCode[] {
+  const longest = frames.reduce((a, b) => (b.length > a.length ? b : a));
+  const version = ((makeQr(longest, 0).getModuleCount() - 17) / 4) as QrVersion;
+  return frames.map((text) => makeQr(text, version));
+}
+
+/** 画一张二维码：画布尺寸固定（窗口不跟着变），白底黑块，四周留 4 格静区（屏幕再暗的主题也好扫） */
+function drawQr(canvas: HTMLCanvasElement, qr: QrCode): void {
   const count = qr.getModuleCount();
-  const cell = Math.max(2, Math.floor(QR_PIXELS / (count + 8)));
-  const size = cell * (count + 8);
   const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.round(size * ratio);
-  canvas.height = Math.round(size * ratio);
-  canvas.style.width = `${size}px`;
-  canvas.style.height = `${size}px`;
+  const size = Math.round(QR_PIXELS * ratio);
+  if (canvas.width !== size) {
+    canvas.width = size;
+    canvas.height = size;
+    canvas.style.width = `${QR_PIXELS}px`;
+    canvas.style.height = `${QR_PIXELS}px`;
+  }
+  // 按设备像素铺满：每格边界取整，格子宽度最多差 1 像素，不会出现缝隙或模糊
+  const cell = size / (count + 8);
+  const edge = (index: number) => Math.round((index + 4) * cell);
   const ctx = canvas.getContext('2d')!;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, size, size);
   ctx.fillStyle = '#000000';
   for (let row = 0; row < count; row++) {
     for (let col = 0; col < count; col++) {
-      if (qr.isDark(row, col)) ctx.fillRect((col + 4) * cell, (row + 4) * cell, cell, cell);
+      if (qr.isDark(row, col)) ctx.fillRect(edge(col), edge(row), edge(col + 1) - edge(col), edge(row + 1) - edge(row));
     }
   }
 }
@@ -224,9 +246,10 @@ export async function openQrSync(): Promise<void> {
     layout.append(left, right);
     body.append(layout);
 
+    const codes = makeQrSet(frames);
     let index = 0;
     const paint = () => {
-      drawQr(canvas, frames[index]);
+      drawQr(canvas, codes[index]);
       counter.textContent = frames.length > 1 ? qt('frameOf', { i: index + 1, n: frames.length }) : qt('frameSingle');
     };
     paint();

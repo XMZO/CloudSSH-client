@@ -16,7 +16,7 @@
 .cs-qs-dialog {
   display: flex;
   flex-direction: column;
-  width: min(600px, 100%);
+  width: min(520px, 100%);
   max-height: 100%;
   overflow: hidden;
   border: 1px solid var(--border-strong);
@@ -71,7 +71,7 @@
 .cs-qs-body {
   flex: 1;
   min-height: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   overflow-y: auto;
 }
 
@@ -190,7 +190,7 @@
 .cs-qs-show {
   display: flex;
   align-items: flex-start;
-  gap: 18px;
+  gap: 14px;
 }
 
 .cs-qs-qr {
@@ -214,14 +214,14 @@
 
 .cs-qs-side {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
 .cs-qs-code {
   display: grid;
   gap: 2px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 7%, transparent);
@@ -234,17 +234,17 @@
 
 .cs-qs-code-value {
   color: var(--accent);
-  font: 700 28px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font: 700 24px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
   letter-spacing: 0.12em;
   user-select: all;
 }
 
 .cs-qs-steps {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
-  padding-left: 20px;
-  font-size: 12.5px;
+  padding-left: 18px;
+  font-size: 12px;
   /* 网页版的样式重置去掉了列表序号 */
   list-style: decimal;
 }
@@ -256,7 +256,7 @@
 }
 
 /* 窗口太窄时上下排 */
-@media (max-width: 560px) {
+@media (max-width: 500px) {
   .cs-qs-show {
     flex-direction: column;
     align-items: center;

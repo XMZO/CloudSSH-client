@@ -19,8 +19,11 @@ const FLAG_DEFLATE = 1;
 
 export const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 export const CODE_LENGTH = 6;
-/** 每张二维码装的数据字符数（约 15 版二维码，手机对着屏幕扫很轻松） */
-export const CHUNK_CHARS = 620;
+/**
+ * 每张二维码装的数据字符数：加上帧头后是 11 版二维码（61×61 格），在小窗口里画得下、手机对着屏幕也好扫。
+ * 只影响切多少张，不影响格式（手机按“序号 / 总数”收集），改它新旧版本照样互通。
+ */
+export const CHUNK_CHARS = 440;
 /** 一次最多这么多张（再多扫起来太久，提示少勾一些） */
 export const MAX_FRAMES = 160;
 
