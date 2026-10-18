@@ -1,0 +1,292 @@
+/* ========== 从电脑同步（qr-sync.ts）：全屏取景 → 验证码 → 确认导入 ========== */
+
+.cs-qsm-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: #fff;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  outline: none;
+}
+
+.cs-qsm-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: max(10px, env(safe-area-inset-top)) 8px 10px 16px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.cs-qsm-title {
+  flex: 1;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.cs-qsm-close {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+}
+
+.cs-qsm-close .cs-m-icon {
+  font-size: 24px;
+}
+
+.cs-qsm-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  align-items: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cs-qsm-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 取景框：画面中间的正方形（与识别时裁出的区域一致） */
+.cs-qsm-guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(78vw, 60vh);
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 18px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.cs-qsm-guide.is-hit {
+  animation: cs-qsm-hit 0.35s ease-out;
+}
+
+@keyframes cs-qsm-hit {
+  from {
+    border-color: var(--accent, #4ade80);
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35), inset 0 0 0 6px var(--accent, #4ade80);
+  }
+}
+
+.cs-qsm-panel {
+  position: absolute;
+  right: 12px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: 12px;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(10, 12, 16, 0.78);
+}
+
+.cs-qsm-status {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.cs-qsm-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.cs-qsm-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--accent, #4ade80);
+  transition: width 0.2s;
+}
+
+.cs-qsm-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.cs-qsm-dots:empty {
+  display: none;
+}
+
+.cs-qsm-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.cs-qsm-dot.is-on {
+  background: var(--accent, #4ade80);
+}
+
+/* ---------- 验证码、确认、出错 ---------- */
+
+.cs-qsm-card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 100%;
+  padding: 22px 18px;
+  overflow-y: auto;
+  border-radius: 18px;
+  background: var(--bg-elevated, #16181d);
+  color: var(--on-surface, #e6e6e6);
+  text-align: center;
+}
+
+.cs-qsm-card.is-wide {
+  justify-items: stretch;
+  text-align: left;
+}
+
+.cs-qsm-card > .cs-m-icon {
+  font-size: 34px;
+  color: var(--accent, #4ade80);
+}
+
+.cs-qsm-heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.cs-qsm-message,
+.cs-qsm-source,
+.cs-qsm-note {
+  margin: 0;
+  color: var(--on-surface-variant, #a0a4ab);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cs-qsm-code {
+  width: 100%;
+  height: 52px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong, #3a3f47);
+  border-radius: 12px;
+  background: var(--bg, #0d0f12);
+  color: var(--on-surface, #fff);
+  font: 700 24px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.25em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.cs-qsm-code::placeholder {
+  font: 14px/1 var(--font-ui, system-ui, sans-serif);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.cs-qsm-code:focus {
+  border-color: var(--accent, #4ade80);
+  outline: none;
+}
+
+.cs-qsm-error {
+  margin: -4px 0 0;
+  color: var(--error, #f87171);
+  font-size: 13px;
+}
+
+.cs-qsm-error[hidden] {
+  display: none;
+}
+
+.cs-qsm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+.cs-qsm-btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--border-strong, #3a3f47);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--on-surface, #fff);
+  font: 600 15px/1 var(--font-ui, system-ui, sans-serif);
+}
+
+.cs-qsm-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent, #4ade80);
+  color: var(--on-accent, #000);
+}
+
+.cs-qsm-btn:disabled {
+  opacity: 0.55;
+}
+
+.cs-qsm-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border, #2a2e35);
+  border-radius: 12px;
+}
+
+.cs-qsm-option.is-disabled {
+  opacity: 0.6;
+}
+
+.cs-qsm-option input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--accent, #4ade80);
+}
+
+.cs-qsm-option-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cs-qsm-option-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cs-qsm-option-detail {
+  color: var(--on-surface-variant, #a0a4ab);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-qsm-guide.is-hit {
+    animation: none;
+  }
+
+  .cs-qsm-fill {
+    transition: none;
+  }
+}

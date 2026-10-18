@@ -1,0 +1,264 @@
+/* ========== 同步到手机（qr-sync.ts）：小窗口，二维码在左、验证码与步骤在右 ========== */
+
+.cs-qs-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.55);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.cs-qs-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  color: var(--on-surface);
+  font: 13px/1.45 var(--cs-ui-font, system-ui, sans-serif);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+
+.cs-qs-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-qs-head > .cs-dk-icon {
+  font-size: 20px;
+  color: var(--accent);
+}
+
+.cs-qs-title {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.cs-qs-iconbtn {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.cs-qs-iconbtn:is(:hover, :focus-visible) {
+  background: var(--accent-bg);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-qs-body {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+.cs-qs-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-qs-spacer {
+  flex: 1;
+}
+
+.cs-qs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  font: 600 13px/1 var(--cs-ui-font, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.cs-qs-btn .cs-dk-icon {
+  font-size: 17px;
+}
+
+.cs-qs-btn:is(:hover, :focus-visible) {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-qs-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+}
+
+.cs-qs-btn.is-primary:is(:hover, :focus-visible) {
+  color: var(--on-accent, #fff);
+  filter: brightness(1.08);
+}
+
+.cs-qs-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+}
+
+/* ---------- 勾选 ---------- */
+
+.cs-qs-intro {
+  margin: 0 0 12px;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+}
+
+.cs-qs-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.cs-qs-option + .cs-qs-option {
+  margin-top: 8px;
+}
+
+.cs-qs-option:hover {
+  border-color: var(--border-strong);
+}
+
+.cs-qs-option.is-disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cs-qs-option input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.cs-qs-option-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cs-qs-option-title {
+  font-weight: 600;
+}
+
+.cs-qs-option-detail {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 二维码 ---------- */
+
+.cs-qs-show {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.cs-qs-qr {
+  display: grid;
+  flex: none;
+  justify-items: center;
+  gap: 6px;
+}
+
+.cs-qs-qr canvas {
+  display: block;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.cs-qs-counter {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-qs-side {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cs-qs-code {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.cs-qs-code-label {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.cs-qs-code-value {
+  color: var(--accent);
+  font: 700 28px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+
+.cs-qs-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12.5px;
+  /* 网页版的样式重置去掉了列表序号 */
+  list-style: decimal;
+}
+
+.cs-qs-warn {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+/* 窗口太窄时上下排 */
+@media (max-width: 560px) {
+  .cs-qs-show {
+    flex-direction: column;
+    align-items: center;
+  }
+}

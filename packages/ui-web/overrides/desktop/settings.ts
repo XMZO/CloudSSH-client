@@ -14,6 +14,8 @@ import {
   setNotificationsEnabled,
 } from '../shared/session-notify';
 import { openPresetManager, presetText } from '../shared/credential-presets';
+import { qt } from '../shared/qr-sync/i18n';
+import { openQrSync } from './qr-sync';
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
 import { el, icon } from './dom';
@@ -184,6 +186,7 @@ export function toggleSettings(anchor: HTMLElement): void {
     if (ai && loggedIn()) actions.append(action('psychology', dt('aiSettings'), () => ai.click()));
     actions.append(action('format_color_text', ht('title'), () => openHighlightEditor()));
     actions.append(action('key', presetText('title'), () => void openPresetManager()));
+    actions.append(action('qr_code_2', qt('title'), () => void openQrSync()));
     const bridge = window.cloudsshDesktop;
     if (bridge?.openInstanceManager) actions.append(action('dns', dt('instanceManager'), () => void bridge.openInstanceManager?.()));
     if (loggedIn() && document.getElementById('logout-btn')) actions.append(action('logout', dt('logout'), () => clickById('logout-btn'), true));

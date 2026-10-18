@@ -54,6 +54,12 @@ function saveCollapsed(): void {
   }
 }
 
+/** 整体换成另一组折叠的分组（扫码同步时用电脑侧栏的折叠状态） */
+export function replaceCollapsedGroups(keys: string[]): void {
+  state.collapsed = new Set(keys.filter((key) => typeof key === 'string'));
+  saveCollapsed();
+}
+
 // ---------- 结构 ----------
 
 const root = el('section', 'cs-m-nodes');

@@ -242,6 +242,78 @@ export async function linkServers(presetId: string, serverIds: number[]): Promis
   await save({ ...data, links: { ...data.links, [scope]: map } });
 }
 
+// ---------- 扫码同步（电脑 → 手机） ----------
+
+/** 明文的预设（只在同步时出现在内存里，传输时整体加密） */
+export interface PlainPreset {
+  id: string;
+  name: string;
+  username: string;
+  method: AuthMethod;
+  secret: string;
+  updatedAt: number;
+}
+
+/** 导出全部预设（解密出密码 / 私钥）和当前实例里的服务器关联 */
+export async function exportPresets(): Promise<{ items: PlainPreset[]; links: Record<string, number[]> }> {
+  const data = await load();
+  const items: PlainPreset[] = [];
+  for (const preset of data.presets) {
+    items.push({ ...preset, secret: await vault.decrypt(preset.secret) });
+  }
+  return { items, links: { ...(data.links[scope] ?? {}) } };
+}
+
+/**
+ * 导入预设：按 id 新增或覆盖（保留 id，服务器关联才能对上），密码 / 私钥用本机的加密重新保存。
+ * links 不为 null 时（同一个实例与账号）合并进当前实例的关联。
+ */
+export async function importPresets(items: PlainPreset[], links: Record<string, number[]> | null): Promise<{ added: number; updated: number }> {
+  const data = await load();
+  const presets = [...data.presets];
+  let added = 0;
+  let updated = 0;
+  for (const item of items) {
+    if (!item.secret || item.secret.length > MAX_SECRET_LENGTH) continue;
+    const preset: CredentialPreset = {
+      id: item.id,
+      name: item.name.trim().slice(0, 60) || 'preset',
+      username: (item.username ?? '').trim().slice(0, 128),
+      method: item.method === 'publickey' ? 'publickey' : 'password',
+      secret: await vault.encrypt(item.secret),
+      updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now(),
+    };
+    const index = presets.findIndex((existing) => existing.id === preset.id);
+    if (index >= 0) {
+      presets[index] = preset;
+      updated++;
+    } else if (presets.length < MAX_PRESETS) {
+      presets.push(preset);
+      added++;
+    }
+  }
+  let nextLinks = data.links;
+  if (links) {
+    const known = new Set(presets.map((preset) => preset.id));
+    const map = { ...(data.links[scope] ?? {}) };
+    for (const [presetId, ids] of Object.entries(links)) {
+      if (!known.has(presetId) || !Array.isArray(ids)) continue;
+      const clean = ids.filter((id) => Number.isSafeInteger(id));
+      const taken = new Set(clean);
+      for (const key of Object.keys(map)) map[key] = map[key].filter((id) => !taken.has(id));
+      map[presetId] = [...new Set([...(map[presetId] ?? []), ...clean])];
+    }
+    nextLinks = { ...data.links, [scope]: map };
+  }
+  await save({ ...data, presets, links: nextLinks });
+  return { added, updated };
+}
+
+/** 本机已有的预设 id（同步预览里区分“新增 / 覆盖”） */
+export async function presetIds(): Promise<Set<string>> {
+  return new Set((await load()).presets.map((preset) => preset.id));
+}
+
 // ---------- 写进服务器 ----------
 
 export interface ApplyResult {

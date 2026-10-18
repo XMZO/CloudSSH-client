@@ -24,6 +24,7 @@ import {
   setNotificationsEnabled,
 } from '../shared/session-notify';
 import { openPresetManager } from '../shared/credential-presets';
+import { openQrScanner } from './qr-sync';
 import { mt } from './i18n';
 import { groupNav, segmented, settingsGroup, settingsRow, smallButton, splitToggleRow, toggleRow } from './settings-ui';
 import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
@@ -333,7 +334,15 @@ function connectionGroup(state: MobileState): HTMLElement {
       void openPresetManager();
     },
   });
-  return settingsGroup('connection', mt('grpConnection'), [proxyRow(state), presets, keepAlive, notices, ...kindRows, batteryRow()]);
+  const qrSync = settingsRow({
+    title: mt('qrSync'),
+    sub: mt('qrSyncHint'),
+    onClick: () => {
+      closeSheet();
+      openQrScanner();
+    },
+  });
+  return settingsGroup('connection', mt('grpConnection'), [proxyRow(state), presets, qrSync, keepAlive, notices, ...kindRows, batteryRow()]);
 }
 
 // ---------- 关于 ----------

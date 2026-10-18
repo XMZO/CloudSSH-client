@@ -9,7 +9,17 @@ import { installPresetPicker } from './form';
 import { configurePresets, type PresetVault } from './store';
 
 export { openPresetManager, isPresetManagerOpen, closePresetManager } from './manager';
-export { configurePresets, localVault, type PresetVault } from './store';
+export {
+  configurePresets,
+  exportPresets,
+  importPresets,
+  listPresets,
+  localVault,
+  presetIds,
+  presetsAvailable,
+  type PlainPreset,
+  type PresetVault,
+} from './store';
 export { pt as presetText } from './i18n';
 
 export function installCredentialPresets(options: { vault?: PresetVault | null; scope?: string | null } = {}): void {

@@ -81,6 +81,22 @@ export class NodeOrder {
     this.save();
   }
 
+  /** 整体换成另一份排序（扫码同步时用电脑上的排序） */
+  replace(data: NodeOrderData): void {
+    this.data = {
+      groups: data.groups.filter((key) => typeof key === 'string'),
+      servers: Object.fromEntries(
+        Object.entries(data.servers).map(([key, ids]) => [key, (Array.isArray(ids) ? ids : []).filter((id) => Number.isSafeInteger(id))])
+      ),
+    };
+    this.save();
+  }
+
+  /** 当前保存的排序（扫码同步时导出） */
+  snapshot(): NodeOrderData {
+    return { groups: [...this.data.groups], servers: Object.fromEntries(Object.entries(this.data.servers).map(([key, ids]) => [key, [...ids]])) };
+  }
+
   /** 标签改名后沿用原来的分组位置与组内顺序；新名字本来就有排序时保留它自己的（相当于合并进去） */
   renameGroup(from: string, to: string): void {
     const index = this.data.groups.indexOf(from);

@@ -26,7 +26,9 @@ import { mountDrawerResizers } from './drawers';
 import { mountHome } from './home';
 import { installExternalLinks } from './links';
 import { installDesktopNotifications } from './notifications';
+import { qt } from '../shared/qr-sync/i18n';
 import { installPalette, registerPaletteAction } from './palette';
+import { openQrSync } from './qr-sync';
 import { installSftpDragDrop } from './sftp-drop';
 import { mountSnippetEnhancements } from './snippets';
 import { desktopSkin, SKIN_CHANGED_EVENT, trackView } from './state';
@@ -84,6 +86,12 @@ export async function mountDesktopShell(): Promise<void> {
       icon: 'key',
       keywords: 'credential preset password key 凭据 密码 私钥',
       run: () => void openPresetManager(),
+    }));
+    registerPaletteAction(() => ({
+      title: qt('title'),
+      icon: 'qr_code_2',
+      keywords: 'sync phone qr mobile 同步 手机 二维码 扫码',
+      run: () => void openQrSync(),
     }));
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });

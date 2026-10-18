@@ -110,6 +110,7 @@ more_vert
 mouse
 movie
 my_location
+no_photography
 note
 note_add
 notifications
@@ -127,6 +128,8 @@ power_settings_new
 preview
 progress_activity
 psychology
+qr_code
+qr_code_2
 quick_phrases
 radio
 radio_button_checked
