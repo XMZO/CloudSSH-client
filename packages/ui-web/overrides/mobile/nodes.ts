@@ -9,7 +9,6 @@
 import { groupServersByTag, serverInitial, type ServerConfig } from '@cloudssh/core';
 import { copyTextToClipboard } from '../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../upstream/frontend/src/host-display';
-import { osIconSvg } from '../../upstream/frontend/src/os-icons';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import {
   activeServerId,
@@ -24,7 +23,9 @@ import {
 } from '../sidebar/hooks';
 import { getServers, subscribe } from '../sidebar/store';
 import { mt, onLocaleChange } from './i18n';
-import { ORDER_CHANGED_EVENT, orderedGroups, RECENT_KEY, UNGROUPED_KEY } from './node-groups';
+import { osIcon } from '../shared/os-icon';
+import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
+import { nodeOrder, ORDER_CHANGED_EVENT, orderedGroups, RECENT_KEY, UNGROUPED_KEY } from './node-groups';
 import { openReorderSheet } from './reorder-sheet';
 import { el, icon, showActions, type SheetAction } from './sheet';
 import { openSettings } from './settings';
@@ -91,17 +92,6 @@ function hostLabel(server: ServerConfig): string {
 }
 
 /** 首字母头像；识别出系统时附带品牌图标（经典主题隐藏，黑曜主题显示，见 hosts.css） */
-const osIconCache = new Map<string, SVGElement | null>();
-function osIcon(os: string): SVGElement | null {
-  if (!osIconCache.has(os)) {
-    const markup = osIconSvg(os);
-    const svg = markup ? new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement : null;
-    osIconCache.set(os, svg instanceof SVGElement ? svg : null);
-  }
-  const cached = osIconCache.get(os);
-  return cached ? (cached.cloneNode(true) as SVGElement) : null;
-}
-
 function renderAvatar(server: ServerConfig): HTMLElement {
   const avatar = el('span', 'cs-m-avatar');
   avatar.append(el('span', 'cs-m-avatar-initial', serverInitial(server.name)));
@@ -278,10 +268,29 @@ function showServerActions(server: ServerConfig, groupKey: string | null): void 
   showActions(server.name, actions, mt('cancel'));
 }
 
+function showGroupActions(tag: string): void {
+  showActions(
+    tag,
+    [
+      { label: mt('renameTag'), icon: 'edit', action: () => void renameTag(tag) },
+      { label: mt('copyTagName'), icon: 'content_copy', action: () => void copyTagName(tag) },
+    ],
+    mt('cancel')
+  );
+}
+
 let longPressFired = false;
 list.addEventListener('contextmenu', (event) => {
   const server = serverOf(event.target);
-  if (!server) return;
+  if (!server) {
+    // 长按分组标题（标签）：重命名、复制名称（“最近连接”“未分组”不是标签）
+    const tag = (event.target as HTMLElement).closest<HTMLElement>('.cs-m-group-header')?.dataset.group;
+    if (!tag || tag === RECENT_KEY || tag === UNGROUPED_KEY) return;
+    event.preventDefault();
+    longPressFired = true;
+    showGroupActions(tag);
+    return;
+  }
   event.preventDefault();
   longPressFired = true;
   const groupKey = (event.target as HTMLElement).closest<HTMLElement>('.cs-m-group')?.dataset.groupKey ?? null;
@@ -333,6 +342,17 @@ export function mountNodes(): void {
   }
   toolbar.after(root);
   applyTexts();
+  // 标签改名后，按标签名记住的折叠状态与手动排序跟过去
+  window.addEventListener(TAG_RENAMED_EVENT, (event) => {
+    const { from, to } = (event as CustomEvent<TagRenamed>).detail;
+    if (state.collapsed.delete(from)) {
+      state.collapsed.add(to);
+      saveCollapsed();
+    }
+    nodeOrder().renameGroup(from, to);
+    orderVersion++;
+    scheduleRender();
+  });
   window.addEventListener(ORDER_CHANGED_EVENT, () => {
     orderVersion++;
     scheduleRender();

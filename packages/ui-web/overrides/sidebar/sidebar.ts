@@ -26,6 +26,8 @@ import {
   sessionsByServer,
   shareServer,
 } from './hooks';
+import { osIcon } from '../shared/os-icon';
+import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
 import { onLocaleChange, st } from './i18n';
 import { getServers, installFetchObserver, reloadServers, subscribe } from './store';
 import { NodeOrder } from '../shared/order';
@@ -252,7 +254,10 @@ function renderItem(server: ServerConfig, sessions: Map<number, string[]>, activ
   if (server.id === state.selectedId) item.classList.add('is-selected');
   if (server.id === activeId) item.classList.add('is-active');
 
-  const avatar = el('span', 'cs-sb-avatar', serverInitial(server.name));
+  // 识别出系统时显示系统图标（与服务器表格、手机节点页一致），否则首字母
+  const svg = osIcon(server.os);
+  const avatar = el('span', svg ? 'cs-sb-avatar has-os' : 'cs-sb-avatar', svg ? undefined : serverInitial(server.name));
+  if (svg) avatar.append(svg);
   const name = el('span', 'cs-sb-name', server.name);
   item.append(avatar, name);
 
@@ -519,10 +524,32 @@ list.addEventListener('dblclick', (event) => {
 
 list.addEventListener('contextmenu', (event) => {
   const server = serverFromEvent(event);
-  if (!server) return;
+  if (server) {
+    event.preventDefault();
+    select(server.id);
+    showItemMenu(event, server);
+    return;
+  }
+  // 分组标题（标签）：重命名、复制名称（“未分组”不是标签）
+  const group = (event.target as Element).closest<HTMLElement>('.cs-sb-group');
+  const tag = group?.dataset.group;
+  if (!tag || tag === UNGROUPED_KEY) return;
   event.preventDefault();
-  select(server.id);
-  showItemMenu(event, server);
+  showMenu(event.clientX, event.clientY, [
+    { label: st('renameTag'), icon: 'edit', action: () => void renameTag(tag) },
+    { label: st('copyTagName'), icon: 'content_copy', action: () => void copyTagName(tag) },
+  ]);
+});
+
+// 标签改名后，按标签名记住的折叠状态与手动排序跟过去
+window.addEventListener(TAG_RENAMED_EVENT, (event) => {
+  const { from, to } = (event as CustomEvent<TagRenamed>).detail;
+  if (state.collapsedGroups.delete(from)) {
+    state.collapsedGroups.add(to);
+    save(KEYS.groups, [...state.collapsedGroups]);
+  }
+  nodeOrder.renameGroup(from, to);
+  render();
 });
 
 list.addEventListener('keydown', (event) => {

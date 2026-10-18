@@ -128,6 +128,13 @@ export function deleteServer(id: number): boolean {
   return true;
 }
 
+/** 让网页版重新拉取服务器列表（侧栏、节点页旁听同一个请求一起更新）；网页版钩子不可用时直接拉取 */
+export async function refreshServerList(): Promise<void> {
+  const list = serverList();
+  if (typeof list?.refresh === 'function') await list.refresh();
+  else await fetch('/api/servers', { credentials: 'same-origin' });
+}
+
 /** Worker 开启了一次性分享（网页版只在这时显示分享按钮） */
 export function canShare(): boolean {
   const list = serverList();

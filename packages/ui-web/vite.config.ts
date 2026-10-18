@@ -158,6 +158,48 @@ const COMMON_HOOKS: Hook[] = [
     anchor: '  dispose(): void {\n    this.disconnect();\n',
     inject: '    (globalThis as any).__cloudsshTerminalDisposed?.(this.terminal);\n',
   },
+  // 等待自动重连时按任意键立即重连：两处排定重连的方法里用一个同名的局部 setTimeout 照常排定，
+  // 同时记下“立即执行”的入口并在“x 秒后重连”下面加一行提示；键盘输入（Shell 未就绪时）调用它。
+  // 只在本方法作用域内遮蔽 setTimeout，计时与回调都不变；锚点失效时这项增强自动失效
+  ...['  private scheduleFallbackReconnect(): void {\n    this.clearReconnectTimeout();\n', '  private scheduleShareResume(): void {\n'].map(
+    (anchor): Hook => ({
+      file: '/upstream/frontend/src/terminal.ts',
+      anchor,
+      inject: [
+        '    const setTimeout = (callback: () => void, ms?: number) => {',
+        '      const id = globalThis.setTimeout(callback, ms);',
+        '      (this as any).__cloudsshReconnectNow = () => {',
+        '        if ((this as any).reconnectTimeout !== id) return false;',
+        '        globalThis.clearTimeout(id);',
+        '        callback();',
+        '        return true;',
+        '      };',
+        '      const hint = (globalThis as any).__cloudsshReconnectHint?.();',
+        '      if (hint) this.terminal.writeln(`\\x1b[2m${hint}\\x1b[0m`);',
+        '      return id;',
+        '    };',
+        '',
+      ].join('\n'),
+    })
+  ),
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: "  private processTerminalInput(\n    data: string,\n    source: 'keyboard' | 'focus-report' = 'keyboard'\n  ): void {\n",
+    inject: "    if (!this.sessionReady && source === 'keyboard' && (this as any).__cloudsshReconnectNow?.() === true) return;\n",
+  },
+  {
+    // 填入命令片段后网页版会收起面板；桌面工作台主题下面板停靠在终端旁边时保留（判断由 overrides/desktop 提供），
+    // 方便连续填入多条。注入一个条件让紧随其后的 this.close() 按需跳过
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: "      notify(t('snippets.insertFailed'), { variant: 'warning' });\n      return;\n    }\n",
+    inject: '    if ((globalThis as any).__cloudsshKeepSnippetPanel?.() === true) return;\n',
+  },
+  {
+    // 连接后识别出系统：网页版只改自己的列表，这里同时通知侧栏、服务器表格、手机节点页立即换上系统图标
+    file: '/upstream/frontend/src/server-list.ts',
+    anchor: '  updateServerOS(serverId: number, os: string | null): void {\n',
+    inject: "    globalThis.dispatchEvent?.(new CustomEvent('cloudssh:os-detected', { detail: { serverId, os } }));\n",
+  },
   {
     // AI 面板的 hide() 无论原来开没开都会在下一帧重新适配终端；回到服务器列表时网页版对每个标签都调一次，
     // 白白重排所有终端（手机上一次要几十毫秒，页面切换因此卡一下）。面板原本就没开时布局没变，跳过适配。

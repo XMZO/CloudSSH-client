@@ -3,13 +3,14 @@
  *
  *   [菜单] [实例 ▾] │ [服务器] [会话标签… +]   ……可拖动……   [SFTP 命令 AI │ 搜索 导出 断开] [设置]  [系统窗口按钮]
  *
- * - 左侧菜单按钮弹出应用菜单（实例 / 视图 / 帮助），实例名弹出切换实例菜单；都由主进程弹出系统菜单
+ * - 左侧菜单按钮弹出应用菜单（视图 / 实例管理 / 配置与日志），实例名弹出切换实例菜单；都是页面里画的菜单（app-menus.ts）
  * - 会话标签直接把网页版的 #tab-bar 搬进来：重命名、右键菜单、关闭、新建都是网页版原有的行为
  * - 终端工具按钮代点网页版顶栏里收起的按钮，并同步它们的选中、隐藏状态
  * - 系统窗口按钮（Windows / Linux）的颜色跟随标题栏背景，由主进程设置
  * 经典主题下只保留左侧与拖动区，网页版自己的顶栏和标签栏原样显示在下面。
  */
 import { onColorSchemeChange } from '../../upstream/frontend/src/theme';
+import { toggleAppMenu, toggleInstanceMenu } from './app-menus';
 import { el, icon, iconButton, opaqueHex } from './dom';
 import { dt, onLocaleChange } from './i18n';
 import { toggleSettings } from './settings';
@@ -84,21 +85,18 @@ export function mountTitlebar(env: ChromeEnv): void {
   const menu = el('button', 'cs-tb-menu');
   menu.type = 'button';
   menu.append(el('span', 'cs-tb-logo', '>_'));
-  menu.addEventListener('click', () => {
-    const rect = menu.getBoundingClientRect();
-    void bridge?.showAppMenu?.(rect.left, rect.bottom);
-  });
+  const mac = env.platform === 'darwin';
+  menu.addEventListener('click', () => toggleAppMenu(menu, mac));
   const instance = el('button', 'cs-tb-instance');
   instance.type = 'button';
   instance.append(el('span', 'cs-tb-instance-name', env.instanceName || 'CloudSSH'), icon('expand_more'));
   // 窄窗口只显示箭头，名称放在提示里
   instance.title = `${env.instanceName || 'CloudSSH'}\n${env.instanceUrl}`;
-  instance.addEventListener('click', () => {
-    const rect = instance.getBoundingClientRect();
-    void bridge?.showInstanceMenu?.(rect.left, rect.bottom);
-  });
-  if (!bridge?.showAppMenu) menu.disabled = true;
-  if (!bridge?.showInstanceMenu) instance.disabled = true;
+  instance.addEventListener('click', () => toggleInstanceMenu(instance, mac));
+  if (!bridge?.menuState) {
+    menu.disabled = true;
+    instance.disabled = true;
+  }
   lead.append(menu, instance);
 
   // ---------- 中间：服务器页、会话标签 ----------

@@ -46,7 +46,8 @@ const server = (name, tags, host, extra = {}) => ({
 const servers = [
   server('HK-A 香港一号', ['香港 🇭🇰'], '203.0.113.1', { last_connected_at: now - 1000, os: 'ubuntu' }),
   server('HK-B 香港二号', ['香港 🇭🇰'], '203.0.113.2', { os: 'alpine' }),
-  server('HK-C 香港三号', ['香港 🇭🇰'], '203.0.113.3'),
+  // 还没识别系统：连上后像真 Worker 一样发 os_detected（识别成 Ubuntu），用来看图标即时更新
+  server('HK-C 香港三号', ['香港 🇭🇰'], '203.0.113.3', { os: null }),
   server('JP-A 东京', ['日本 🇯🇵'], '198.51.100.1', { last_connected_at: now - 5000, os: 'centos' }),
   server('JP-B 大阪', ['日本 🇯🇵'], '198.51.100.2'),
   server('JP-C 名古屋', ['日本 🇯🇵'], '198.51.100.3', { os: 'arch' }),
@@ -208,6 +209,19 @@ async function handleHttp(req, res) {
   }
 
   const serverPath = /^\/api\/servers\/(\d+)$/.exec(path);
+  // 与 Worker 一致：只改请求里带的字段；主机或端口变了就清掉已识别的系统
+  if (serverPath && method === 'PUT') {
+    const target = servers.find((s) => s.id === Number(serverPath[1]));
+    if (!target) return json(res, 404, { error: 'Server not found' });
+    const body = await readBody(req);
+    if ((body.host !== undefined && body.host !== target.host) || (body.port !== undefined && body.port !== target.port)) target.os = null;
+    for (const key of ['name', 'host', 'port', 'username', 'auth_method', 'region', 'jump_server_id', 'transport_type', 'cf_tunnel_host']) {
+      if (body[key] !== undefined) target[key] = body[key];
+    }
+    if (Array.isArray(body.tags)) target.tags = body.tags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 10);
+    target.updated_at = new Date().toISOString();
+    return json(res, 200, target);
+  }
   if (serverPath && method === 'DELETE') {
     const id = Number(serverPath[1]);
     const index = servers.findIndex((s) => s.id === id);
@@ -483,6 +497,13 @@ function attachShell(ws, url) {
   const messages = { version_exchange: '正在交换版本信息...', version_ready: '版本交换完成，正在密钥协商...', host_key_verified: '主机密钥验证通过 (ssh-ed25519) ✓', auth_service_accepted: '认证服务已接受，正在认证...', auth_public_key: '正在使用密钥认证...', auth_success: '认证成功', shell_ready: 'Shell 已就绪' };
   steps.forEach((event, index) => setTimeout(() => ws.sendJson({ type: 'status', message: messages[event], event }), 60 * (index + 1)));
   if (!stall) setTimeout(() => write(`欢迎使用 CloudSSH 假 shell（输入 help 查看命令）\r\n${PROMPT}`), 60 * (steps.length + 1));
+  const connected = servers.find((s) => s.id === tokenId);
+  if (!stall && connected && !connected.os) {
+    setTimeout(() => {
+      connected.os = 'ubuntu';
+      ws.sendJson({ type: 'os_detected', serverId: connected.id, os: 'ubuntu' });
+    }, 60 * (steps.length + 1) + 800);
+  }
 
   let line = '';
   /** 客户端报告的终端尺寸（resize 消息），size 命令显示它 */

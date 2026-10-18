@@ -12,6 +12,7 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import '../desktop.css';
 import '../shared/web-fixes.css';
 import { installLanguagePicker, type LanguageMenu } from '../shared/language-picker';
+import { installTagPicker } from '../shared/server-tags';
 import { installTerminalEnhancements } from '../shared/terminal';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
@@ -193,6 +194,7 @@ if (isTauri()) {
       ['tabs', mountTabs],
       ['skin', startSkin],
       ['language', () => installLanguagePicker(sheetLanguageMenu)],
+      ['tag picker', installTagPicker],
       ['terminal touch', installTerminalTouch],
       ['keep alive', installKeepAlive],
       ['system bars', installSystemBars],

@@ -259,6 +259,18 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
   line-height: 1;
 }
 
+/* 系统图标：浅底圆角方块里放品牌图标（与服务器表格一致） */
+.cs-sb-avatar.has-os {
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.cs-sb-avatar.has-os svg {
+  width: 14px;
+  height: 14px;
+}
+
 .cs-sb-name {
   flex: 1;
   min-width: 0;

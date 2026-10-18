@@ -11,18 +11,34 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <!-- 自绘标题栏：拖动窗口；系统窗口按钮由系统画在右侧（与实例窗口一致） -->
+    <header class="titlebar">
+      <span class="tb-logo" aria-hidden="true">&gt;_</span>
+      <span class="tb-title">CloudSSH 实例管理</span>
+    </header>
+
     <div class="layout">
       <aside class="sidebar">
-        <header class="sidebar-header">
+        <div class="sidebar-head">
           <h1>实例</h1>
           <button id="add-instance" class="btn btn-small" type="button">＋ 新增</button>
-        </header>
+        </div>
         <ul id="instance-list" class="instance-list" aria-label="实例列表"></ul>
-        <section class="prefs">
-          <h2>偏好设置</h2>
-          <label class="check"><input type="checkbox" id="pref-close-to-tray" /> 关闭窗口时最小化到托盘</label>
-          <label class="check"><input type="checkbox" id="pref-show-menubar" /> 显示菜单栏</label>
+
+        <section class="prefs" aria-labelledby="prefs-title">
+          <h2 id="prefs-title">偏好设置</h2>
+          <label class="switch">
+            <input type="checkbox" id="pref-close-to-tray" />
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text">关闭窗口时最小化到托盘</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="pref-show-menubar" />
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text">显示菜单栏<small>只对“跟随 Worker”的窗口有效，内置 UI 的菜单在标题栏左上角</small></span>
+          </label>
         </section>
+
         <footer class="sidebar-footer">
           <div id="app-meta" class="muted"></div>
           <div class="footer-actions">
@@ -33,55 +49,94 @@
       </aside>
 
       <main class="detail">
-        <form id="instance-form" autocomplete="off">
-          <h2 id="form-title">编辑实例</h2>
+        <form id="instance-form" class="detail-scroll" autocomplete="off">
+          <div class="detail-head">
+            <h2 id="form-title">编辑实例</h2>
+            <p id="form-subtitle" class="muted"></p>
+          </div>
 
-          <label class="field">
-            <span>名称</span>
-            <input id="field-name" type="text" maxlength="64" required placeholder="例如：我的 CloudSSH" />
-          </label>
+          <section class="card">
+            <h3>连接</h3>
+            <label class="field">
+              <span>名称</span>
+              <input id="field-name" type="text" maxlength="64" required placeholder="例如：我的 CloudSSH" />
+            </label>
+            <label class="field">
+              <span>Worker 地址</span>
+              <div class="row">
+                <input id="field-url" type="text" required placeholder="https://xxx.workers.dev" />
+                <button id="test-instance" class="btn" type="button">测试连接</button>
+              </div>
+              <small id="test-result" class="hint"></small>
+            </label>
+          </section>
 
-          <label class="field">
-            <span>Worker 地址</span>
-            <div class="row">
-              <input id="field-url" type="text" required placeholder="https://xxx.workers.dev" />
-              <button id="test-instance" class="btn" type="button">测试连接</button>
+          <section class="card">
+            <h3>界面来源</h3>
+            <div class="choices" role="radiogroup" aria-label="界面来源">
+              <label class="choice">
+                <input type="radio" name="ui-kind" value="bundled" />
+                <span class="choice-title">内置 UI</span>
+                <span class="choice-desc">网页版前端副本，带桌面端的标题栏、表格与侧栏（推荐）</span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="ui-kind" value="remote" />
+                <span class="choice-title">跟随 Worker</span>
+                <span class="choice-desc">直接使用 Worker 返回的页面，始终与服务端同版本</span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="ui-kind" value="directory" />
+                <span class="choice-title">本地目录</span>
+                <span class="choice-desc">自研 UI 的构建产物，入口 index.html</span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="ui-kind" value="dev-server" />
+                <span class="choice-title">开发服务器</span>
+                <span class="choice-desc">UI 热更新调试（例如 Vite）</span>
+              </label>
             </div>
-            <small id="test-result" class="hint"></small>
-          </label>
-
-          <fieldset class="field">
-            <legend>UI 来源</legend>
-            <label class="radio"><input type="radio" name="ui-kind" value="bundled" /> 内置 UI（网页版前端副本，可定制）</label>
             <div class="sub" data-for="bundled">
               <select id="field-bundled-id"></select>
               <small id="bundled-meta" class="hint"></small>
             </div>
-            <label class="radio"><input type="radio" name="ui-kind" value="remote" /> 跟随 Worker（直接使用 Worker 返回的页面，始终与服务端同版本）</label>
-            <label class="radio"><input type="radio" name="ui-kind" value="directory" /> 本地目录（自研 UI，入口 index.html）</label>
             <div class="sub row" data-for="directory">
               <input id="field-directory" type="text" placeholder="D:\\my-cloudssh-ui\\dist" />
               <button id="pick-directory" class="btn" type="button">选择…</button>
             </div>
-            <label class="radio"><input type="radio" name="ui-kind" value="dev-server" /> 开发服务器（UI 热更新调试）</label>
             <div class="sub" data-for="dev-server">
               <input id="field-dev-server" type="text" placeholder="http://127.0.0.1:5173" />
             </div>
-          </fieldset>
+          </section>
 
           <p id="form-error" class="error" role="alert"></p>
 
-          <div class="actions">
-            <button id="save-instance" class="btn btn-primary" type="submit">保存</button>
-            <button id="open-here" class="btn" type="button">打开</button>
-            <button id="open-new" class="btn" type="button">新窗口打开</button>
-            <button id="login" class="btn" type="button">GitHub 登录</button>
-            <button id="set-default" class="btn" type="button">设为默认</button>
-            <span class="spacer"></span>
-            <button id="clear-data" class="btn btn-warn" type="button">清除登录数据</button>
-            <button id="delete-instance" class="btn btn-danger" type="button">删除</button>
-          </div>
+          <section class="card card-danger">
+            <h3>数据</h3>
+            <div class="danger-row">
+              <div>
+                <strong>清除登录数据</strong>
+                <small>退出这个实例的登录，并清除它的网页数据（Cookie、本地存储、缓存）</small>
+              </div>
+              <button id="clear-data" class="btn btn-warn" type="button">清除</button>
+            </div>
+            <div class="danger-row">
+              <div>
+                <strong>删除实例</strong>
+                <small>只删除客户端里的这条配置，不影响 Worker 上的服务器与数据</small>
+              </div>
+              <button id="delete-instance" class="btn btn-danger" type="button">删除</button>
+            </div>
+          </section>
         </form>
+
+        <div class="actionbar">
+          <button id="save-instance" class="btn btn-primary" type="submit" form="instance-form">保存</button>
+          <span class="spacer"></span>
+          <button id="open-here" class="btn" type="button">打开</button>
+          <button id="open-new" class="btn" type="button">新窗口打开</button>
+          <button id="login" class="btn" type="button">GitHub 登录</button>
+          <button id="set-default" class="btn" type="button">设为默认</button>
+        </div>
       </main>
     </div>
     <script src="./main.js"></script>

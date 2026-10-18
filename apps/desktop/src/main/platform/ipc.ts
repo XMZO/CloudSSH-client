@@ -16,7 +16,7 @@ import { configStore, type Preferences } from '../config/store';
 import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
 import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
-import { popupAppMenu, popupInstanceMenu, refreshMenus } from './menus';
+import { refreshMenus } from './menus';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
 import { clearInstanceData } from './session';
@@ -95,15 +95,73 @@ export function registerIpc(): void {
     if (!valid(color) || !valid(symbolColor)) return;
     window.setTitleBarOverlay({ color: color as string, symbolColor: symbolColor as string, height: TITLEBAR_HEIGHT });
   });
-  ipcMain.handle('desktop:app-menu', (event, x: unknown, y: unknown) => {
-    senderInstance(event);
+  // 自绘标题栏的应用菜单、实例菜单（页面里画，数据与动作在这里）
+  ipcMain.handle('desktop:menu-state', (event) => {
+    const current = senderInstance(event);
     const window = BrowserWindow.fromWebContents(event.sender);
-    if (window && typeof x === 'number' && typeof y === 'number') popupAppMenu(window, x, y);
+    return {
+      instances: configStore.instances.map((instance) => ({
+        id: instance.id,
+        name: instance.name,
+        host: new URL(instance.baseUrl).host,
+      })),
+      currentId: current.id,
+      version: versionLabel(),
+      fullscreen: window?.isFullScreen() ?? false,
+    };
   });
-  ipcMain.handle('desktop:instance-menu', (event, x: unknown, y: unknown) => {
-    senderInstance(event);
+  ipcMain.handle('desktop:command', async (event, command: unknown, argument: unknown) => {
+    const instance = senderInstance(event);
     const window = BrowserWindow.fromWebContents(event.sender);
-    if (window && typeof x === 'number' && typeof y === 'number') popupInstanceMenu(window, x, y);
+    if (!window || typeof command !== 'string') return;
+    const contents = window.webContents;
+    const targetId = typeof argument === 'string' && configStore.getInstance(argument) ? argument : null;
+    switch (command) {
+      case 'switch-instance':
+        if (targetId) await openInstance(targetId);
+        break;
+      case 'new-window':
+        if (targetId) await openInstance(targetId, { newWindow: true });
+        break;
+      case 'login':
+        await startLogin(instance.id, window);
+        break;
+      case 'manager':
+        openManagerWindow();
+        break;
+      case 'reload':
+        contents.reload();
+        break;
+      case 'force-reload':
+        contents.reloadIgnoringCache();
+        break;
+      case 'devtools':
+        contents.toggleDevTools();
+        break;
+      case 'zoom-reset':
+        contents.setZoomLevel(0);
+        break;
+      case 'zoom-in':
+        contents.setZoomLevel(Math.min(contents.getZoomLevel() + 0.5, 9));
+        break;
+      case 'zoom-out':
+        contents.setZoomLevel(Math.max(contents.getZoomLevel() - 0.5, -8));
+        break;
+      case 'fullscreen':
+        window.setFullScreen(!window.isFullScreen());
+        break;
+      case 'open-config':
+        await shell.openPath(app.getPath('userData'));
+        break;
+      case 'open-logs':
+        await shell.openPath(logFilePath());
+        break;
+      case 'quit':
+        app.quit();
+        break;
+      default:
+        log.warn('未知的菜单命令', command);
+    }
   });
   ipcMain.handle('desktop:open-manager', (event) => {
     senderInstance(event);

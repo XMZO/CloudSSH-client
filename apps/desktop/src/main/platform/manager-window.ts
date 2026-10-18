@@ -1,9 +1,25 @@
-/** 实例管理窗口：本地页面（file://），通过专用 preload 与主进程通信 */
-import { app, BrowserWindow } from 'electron';
+/**
+ * 实例管理窗口：本地页面（file://），通过专用 preload 与主进程通信。
+ * 与实例窗口一样去掉系统边框、由页面画标题栏（Windows / Linux 保留系统窗口按钮，颜色跟随系统深浅色）
+ */
+import { app, BrowserWindow, nativeTheme } from 'electron';
 import path from 'node:path';
 import { preloadPath, resourcePath, showWindow } from './windows';
 
 let managerWindow: BrowserWindow | null = null;
+
+/** 与 manager/style.css 的标题栏一致（--surface / --text） */
+function titleBarOverlay(): Electron.TitleBarOverlay {
+  return nativeTheme.shouldUseDarkColors
+    ? { color: '#161a22', symbolColor: '#e6edf3', height: 40 }
+    : { color: '#ffffff', symbolColor: '#1f2328', height: 40 };
+}
+
+nativeTheme.on('updated', () => {
+  if (!managerWindow || managerWindow.isDestroyed()) return;
+  managerWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f6f8fa');
+  if (process.platform !== 'darwin') managerWindow.setTitleBarOverlay(titleBarOverlay());
+});
 
 export function isManagerWebContents(id: number): boolean {
   return !!managerWindow && !managerWindow.isDestroyed() && managerWindow.webContents.id === id;
@@ -23,8 +39,11 @@ export function openManagerWindow(parent?: BrowserWindow): BrowserWindow {
     show: false,
     title: 'CloudSSH 实例管理',
     icon: resourcePath('icon.png'),
-    backgroundColor: '#131313',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f6f8fa',
     autoHideMenuBar: true,
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 13 } }
+      : { titleBarStyle: 'hidden' as const, titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
       preload: preloadPath('manager'),
       contextIsolation: true,

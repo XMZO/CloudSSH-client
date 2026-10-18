@@ -11,7 +11,6 @@ import { matchesServerQuery, serverInitial, serverTags, type ServerConfig } from
 import { copyTextToClipboard } from '../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../upstream/frontend/src/host-display';
 import { t } from '../../upstream/frontend/src/i18n';
-import { osIconSvg } from '../../upstream/frontend/src/os-icons';
 import { regionLabel } from '../../upstream/frontend/src/regions';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import {
@@ -23,6 +22,8 @@ import {
   sessionsByServer,
   shareServer,
 } from '../sidebar/hooks';
+import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
+import { osIcon } from '../shared/os-icon';
 import { getServers, subscribe } from '../sidebar/store';
 import { el, icon, iconButton } from './dom';
 import { dt, onLocaleChange } from './i18n';
@@ -70,17 +71,6 @@ function saveState(): void {
 }
 
 // ---------- 显示用的小工具 ----------
-
-const osIconCache = new Map<string, SVGElement | null>();
-function osIcon(os: string): SVGElement | null {
-  if (!osIconCache.has(os)) {
-    const markup = osIconSvg(os);
-    const svg = markup ? new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement : null;
-    osIconCache.set(os, svg instanceof SVGElement ? svg : null);
-  }
-  const cached = osIconCache.get(os);
-  return cached ? (cached.cloneNode(true) as SVGElement) : null;
-}
 
 function isTunnel(server: ServerConfig): boolean {
   return server.transport_type === 'cf_tunnel' && !!server.cf_tunnel_host;
@@ -323,8 +313,9 @@ function renderRow(server: ServerConfig, sessions: number): HTMLTableRowElement 
   return row;
 }
 
-function groupRow(label: string, size: number): HTMLTableRowElement {
+function groupRow(label: string, size: number, tag: string | null): HTMLTableRowElement {
   const row = el('tr', 'cs-group');
+  if (tag) row.dataset.tag = tag;
   const cell = el('td');
   cell.colSpan = COLUMNS.length;
   cell.append(el('span', 'cs-group-label', label), el('span', 'cs-group-count', String(size)));
@@ -382,7 +373,7 @@ function render(): void {
     const keys = [...groups.keys()].sort((a, b) => (a === UNTAGGED ? 1 : b === UNTAGGED ? -1 : a.localeCompare(b)));
     for (const key of keys) {
       const members = groups.get(key)!;
-      fragment.append(groupRow(key === UNTAGGED ? dt('untagged') : key, members.length));
+      fragment.append(groupRow(key === UNTAGGED ? dt('untagged') : key, members.length, key === UNTAGGED ? null : key));
       for (const server of members) {
         fragment.append(renderRow(server, sessions.get(server.id)?.length ?? 0));
         rows.push(server);
@@ -446,7 +437,17 @@ tbody.addEventListener('dblclick', (event) => {
 });
 tbody.addEventListener('contextmenu', (event) => {
   const server = serverOf(event.target);
-  if (!server) return;
+  if (!server) {
+    // 按标签分组时的分组行：重命名、复制标签名
+    const tag = (event.target as Element).closest<HTMLElement>('tr.cs-group')?.dataset.tag;
+    if (!tag) return;
+    event.preventDefault();
+    showMenu(event.clientX, event.clientY, [
+      { label: dt('renameTag'), icon: 'edit', action: () => void renameTag(tag) },
+      { label: dt('copyTagName'), icon: 'content_copy', action: () => void copyTagName(tag) },
+    ]);
+    return;
+  }
   event.preventDefault();
   select(server.id, true);
   showMenu(event.clientX, event.clientY, menuItems(server));
@@ -526,6 +527,15 @@ function applyTexts(): void {
 }
 
 let frame = 0;
+// 标签改名后，正在按它筛选时跟着改
+window.addEventListener(TAG_RENAMED_EVENT, (event) => {
+  const { from, to } = (event as CustomEvent<TagRenamed>).detail;
+  if (state.tag !== from) return;
+  state.tag = to;
+  saveState();
+  scheduleRender();
+});
+
 function scheduleRender(): void {
   cancelAnimationFrame(frame);
   frame = requestAnimationFrame(render);

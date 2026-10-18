@@ -50,6 +50,9 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const list = $<HTMLUListElement>('instance-list');
 const form = $<HTMLFormElement>('instance-form');
 const formTitle = $('form-title');
+const formSubtitle = $('form-subtitle');
+// macOS 的红绿灯在标题栏左侧
+document.documentElement.dataset.platform = navigator.userAgent.includes('Mac OS') ? 'darwin' : 'other';
 const fieldName = $<HTMLInputElement>('field-name');
 const fieldUrl = $<HTMLInputElement>('field-url');
 const fieldBundledId = $<HTMLSelectElement>('field-bundled-id');
@@ -102,20 +105,35 @@ function renderList(): void {
     button.type = 'button';
     button.setAttribute('aria-current', String(instance.id === selectedId));
 
+    const avatar = document.createElement('span');
+    avatar.className = 'instance-avatar';
+    avatar.textContent = [...instance.name.trim()][0]?.toUpperCase() ?? '?';
+
     const name = document.createElement('span');
     name.className = 'instance-name';
-    name.textContent = instance.name;
+    const label = document.createElement('span');
+    label.textContent = instance.name;
+    name.append(label);
     if (instance.id === state.defaultInstanceId) name.append(badge('默认'));
     if (state.openInstanceIds.includes(instance.id)) name.append(badge('已打开', true));
 
     const url = document.createElement('span');
     url.className = 'instance-url';
-    url.textContent = `${instance.baseUrl} · ${describeUiSource(instance.ui)}`;
+    url.textContent = `${hostOf(instance.baseUrl)} · ${describeUiSource(instance.ui)}`;
+    url.title = instance.baseUrl;
 
-    button.append(name, url);
+    button.append(avatar, name, url);
     button.addEventListener('click', () => select(instance.id));
     li.append(button);
     list.append(li);
+  }
+}
+
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
   }
 }
 
@@ -147,7 +165,8 @@ function fillForm(instance: InstanceConfig | null): void {
   formError.textContent = '';
   testResult.textContent = '';
   testResult.className = 'hint';
-  formTitle.textContent = instance ? `编辑实例：${instance.name}` : '新增实例';
+  formTitle.textContent = instance ? instance.name : '新增实例';
+  formSubtitle.textContent = instance ? instance.baseUrl : '填写名称和 Worker 地址，保存后即可打开';
   fieldName.value = instance?.name ?? '';
   fieldUrl.value = instance?.baseUrl ?? '';
   const ui: UiSource = instance?.ui ?? { kind: 'bundled', id: 'web' };

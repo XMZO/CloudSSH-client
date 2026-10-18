@@ -80,4 +80,18 @@ export class NodeOrder {
     this.data = { groups: [], servers: {} };
     this.save();
   }
+
+  /** 标签改名后沿用原来的分组位置与组内顺序；新名字本来就有排序时保留它自己的（相当于合并进去） */
+  renameGroup(from: string, to: string): void {
+    const index = this.data.groups.indexOf(from);
+    if (index >= 0) {
+      if (this.data.groups.includes(to)) this.data.groups.splice(index, 1);
+      else this.data.groups[index] = to;
+    }
+    if (this.data.servers[from]) {
+      this.data.servers[to] ??= this.data.servers[from];
+      delete this.data.servers[from];
+    }
+    this.save();
+  }
 }

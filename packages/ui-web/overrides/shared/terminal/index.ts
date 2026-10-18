@@ -1,5 +1,5 @@
 /**
- * 终端增强（桌面端与手机端共用）：内置 JetBrains Mono 字体 + 关键词高亮。
+ * 终端增强（桌面端与手机端共用）：内置 JetBrains Mono 字体 + 关键词高亮；等待自动重连时按任意键立即重连的提示。
  *
  * 构建钩子（vite.config.ts）在网页版每创建/销毁一个终端时调用 __cloudsshTerminalCreated / __cloudsshTerminalDisposed，
  * 这里据此设置字体、挂上高亮引擎。
@@ -8,6 +8,7 @@ import type { Terminal } from '@xterm/xterm';
 import { getActiveTerminalTheme, onTerminalThemeChange } from '../../../upstream/frontend/src/theme';
 import { colorAdjuster, TerminalHighlighter, type CompiledRule } from './highlight-engine';
 import { HIGHLIGHT_CHANGED_EVENT, loadSettings } from './highlight-rules';
+import { ht } from './i18n';
 import './terminal.css';
 
 export { openHighlightEditor } from './highlight-editor';
@@ -91,6 +92,8 @@ export function installTerminalEnhancements(): void {
   };
   scope.__cloudsshTerminalCreated = onCreated;
   scope.__cloudsshTerminalDisposed = onDisposed;
+  // 等待自动重连时的提示（构建钩子在网页版写出“x 秒后重连”之后加一行，按键即立即重连）
+  (globalThis as { __cloudsshReconnectHint?: () => string }).__cloudsshReconnectHint = () => ht('reconnectNow');
 
   compile();
   adjust = colorAdjuster(getActiveTerminalTheme().background);

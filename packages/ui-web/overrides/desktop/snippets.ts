@@ -3,6 +3,7 @@
  * - 双击一条片段 = 点它的“填入”按钮（只填入、不回车，与网页版默认一致）
  * - 紧凑列表里命令最多显示两行，悬停时提示完整命令
  * - “新建片段”只显示图标，悬停提示按钮当前的文字
+ * - 面板停靠在终端旁边时，填入命令后不收起，可以连续填入
  * 都用事件委托，不依赖面板何时创建，也不改网页版的渲染。面板宽度见 drawers.ts。
  */
 import { dt } from './i18n';
@@ -10,6 +11,10 @@ import { dt } from './i18n';
 const CARD = '#snippet-list > [data-snippet-id]';
 
 export function mountSnippetEnhancements(): void {
+  // 填入后面板停靠在终端旁边时不收起（构建钩子在网页版的 insertSnippet 里询问）；盖在终端上时照旧收起
+  (globalThis as { __cloudsshKeepSnippetPanel?: () => boolean }).__cloudsshKeepSnippetPanel = () =>
+    document.documentElement.classList.contains('cs-docked');
+
   document.addEventListener('dblclick', (event) => {
     const target = event.target as Element | null;
     const card = target?.closest<HTMLElement>(CARD);

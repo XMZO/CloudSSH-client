@@ -4,7 +4,8 @@
  * - POST /api/servers/:id/connect 成功 → 本地刷新该节点的最近连接时间
  * - DELETE /api/servers/:id 成功 → 本地去掉（网页版删除后只改自己的列表，不重新拉取）
  * - 登出 / /api/auth/me 返回 401 → 清空（侧栏隐藏）
- * 只依赖公开的 HTTP 接口约定，不依赖上游内部实现。
+ * - 连接后识别出系统（cloudssh:os-detected，构建钩子发出）→ 本地更新该节点的系统图标
+ * 除最后一项外只依赖公开的 HTTP 接口约定，不依赖上游内部实现。
  */
 import type { ServerConfig } from '@cloudssh/core';
 
@@ -84,6 +85,15 @@ function observe(info: { method: string; path: string }, response: Response): vo
     setServers(null);
   }
 }
+
+/** 连接后识别出系统（构建钩子在网页版 updateServerOS 里发出）：立即更新这台服务器的系统 */
+window.addEventListener('cloudssh:os-detected', (event) => {
+  const { serverId, os } = (event as CustomEvent<{ serverId: number; os: string | null }>).detail ?? {};
+  if (!servers || typeof serverId !== 'number') return;
+  const current = servers.find((server) => server.id === serverId);
+  if (!current || current.os === os) return;
+  setServers(servers.map((server) => (server.id === serverId ? { ...server, os } : server)));
+});
 
 export function installFetchObserver(): void {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {

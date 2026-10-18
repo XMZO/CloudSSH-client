@@ -12,10 +12,12 @@
  * - shared/web-fixes.css：网页版界面的通用修正（与手机端共用）
  * - shared/terminal/：内置终端字体与关键词高亮（与手机端共用）
  * - desktop/：界面主题（工作台 / 经典）：自绘标题栏、表格化服务器列表、终端占满窗口
+ * - shared/server-tags.ts：添加服务器时点选已有标签，标签重命名、复制（与手机端共用）
  */
 import './desktop.css';
 import './shared/web-fixes.css';
 import { installLanguagePicker, popoverLanguageMenu } from './shared/language-picker';
+import { installTagPicker } from './shared/server-tags';
 import { installTerminalEnhancements } from './shared/terminal';
 import { mountDesktopShell } from './desktop';
 import { mountSidebar } from './sidebar/sidebar';
@@ -35,4 +37,7 @@ window.cloudsshDesktop
 
 mountSidebar();
 installLanguagePicker(popoverLanguageMenu);
+// 添加 / 编辑服务器时点选已有标签
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installTagPicker, { once: true });
+else installTagPicker();
 void mountDesktopShell();

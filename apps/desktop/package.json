@@ -1,7 +1,7 @@
 {
   "name": "@cloudssh/desktop",
   "productName": "CloudSSH",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "private": true,
   "description": "CloudSSH 桌面客户端",
   "author": "XMZO",

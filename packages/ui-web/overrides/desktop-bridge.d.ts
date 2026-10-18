@@ -13,7 +13,14 @@ interface Window {
     info(): Promise<CloudSSHDesktopBridgeInfo>;
     openInstanceManager?(): Promise<void>;
     setTitleBarColors?(color: string, symbolColor: string): Promise<void>;
-    showAppMenu?(x: number, y: number): Promise<void>;
-    showInstanceMenu?(x: number, y: number): Promise<void>;
+    menuState?(): Promise<CloudSSHDesktopMenuState>;
+    command?(command: string, argument?: string): Promise<void>;
   };
+}
+
+interface CloudSSHDesktopMenuState {
+  instances: { id: string; name: string; host: string }[];
+  currentId: string | null;
+  version: string;
+  fullscreen: boolean;
 }
