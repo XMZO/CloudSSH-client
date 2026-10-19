@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **AI 增强代理版本 5：兼容结果里回 `store:true` 的中转**：CloudSSH 的 Worker 每个请求都带 `store:false`，结果里写着 `store:true` 就整轮失败（“服务商未按要求使用无状态 Responses 模式”），而不少中转（尤其转接 Gemini、Claude 的）不管请求怎么写都这样回。代理（`tools/reasoning-proxy`）现在把结果里的 `store:true` 改成 `false`，只改最后那一帧，其他帧原样转发，日志里记 `"store":"rewritten"`；变量 `STORE_FIX=off` 关闭。不改 CloudSSH 本身；已部署旧版代理的，重新复制代码部署
+
 ### 变更
 
 - **装好更新后不再多留一份安装包**：更新缓存（`%LOCALAPPDATA%\@cloudsshdesktop-updater`）里 `pending` 那份安装包，装好以后要等下次更新才会被换掉。它和差分下载用的 `installer.exe` 是同一个文件，白占约 116MB。现在客户端在第一次检查更新前删掉它，只删版本不高于当前版本的；下载好还没装的新版本留着，`installer.exe` 也留着

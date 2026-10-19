@@ -34,6 +34,12 @@
  * - 回给 Worker 的用量：输入 token 改成 Worker 自己那份对话的量（否则放回前文后 Worker 会以为满了、每一步都整理），
  *   实际的输入量编进缓存 token（缓存 + 输入 × 2^26）交给客户端解开，客户端据此按模型窗口显示占用
  *
+ * 结果里的 store:true（版本 5 起，变量 STORE_FIX=off 关闭）：CloudSSH 的 Worker 每个请求都带 store:false（不让服务商
+ * 保存对话），结果里写着 store:true 就当作服务商没照办、整轮失败（“服务商未按要求使用无状态 Responses 模式”）。
+ * 不少中转（尤其转接 Gemini、Claude 的）不管请求怎么写，结果里都填 store:true。这里把结果对象里的 store:true 改成
+ * false（流式输出只改 response.completed / response.incomplete 那一帧），日志记 "store":"rewritten"。
+ * 这只是让 Worker 不再拦下；中转到底有没有保存对话，要看中转自己
+ *
  * 部署：Cloudflare Dashboard → Workers → 创建 → 粘贴本文件 → 部署；在“设置 → 变量”里加
  *   UPSTREAM = 原来在 CloudSSH 里填的 AI 接口地址（如 https://api.openai.com/v1）
  * 然后在 CloudSSH 的 AI 设置里把接口地址改成这个 Worker 的地址，并重新填一次 API 密钥。
@@ -49,7 +55,7 @@
  *    "reasoningTokens":812,"inputTokens":61120,"cachedTokens":57680,"cacheHit":"94%"}
  * 整理请求记 {"cloudsshCheckpoint":"kept","records":38,"historyBytes":182340,"storage":"kv"}
  */
-const VERSION = 4;
+const VERSION = 5;
 const LEVEL = '(auto|none|minimal|low|medium|high|xhigh)';
 const REASONING_TAG = new RegExp(`\\s*(?:<cloudssh_reasoning\\s+effort=\\\\*"${LEVEL}\\\\*"\\s*/>|\\[cloudssh-reasoning:${LEVEL}\\])`, 'g');
 const SEARCH_TAG = /\s*<cloudssh_web_search\s+mode=\\*"(on|off)\\*"\s*\/>/g;
@@ -111,12 +117,13 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const upstream = upstreamOf(env);
-    // 客户端检测：代理在不在、版本（2 起认正式标签，3 起联网搜索，4 起长上下文）、UPSTREAM 配了没有、模型窗口
+    // 客户端检测：代理在不在、版本（2 起认正式标签，3 起联网搜索，4 起长上下文，5 起改写 store:true）、UPSTREAM 配了没有、模型窗口
     if (url.pathname.endsWith('/cloudssh-reasoning')) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
       const features = ['reasoning'];
       if (searchSetting(env) !== 'off') features.push('web_search');
       if (longContext(env)) features.push('long_context');
+      if (storeFix(env)) features.push('store_fix');
       const body = { cloudsshReasoningProxy: VERSION, upstream: !!upstream, features };
       const model = (url.searchParams.get('model') || '').slice(0, 200);
       if (upstream && model) {
@@ -224,10 +231,15 @@ export default {
     let out = response;
     const strip = record.webSearch === 'on';
     const pack = long && main;
-    if ((strip || pack) && response.ok && stream) {
+    const fixStore = storeFix(env);
+    if ((strip || pack || fixStore) && response.ok && stream) {
       const edit = (value) => {
         if (strip && Array.isArray(value.output)) value.output = keptOutput(value.output, record);
         if (pack) packUsage(value, byteLength(text), record);
+        if (fixStore && value.store === true) {
+          value.store = false;
+          record.store = 'rewritten';
+        }
       };
       const sse = (response.headers.get('content-type') || '').includes('text/event-stream');
       stream = sse ? rewriteSse(stream, edit) : await rewriteJson(response, edit);
@@ -251,6 +263,11 @@ function upstreamOf(env) {
   } catch {
     return null;
   }
+}
+
+/** 变量 STORE_FIX：默认把结果里的 store:true 改成 false，off 关闭（Worker 照旧拦下这种结果） */
+function storeFix(env) {
+  return String(env.STORE_FIX || '').trim().toLowerCase() !== 'off';
 }
 
 /** 变量 WEB_SEARCH：'off'、一个工具对象、或按模型名分开的映射；没设为 null（用默认） */
