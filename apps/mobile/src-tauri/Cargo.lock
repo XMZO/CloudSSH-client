@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "cloudssh-mobile"
-version = "0.3.31"
+version = "0.3.32"
 dependencies = [
  "android_logger",
  "base64 0.22.1",
