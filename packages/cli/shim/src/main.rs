@@ -16,7 +16,7 @@
 //! - 由 PowerShell 启动、而命令行里有“词中间的引号”时拒绝运行：Windows PowerShell 5.1（以及 7.3 之前的
 //!   pwsh、或 $PSNativeCommandArgumentPassing 设成 Legacy）调任何程序都不转义参数里的双引号，
 //!   `'grep "a b" f'` 到这里已经变成 `"grep "a b" f"`，Node 会拆成 `grep a`、`b f`。远程执行拆坏的命令
-//!   可能出事，所以不运行，提示改用 pwsh 或 --stdin。正常转义（7.3 起、Node、Git Bash）只会在词首词尾出现
+//!   可能出事，所以不运行，提示改用 pwsh、Git Bash 或 --file。正常转义（7.3 起、Node、Git Bash）只会在词首词尾出现
 //!   引号，词中间的引号写成 \"，不会误判
 //!
 //! .shim 的格式（UTF-8，# 开头是注释；cloudssh install 写，见 packages/cli/src/install.ts）：
@@ -214,9 +214,11 @@ fn refuse_mangled_quotes(tail: &str) {
         _ => return,
     };
     eprintln!(
-        "cloudssh: 参数里的双引号被 {shell} 拆掉了，收到的命令和写的不一样，为安全起见没有执行。\n\
-         请改用 PowerShell 7.3 以上（pwsh），或把命令经 --stdin 传入：\n\
-         @'\n<命令>\n'@ | cloudssh exec --stdin <目标>"
+        "cloudssh: 参数里的双引号被 {shell} 拆掉了，收到的命令和写的不一样，为安全起见没有执行（服务器上什么都没运行）。\n\
+         把命令写进 UTF-8 文件再用 --file 执行，例如：\n\
+         Set-Content -Encoding UTF8 -Path \"$env:TEMP\\cloudssh-command.sh\" -Value @'\n<命令>\n'@\n\
+         cloudssh exec --file \"$env:TEMP\\cloudssh-command.sh\" <目标>\n\
+         也可以改用 PowerShell 7.3 以上（pwsh）或 Git Bash。"
     );
     exit(2);
 }

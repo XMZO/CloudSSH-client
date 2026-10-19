@@ -20,12 +20,12 @@ import {
 } from './config';
 import { checkCommand, printOutcomes, runExec } from './exec';
 import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, localPath, progressText, splitRemote, upload, type Progress } from './files';
-import { install, installStatus, mcpLaunch, skillTargets, syncSkills, uninstall } from './install';
+import { install, installStatus, mcpLaunch, refresh, skillTargets, syncSkills, uninstall } from './install';
 import { login } from './login';
 import { serveStdio } from './mcp';
 import { MCP_CLIENTS, mcpTargets, parseMcpClients, registerMcp, unregisterMcp, type McpClientTarget } from './mcp-clients';
 import { api, ApiError, installNetwork } from './net';
-import { confirm, interactive, readStdin } from './prompt';
+import { confirm, interactive, readCommandFile, readStdin } from './prompt';
 import { connect as connectInstance, filterServers, formatServerRow, hostId, resolveSingle, resolveTargets } from './targets';
 
 const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENAME.en}）— CloudSSH 命令行，不开客户端直接操作已保存的服务器
@@ -39,7 +39,8 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
 
 服务器
   servers [-q 关键字] [--tag 标签]   列出服务器（主机 ID、名称、标签、系统、线路）
-  exec <目标> "<命令>"          执行命令；--stdin 从标准输入读命令，--timeout 秒，--yes 确认危险命令
+  exec <目标> "<命令>"          执行命令；--stdin 从标准输入读命令，--file <文件> 从 UTF-8 文件读命令，
+                                --timeout 秒，--yes 确认危险命令
   upload <目标> <本机路径> <远程路径>      上传文件或目录
   download <目标> <远程路径> <本机路径>    下载文件或目录（--max-size MB，默认 2048）
   copy <目标:路径> <目标:路径>  服务器之间传文件或目录（能直连就直连）；覆盖已有的要 --yes
@@ -48,7 +49,8 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
   alias [set <名字> <目标> | rm <名字>]   目标的别名
   config [get | set <项> <值>]            confirm（ask / never 完全权限）、concurrency、timeout、notes（给 AI 的补充说明）、default
   skill [status | sync | enable <agent> | disable <agent>]   各 agent（claude、codex、agents）的 skill 开关
-  install [--bin-dir 目录] [--no-skill] [--mcp 应用,…]   装成命令并安装 Claude Code skill（--status 查看安装状态）；
+  install [--bin-dir 目录] [--no-skill] [--mcp 应用,…]   装成命令并安装 Claude Code skill（--status 查看安装状态；
+                                        --refresh 按版本让命令与 skill 跟上这份程序，旧的才动，桌面客户端启动时用）；
                                         --mcp 同时把 MCP 服务器登记给 claude-desktop、cursor、vscode、windsurf、codex（或 all）
   uninstall [--keep-skill] [--purge]     卸载命令、skill 与 MCP 登记（--purge 连配置与登录一起删）
   version
@@ -106,15 +108,22 @@ async function cmdServers(argv: string[]): Promise<number> {
 async function cmdExec(argv: string[]): Promise<number> {
   const parsed = parseArgs(
     argv,
-    flagsWith({ stdin: { type: 'boolean' }, timeout: { type: 'string', short: 't' }, yes: { type: 'boolean', short: 'y' } }),
+    flagsWith({
+      stdin: { type: 'boolean' },
+      file: { type: 'string' },
+      timeout: { type: 'string', short: 't' },
+      yes: { type: 'boolean', short: 'y' },
+    }),
     1
   );
   const [spec] = parsed.positionals;
-  if (!spec) throw new UsageError('用法：cloudssh exec <目标> "<命令>"（或 --stdin）');
+  if (!spec) throw new UsageError('用法：cloudssh exec <目标> "<命令>"（或 --stdin、--file <文件>）');
   let command = parsed.rest.join(' ');
-  if (bool(parsed, 'stdin')) {
-    if (command) throw new UsageError('用了 --stdin 就不要再在参数里写命令');
-    command = (await readStdin()).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  const file = str(parsed, 'file');
+  if (file && bool(parsed, 'stdin')) throw new UsageError('--stdin 和 --file 只能用一个');
+  if (file || bool(parsed, 'stdin')) {
+    if (command) throw new UsageError(`用了 ${file ? '--file' : '--stdin'} 就不要再在参数里写命令`);
+    command = (file ? readCommandFile(localPath(file)) : await readStdin()).replace(/\r\n/g, '\n').replace(/\n+$/, '');
   }
   if (!command.trim()) throw new UsageError('没有要执行的命令');
   const { config, servers } = await connect(parsed);
@@ -407,9 +416,16 @@ async function main(argv: string[]): Promise<number> {
           'no-skill': { type: 'boolean' },
           'in-place': { type: 'boolean' },
           status: { type: 'boolean' },
+          refresh: { type: 'boolean' },
           mcp: { type: 'string' },
         })
       );
+      if (bool(parsed, 'refresh')) {
+        const result = refresh(str(parsed, 'bin-dir'));
+        if (bool(parsed, 'json')) out({ ...result, status: installStatus(str(parsed, 'bin-dir')) }, true, () => '');
+        else for (const line of result.lines.length ? result.lines : ['命令与 skill 已是最新（或由更新的版本管理），没有改动']) log(line);
+        return 0;
+      }
       if (bool(parsed, 'status')) {
         const status = installStatus(str(parsed, 'bin-dir'));
         out(status, bool(parsed, 'json'), () =>

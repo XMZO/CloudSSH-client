@@ -36,13 +36,15 @@ interface CliStatus {
   program: string | null;
   exists: boolean;
   appRuntime: boolean;
+  /** 装命令时的命令行版本（旧版命令行没有） */
+  commandVersion?: string | null;
   managed: boolean;
   binDir: string;
   onPath: boolean;
   skill: boolean;
   skillCurrent: boolean;
   skillPath: string;
-  skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean }[];
+  skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean; version?: string | null }[];
   mcp?: { id: string; name: string; path: string; present: boolean; registered: boolean; current: boolean; error?: string }[];
   version: string;
   error?: string;
@@ -367,7 +369,10 @@ function renderCli(status: CliStatus): void {
       lines.push('命令指向的程序不在了，请重新安装');
       warning = true;
     } else if (status.managed) lines.push('用客户端运行，随客户端更新');
-    else lines.push(`用${status.appRuntime ? '另一个客户端' : ' Node '}运行（${status.program}）；重新安装可改用这个客户端`);
+    else {
+      const version = status.commandVersion ? `，版本 ${status.commandVersion}` : '';
+      lines.push(`用${status.appRuntime ? '另一个客户端' : ' Node '}运行（${status.program}${version}）；重新安装可改用这个客户端`);
+    }
     if (!status.onPath) {
       lines.push(`${status.binDir} 不在 PATH 里，终端里找不到命令：请把它加进 PATH`);
       warning = true;
@@ -377,7 +382,9 @@ function renderCli(status: CliStatus): void {
     const skills = status.skills ?? [];
     const on = skills.filter((item) => item.enabled !== false);
     const done = on.filter((item) => item.installed && item.current).map((item) => item.name);
-    const old = on.filter((item) => item.installed && !item.current).map((item) => item.name);
+    const old = on
+      .filter((item) => item.installed && !item.current)
+      .map((item) => (item.version && item.version !== status.version ? `${item.name}（${item.version}）` : item.name));
     const missing = on.filter((item) => !item.installed).map((item) => item.name);
     const off = skills.filter((item) => item.enabled === false).map((item) => item.name);
     if (done.length) lines.push(`skill 已装：${done.join('、')}`);

@@ -1,6 +1,6 @@
 {
   "name": "@cloudssh/cli",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "private": true,
   "description": "CloudSSH 命令行（cloudssh）：不开客户端，直接经 CloudSSH 服务端列出服务器、执行命令、传文件；附带 Claude Code skill 与 MCP 服务器",
   "type": "module",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node --test test/mcp.test.mjs test/mcp-install.test.mjs test/windows-launcher.test.mjs",
+    "test": "node build.mjs && node --test test/mcp.test.mjs test/mcp-install.test.mjs test/windows-launcher.test.mjs test/refresh.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

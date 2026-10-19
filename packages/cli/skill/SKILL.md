@@ -20,7 +20,7 @@ cloudssh copy srv-12:/root/backup.tgz srv-34:/tmp/   # server → server, direct
 
 Targets: a host ID (`srv-12`, stable across renames and the same on every device), an exact or unique partial name, an alias from `cloudssh alias`, `tag:<tag>`, `all`, or a comma-separated list. Prefer host IDs from `cloudssh servers`; if a name matches several servers the command fails and lists the candidates.
 
-Put options (`--json`, `--yes`, `--timeout`, `--stdin`) before the target: after the remote command they may be taken as part of it.
+Put options (`--json`, `--yes`, `--timeout`, `--stdin`, `--file`) before the target: after the remote command they may be taken as part of it.
 
 Pass the whole remote command as one quoted argument. For commands containing quotes, pipes, `$`, backticks, heredocs or JSON, send them on stdin:
 
@@ -30,17 +30,25 @@ cloudssh exec --stdin srv-12 <<'EOF'
 EOF
 ```
 
-In PowerShell use `@'` … `'@ | cloudssh exec --stdin srv-12`.
+In PowerShell 7 use `@'` … `'@ | cloudssh exec --stdin srv-12`. In any shell you can also write the command to a UTF-8 file with your file-writing tool and run `cloudssh exec --file <path> srv-12`.
 
 ## Shell on Windows
 
-Choose the shell that passes quotes through intact, in this order:
+`cloudssh` works in every Windows shell; they differ only in how safely they pass quotes. If you can choose, prefer PowerShell 7 (the command is `pwsh`, not `pwsh7`; it needs 7.3 or later, check with `$PSVersionTable.PSVersion`), then Git Bash (`bash`), then Windows PowerShell 5.1 (`powershell`) or cmd.
 
-1. **PowerShell 7** — the command is `pwsh` (not `pwsh7`). It needs 7.3 or later; check with `$PSVersionTable.PSVersion`.
-2. **Git Bash** (`bash`).
-3. **Windows PowerShell 5.1** (`powershell`) or cmd only when neither is available.
+With only Windows PowerShell 5.1 or cmd, everything still works; only the way you pass the remote command changes:
 
-Windows PowerShell 5.1 strips double quotes inside arguments, so `'grep "a b" f'` arrives as two words, and it pipes non-ASCII text as `?`. In 5.1, send any command containing `"` through `--stdin`, and run `$OutputEncoding = [System.Text.UTF8Encoding]::new()` first if the command contains non-ASCII text. When `cloudssh` detects that PowerShell has already mangled the quotes, it refuses to run and exits with code 2; switch to `pwsh` or `--stdin` instead of retrying the same command.
+- A simple command (no `"`, `%`, `&`, `|`, `<`, `>`, `^` and no non-ASCII text) goes in as an argument as usual: `cloudssh exec srv-12 'df -h'`.
+- Anything else goes through a file with `--file`. Write it with your file-writing tool if you have one, or in PowerShell 5.1 with `Set-Content`:
+
+```powershell
+Set-Content -Encoding UTF8 -Path "$env:TEMP\cloudssh-command.sh" -Value @'
+grep "a b" /var/log/syslog | tail -n 20
+'@
+cloudssh exec --file "$env:TEMP\cloudssh-command.sh" srv-12
+```
+
+Why: 5.1 strips double quotes inside arguments (`'grep "a b" f'` arrives as two words) and pipes non-ASCII text as `?`, so `--stdin` is only safe there for ASCII text; cmd expands `%VAR%` and ends a quoted string at `\"`. If `cloudssh` exits with code 2 saying PowerShell mangled the quotes, nothing ran on the server: run the same command again through `--file`.
 
 ## Rules
 

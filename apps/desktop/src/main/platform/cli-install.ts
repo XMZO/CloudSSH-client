@@ -39,6 +39,8 @@ export interface CliStatus {
   appRuntime: boolean;
   /** 命令的启动方式（旧版命令行没有）：Windows 上 cmd 是旧版装的批处理，重新安装换成 exe 启动器 */
   launcher?: 'exe' | 'cmd' | 'sh' | null;
+  /** 装命令时的命令行版本（旧版命令行没有这个字段；字段在但值是 null 表示装的是没写版本的旧版） */
+  commandVersion?: string | null;
   /** 命令指向的是这个客户端带的程序 */
   managed: boolean;
   binDir: string;
@@ -46,7 +48,8 @@ export interface CliStatus {
   skill: boolean;
   skillCurrent: boolean;
   skillPath: string;
-  skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean }[];
+  /** version：装着的 skill 是哪个版本写的（null 是没写版本的旧版） */
+  skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean; version?: string | null }[];
   /** 各 MCP 客户端的登记（旧版命令行没有） */
   mcp?: { id: string; name: string; path: string; present: boolean; registered: boolean; current: boolean; error?: string }[];
   version: string;
@@ -208,20 +211,18 @@ export async function updateCliSettings(patch: CliSettingsPatch): Promise<CliSet
 }
 
 /**
- * 启动时：命令是这个客户端装的（或指向的程序已经不在了）就重装一次，跟上客户端的位置、skill 版本、MCP 登记，
- * 以及启动方式（旧版装的 .cmd 换成带着的 exe 启动器）
+ * 启动时按版本保持命令行与 skill 最新、不留旧版：交给带着的命令行 cloudssh install --refresh 判断（见
+ * packages/cli/src/install.ts 的 refresh）。命令指向这个客户端的程序时，skill、MCP 登记、启动方式有旧的就重装；
+ * 指向别处且比这个客户端带的旧（或程序不在了）就改指这里，复制安装的旧程序随之删掉；一样新或更新的不动。
+ * 没装命令时只更新装着的旧 skill
  */
 export async function refreshCliInstall(): Promise<void> {
+  if (!fs.existsSync(bundledCli())) return;
   try {
-    const status = await cliStatus();
-    if (!status.available || !status.installed) return;
-    const ours = status.managed || (status.appRuntime && !status.exists);
-    const mcpCurrent = (status.mcp ?? []).every((item) => !item.registered || item.current);
-    const bundledLauncher = fs.existsSync(path.join(path.dirname(bundledCli()), 'cloudssh-shim.exe'));
-    const launcherCurrent = !(process.platform === 'win32' && status.launcher === 'cmd' && bundledLauncher);
-    if (!ours || (status.exists && status.skillCurrent && mcpCurrent && launcherCurrent && status.managed)) return;
-    await installCli();
-    log.info('已更新命令行 cloudssh 的安装');
+    const result = await runCli(['install', '--refresh', '--json']);
+    if (result.code !== 0) throw new Error(result.stderr.trim().replace(/^cloudssh: /, '') || `命令行退出码 ${result.code}`);
+    const { action, lines } = JSON.parse(result.stdout) as { action: 'install' | 'skills' | 'none'; lines: string[] };
+    if (action !== 'none') log.info(action === 'install' ? '已更新命令行 cloudssh 的安装' : '已更新 skill', lines.join('；'));
   } catch (error) {
     log.warn('检查命令行安装失败', (error as Error).message);
   }

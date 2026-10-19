@@ -60,6 +60,9 @@ describe('Windows 启动器', { skip: !windows && '只在 Windows 上', timeout:
     // 命令目录放在 PATH 最前面：PowerShell 里直接敲 cloudssh 找到的是这里的
     env.PATH = `${bin}${path.delimiter}${env.PATH ?? env.Path ?? ''}`;
     delete env.Path;
+    // 临时文件（Set-Content 写的命令文件）也放进临时目录
+    env.TEMP = env.TMP = path.join(home, 'tmp');
+    fs.mkdirSync(env.TEMP, { recursive: true });
   });
 
   test('构建产物带着启动器；安装成 .exe + .shim（以及 Git Bash 用的 sh 脚本），不再写 .cmd', () => {
@@ -113,7 +116,7 @@ describe('Windows 启动器', { skip: !windows && '只在 Windows 上', timeout:
       const refused = powershell('powershell.exe', `cloudssh exec JP-A 'echo "a b"' --json`, env);
       assert.equal(refused.code, 2, refused.stdout + refused.stderr);
       assert.match(refused.stderr, /Windows PowerShell 5\.1/);
-      assert.match(refused.stderr, /--stdin/);
+      assert.match(refused.stderr, /--file/);
       const plain = powershell('powershell.exe', `cloudssh exec --json JP-A 'echo a b'`, env);
       assert.equal(plain.code, 0, plain.stderr);
       assert.equal(JSON.parse(plain.stdout).output, 'a b');
@@ -123,6 +126,38 @@ describe('Windows 启动器', { skip: !windows && '只在 Windows 上', timeout:
       assert.equal(refused.code, 2, refused.stdout + refused.stderr);
       assert.match(refused.stderr, /Legacy/);
     }
+  });
+
+  test('只有 Windows PowerShell 5.1 也能用：Set-Content 写文件再 --file（引号、中文原样），--stdin 传 ASCII', { skip: !legacy && '没装 Windows PowerShell' }, () => {
+    assert.equal(runCli(['install', '--bin-dir', bin, '--no-skill'], env).code, 0);
+    const viaFile = powershell(
+      'powershell.exe',
+      [
+        `Set-Content -Encoding UTF8 -Path "$env:TEMP\\cloudssh-command.sh" -Value @'`,
+        'echo "a b" 中文',
+        `'@`,
+        `cloudssh exec --json --file "$env:TEMP\\cloudssh-command.sh" JP-A`,
+      ].join('\n'),
+      env
+    );
+    assert.equal(viaFile.code, 0, viaFile.stderr);
+    assert.equal(JSON.parse(viaFile.stdout).output, '"a b" 中文');
+
+    const viaStdin = powershell('powershell.exe', [`@'`, 'echo "a b"', `'@ | cloudssh exec --json --stdin JP-A`].join('\n'), env);
+    assert.equal(viaStdin.code, 0, viaStdin.stderr);
+    assert.equal(JSON.parse(viaStdin.stdout).output, '"a b"');
+  });
+
+  test('cmd 里简单命令与 \\" 转义的引号照常', () => {
+    assert.equal(runCli(['install', '--bin-dir', bin, '--no-skill'], env).code, 0);
+    const result = spawnSync('cmd.exe', ['/d', '/c', 'cloudssh exec --json JP-A "echo \\"a b\\" ok"'], {
+      env,
+      encoding: 'utf8',
+      timeout: 60_000,
+      windowsVerbatimArguments: true,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).output, '"a b" ok');
   });
 
   test('从旧版 .cmd 升级：重新安装换成 .exe 并删掉 .cmd', () => {

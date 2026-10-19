@@ -55,6 +55,8 @@ export interface InstallStatus {
   appRuntime: boolean;
   /** 命令的启动方式：Windows 上 exe 是现在的，cmd 是旧版装的（重新安装即换成 exe） */
   launcher: Launcher | null;
+  /** 装命令时的命令行版本（启动脚本里的标记）；旧版没写过时是 null */
+  commandVersion: string | null;
   binDir: string;
   onPath: boolean;
   /** Claude Code 的 skill 装了没有 */
@@ -78,6 +80,8 @@ export interface SkillTarget {
   installed: boolean;
   /** 装着的与按现在设置生成的一致 */
   current: boolean;
+  /** 装着的是哪个版本的命令行写的（末尾的版本标记）；旧版没写过时是 null */
+  version: string | null;
 }
 
 /**
@@ -102,9 +106,12 @@ export function userGuidance(config: CliConfig, yes = '`--yes`'): string {
   return text;
 }
 
-/** 按设置生成的 skill：内置说明 + 用户的设置（完全权限、默认超时）+ 给 AI 的补充说明 */
+/** skill 末尾的版本标记：客户端据此判断装着的 skill 比自己带的旧还是新 */
+const SKILL_VERSION = /<!-- cloudssh-skill (\S+) -->/;
+
+/** 按设置生成的 skill：内置说明 + 用户的设置（完全权限、默认超时）+ 给 AI 的补充说明 + 版本标记 */
 export function skillContent(config: CliConfig = loadConfig()): string {
-  return skillText + userGuidance(config);
+  return `${skillText}${userGuidance(config)}\n<!-- cloudssh-skill ${CLIENT_VERSION} -->\n`;
 }
 
 /** 支持 Agent Skills 的工具：Claude Code 总装，其他的要这台电脑上有它的目录 */
@@ -138,7 +145,8 @@ export function skillTargets(config: CliConfig = loadConfig()): SkillTarget[] {
     const text = readSkill(file);
     if (!agent.always && text === null && !fs.existsSync(path.join(os.homedir(), agent.home))) return [];
     const enabled = config.skills[agent.id] !== false;
-    return [{ id: agent.id, name: agent.name, path: file, enabled, installed: text !== null, current: text === content }];
+    const version = text === null ? null : (SKILL_VERSION.exec(text)?.[1] ?? null);
+    return [{ id: agent.id, name: agent.name, path: file, enabled, installed: text !== null, current: text === content, version }];
   });
 }
 
@@ -178,12 +186,16 @@ function onPath(dir: string): boolean {
     .some((item) => item && path.resolve(item).toLowerCase() === dir.toLowerCase());
 }
 
-/** 装上所有开着的 skill（已经是最新的也重写一遍） */
+/** 装上所有开着的 skill（已经是最新的也重写一遍），删掉关掉的（只删我们装的，不留旧版） */
 export function installSkills(): string[] {
   const config = loadConfig();
   const content = skillContent(config);
   return skillTargets(config).flatMap((target) => {
-    if (!target.enabled) return [];
+    if (!target.enabled) {
+      if (!target.installed || !ours(target.path)) return [];
+      fs.rmSync(path.dirname(target.path), { recursive: true, force: true });
+      return [`已删除 ${target.name} skill（设置里关掉了）`];
+    }
     fs.mkdirSync(path.dirname(target.path), { recursive: true });
     fs.writeFileSync(target.path, content, 'utf8');
     return [`${target.name} skill：${target.path}`];
@@ -329,7 +341,79 @@ export function install(options: InstallOptions): string[] {
   const launch = launchFor(runtime, program, electron);
   lines.push(...refreshMcp(launch));
   if (mcpClients.length) lines.push(...registerMcp(mcpClients, launch));
+  lines.push(...removeUnusedCopy(program, options.binDir, launch));
   return lines;
+}
+
+/** 比较 x.y.z 版本号：a 比 b 旧返回负数；没有版本（旧版没写过）算最旧 */
+export function compareVersions(a: string | null | undefined, b: string | null | undefined): number {
+  if (!a || !b) return a ? 1 : b ? -1 : 0;
+  const parts = (value: string) => value.split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+export type RefreshAction = 'install' | 'skills' | 'none';
+
+const samePath = (a: string | null, b: string) => !!a && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+
+/**
+ * 按版本让命令与 skill 跟上正在运行的这份程序，不留旧版（桌面客户端启动时用自己带的程序运行 install --refresh）：
+ * - 命令指向这份程序：skill、MCP 登记、启动方式有不是最新的就重装（--in-place）
+ * - 命令指向别处：那份比这份旧、没写版本或已经不在了，就改指这份（--in-place 重装，复制安装的旧程序随之删掉）；
+ *   一样新或更新的不动，skill 也归它管
+ * - 没装命令：装着的 skill 都不比这份新时，按设置同步（旧的更新、关掉的删掉）
+ */
+export function refresh(binDirOption?: string): { action: RefreshAction; lines: string[] } {
+  const self = fileURLToPath(import.meta.url);
+  const status = installStatus(binDirOption);
+  if (status.installed) {
+    if (samePath(status.program, self)) {
+      const launcherCurrent = !(windows && status.launcher === 'cmd' && launcherNextTo(self));
+      const mcpCurrent = status.mcp.every((item) => !item.registered || item.current);
+      const runtimeCurrent = samePath(status.runtime, process.execPath);
+      if (status.exists && status.skillCurrent && mcpCurrent && launcherCurrent && runtimeCurrent) return { action: 'none', lines: [] };
+    } else if (status.exists && compareVersions(status.commandVersion, CLIENT_VERSION) >= 0) {
+      return { action: 'none', lines: [] };
+    }
+    return { action: 'install', lines: install({ binDir: binDirOption, skill: true, inPlace: true }) };
+  }
+  // 只处理装着的：用户没装过命令时不主动装新的 skill
+  const installed = status.skills.filter((item) => item.installed);
+  if (installed.some((item) => compareVersions(item.version, CLIENT_VERSION) > 0)) return { action: 'none', lines: [] };
+  const content = skillContent();
+  const lines: string[] = [];
+  for (const target of installed) {
+    if (target.enabled && !target.current) {
+      fs.writeFileSync(target.path, content, 'utf8');
+      lines.push(`${target.name} skill：${target.path}`);
+    } else if (!target.enabled && ours(target.path)) {
+      fs.rmSync(path.dirname(target.path), { recursive: true, force: true });
+      lines.push(`已删除 ${target.name} skill（设置里关掉了）`);
+    }
+  }
+  return { action: lines.length ? 'skills' : 'none', lines };
+}
+
+/**
+ * 命令改成直接指向别处的程序后（桌面客户端 --in-place 接管以前复制安装的），复制过去的那份没人用了：删掉，不留旧版。
+ * 只在默认命令目录时做（别的目录装的命令可能还指着它），而且 MCP 登记都已经改指新程序
+ */
+function removeUnusedCopy(program: string, binDirOption: string | undefined, launch: McpLaunch): string[] {
+  const dir = copyDir();
+  const copy = path.join(dir, 'cloudssh.mjs');
+  if (binDirOption || path.resolve(program).toLowerCase() === path.resolve(copy).toLowerCase() || !fs.existsSync(copy)) return [];
+  if (!mcpTargets(launch).every((item) => !item.registered || item.current)) return [];
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return [`已删除不再使用的旧程序 ${dir}`];
+  } catch {
+    return [];
+  }
 }
 
 function isOurs(file: string): boolean {
@@ -341,15 +425,30 @@ function isOurs(file: string): boolean {
 }
 
 /** 读命令脚本：装了没有、指向的运行时与程序、启动方式（Windows 上先认启动器的 .shim，再认旧版的 .cmd） */
-function readShim(binDir: string): { installed: boolean; runtime: string | null; program: string | null; appRuntime: boolean; launcher: Launcher | null } {
+function readShim(binDir: string): {
+  installed: boolean;
+  runtime: string | null;
+  program: string | null;
+  appRuntime: boolean;
+  launcher: Launcher | null;
+  version: string | null;
+} {
+  const versionOf = (text: string) => new RegExp(`${MARK} (\\S+)`).exec(text)?.[1] ?? null;
   const config = path.join(binDir, 'cloudssh.shim');
   if (windows && isOurs(config) && isOurs(path.join(binDir, 'cloudssh.exe'))) {
     const text = fs.readFileSync(config, 'utf8');
     const value = (key: string) => new RegExp(`^${key}=(.*)$`, 'm').exec(text)?.[1]?.trim() || null;
-    return { installed: true, runtime: value('runtime'), program: value('program'), appRuntime: /^env=ELECTRON_RUN_AS_NODE=/m.test(text), launcher: 'exe' };
+    return {
+      installed: true,
+      runtime: value('runtime'),
+      program: value('program'),
+      appRuntime: /^env=ELECTRON_RUN_AS_NODE=/m.test(text),
+      launcher: 'exe',
+      version: versionOf(text),
+    };
   }
   const script = path.join(binDir, windows ? 'cloudssh.cmd' : 'cloudssh');
-  if (!isOurs(script)) return { installed: false, runtime: null, program: null, appRuntime: false, launcher: null };
+  if (!isOurs(script)) return { installed: false, runtime: null, program: null, appRuntime: false, launcher: null, version: null };
   const text = fs.readFileSync(script, 'utf8');
   const match = /"([^"\r\n]+)" "([^"\r\n]+)" (?:%\*|"\$@")/.exec(text);
   return {
@@ -358,6 +457,7 @@ function readShim(binDir: string): { installed: boolean; runtime: string | null;
     program: match?.[2] ?? null,
     appRuntime: /ELECTRON_RUN_AS_NODE/.test(text),
     launcher: windows ? 'cmd' : 'sh',
+    version: versionOf(text),
   };
 }
 
@@ -375,7 +475,7 @@ export function mcpLaunch(binDirOption?: string): McpLaunch {
 
 export function installStatus(binDirOption?: string): InstallStatus {
   const binDir = defaultBinDir(binDirOption);
-  const { installed, runtime, program, appRuntime, launcher } = readShim(binDir);
+  const { installed, runtime, program, appRuntime, launcher, version: commandVersion } = readShim(binDir);
   const skills = skillTargets();
   const file = skillPath();
   const skill = skills.some((item) => item.id === 'claude' && item.installed);
@@ -388,6 +488,7 @@ export function installStatus(binDirOption?: string): InstallStatus {
     exists: !!program && !!runtime && fs.existsSync(program) && fs.existsSync(runtime),
     appRuntime,
     launcher,
+    commandVersion,
     binDir,
     onPath: onPath(binDir),
     skill,
