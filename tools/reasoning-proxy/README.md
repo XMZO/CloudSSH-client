@@ -1,4 +1,4 @@
-# CloudSSH AI 增强代理（思考深度、联网搜索、长上下文、兼容 store:true）
+# CloudSSH AI 增强代理（思考深度、联网搜索、长上下文、中转兼容）
 
 CloudSSH 的 Worker 调模型时只带 `model / input / tools` 等固定字段，不会带 `reasoning.effort`，也不会开模型自己的联网搜索；而且不论什么模型，每段对话都只留约 37KB（一万出头 token）就整理成摘要。这个代理是一个独立的 Cloudflare Worker（不需要改 CloudSSH），放在 CloudSSH 和模型接口之间：
 
@@ -6,7 +6,7 @@ CloudSSH 的 Worker 调模型时只带 `model / input / tools` 等固定字段�
 2. 代理转发前删掉请求里所有这类标签（包括 Worker 整理上下文时嵌进 JSON 文本、引号被转义的），按最后一个改写请求：加上 `reasoning.effort`（`auto` 表示不加），开了联网时加上模型的原生搜索工具。0.3.23 客户端的旧写法 `[cloudssh-reasoning:high]` 同样识别
 3. 其他请求（模型列表等）原样转发到 `UPSTREAM`，流式输出原样回传
 
-每条消息各自带标签，所以切换思考深度、开关联网都不用开新会话。客户端只在检测到代理（`GET <接口地址>/cloudssh-reasoning?model=<模型>`，返回版本、功能与模型窗口）时才附标签；版本 1 的旧代理用旧写法，版本 3 起有联网搜索，版本 4 起有长上下文，版本 5 起改写结果里的 `store: true`（已部署旧版的，重新复制代码部署即可）。
+每条消息各自带标签，所以切换思考深度、开关联网都不用开新会话。客户端只在检测到代理（`GET <接口地址>/cloudssh-reasoning?model=<模型>`，返回版本、功能与模型窗口）时才附标签；版本 1 的旧代理用旧写法，版本 3 起有联网搜索，版本 4 起有长上下文，版本 5 起改写结果里的 `store: true`，版本 6 起补全最后一帧缺的结果（已部署旧版的，重新复制代码部署即可）。
 
 ## 长上下文（版本 4 起）
 
@@ -41,6 +41,14 @@ CloudSSH 的 Worker 每个请求都带 `store: false`（不让服务商保存对
 - 这只是让 Worker 不再拦下：中转到底有没有保存对话，要看中转自己。介意的话换一个遵守 `store: false` 的接口
 - 关闭：变量 `STORE_FIX=off`（结果原样转发，Worker 照旧拦下）
 
+## 最后一帧缺结果（版本 6 起）
+
+Worker 只认流式输出最后的 `response.completed` 里的结果对象。有的中转那一帧的 `output` 是空的或只剩推理，正文和函数调用只在前面的帧里（`response.output_item.done`、`response.output_text.delta`）给过，AI 面板就会显示“模型未返回正文或工具调用，任务未被标记为完成”。
+
+- 代理把前面帧里完整给出的条目补进最后一帧（只留 Worker 认的消息、函数调用、推理）；没有条目、只有正文增量时拼成一条消息。日志记 `"output":"rebuilt"`（或 `"rebuilt-text"`），`upstreamOutput` 是中转原来给的条目类型
+- 前面的帧也什么都没给时不改，日志记 `upstreamOutput`、`streamedItems`、`streamedText`（只有类型和计数），说明模型或中转确实没回内容
+- 前面的帧只是原样记下，最后一帧缺内容时才解析，平时不多花时间
+
 ## 部署
 
 **Cloudflare 控制台**（客户端里“思考深度 → 部署方法”可以一键复制代码）：
@@ -62,7 +70,7 @@ Cloudflare 不允许同一区域（zone）内的 Worker 互相请求（错误 10
 
 ## 确认是否生效
 
-- **代理日志**：Cloudflare 控制台 → 这个 Worker → 日志（实时日志或 Workers Logs；用 wrangler 部署时 `wrangler.toml` 已开启 observability）。每个 `/responses` 请求一行，例如 `{"cloudsshReasoning":"high","applied":true,"webSearch":"on","searches":2,"model":"gpt-5","context":"expanded","historyBytes":182340,"window":272000,"status":200,"reasoningTokens":812,"inputTokens":61120,"cachedTokens":57680,"cacheHit":"94%"}`：`context` 是长上下文（`none` 还没整理过、`expanded` 已放回完整前文、`trimmed` 放回时去掉了最早的部分、`missing` 前文找不到了、`skipped` 没放回），`historyBytes` 是放回了多少字节，`inputTokens` / `cachedTokens` 是接口回报的实际值；`applied` 为 true 表示已给请求加上 `reasoning.effort`，`webSearch` 是联网搜索（`on` 已加搜索工具、`off` 没开、`unsupported` 接口不支持已去掉重发、`skipped` 结构化请求不加），`searches` 是这次去掉的搜索条目数（大于 0 说明模型真的搜索了），`reasoningTokens` 是接口回报的推理 token 数，`cachedTokens` / `cacheHit` 是输入里缓存命中的部分（代理删掉标签的方式是固定的，不影响缓存），`store` 为 `rewritten` 表示接口在结果里回了 `store: true`、已改成 `false`
+- **代理日志**：Cloudflare 控制台 → 这个 Worker → 日志（实时日志或 Workers Logs；用 wrangler 部署时 `wrangler.toml` 已开启 observability）。每个 `/responses` 请求一行，例如 `{"cloudsshReasoning":"high","applied":true,"webSearch":"on","searches":2,"model":"gpt-5","context":"expanded","historyBytes":182340,"window":272000,"status":200,"reasoningTokens":812,"inputTokens":61120,"cachedTokens":57680,"cacheHit":"94%"}`：`context` 是长上下文（`none` 还没整理过、`expanded` 已放回完整前文、`trimmed` 放回时去掉了最早的部分、`missing` 前文找不到了、`skipped` 没放回），`historyBytes` 是放回了多少字节，`inputTokens` / `cachedTokens` 是接口回报的实际值；`applied` 为 true 表示已给请求加上 `reasoning.effort`，`webSearch` 是联网搜索（`on` 已加搜索工具、`off` 没开、`unsupported` 接口不支持已去掉重发、`skipped` 结构化请求不加），`searches` 是这次去掉的搜索条目数（大于 0 说明模型真的搜索了），`reasoningTokens` 是接口回报的推理 token 数，`cachedTokens` / `cacheHit` 是输入里缓存命中的部分（代理删掉标签的方式是固定的，不影响缓存），`store` 为 `rewritten` 表示接口在结果里回了 `store: true`、已改成 `false`，`outputTokens` 是接口回报的输出 token 数，`error` 是接口报错时的错误码与说明（如 429 是限流还是额度用完；像密钥的片段打码，最多 200 字），`output` / `upstreamOutput` / `streamedItems` / `streamedText` 见上面的“最后一帧缺结果”
 - **长上下文**：Worker 整理时记一行 `{"cloudsshCheckpoint":"kept","records":38,"continued":true,"historyBytes":182340,"storage":"kv"}`（`continued` 表示接上了之前保存的记录）；之后的请求 `context` 应为 `expanded`
 - **对比推理用量**：用不同档位问同一个问题，`reasoningTokens`（客户端思考深度菜单里也显示上一轮的推理用量）应明显变化；一直为 0 或不变，说明模型或中转没有应用这个参数
 - 只有 `status` 不是 200：看状态码排查（400 多半是模型不支持这一档；5xx 可能是 `UPSTREAM` 不通）。如果 CloudSSH 报错而这里一行日志都没有，说明请求根本没到代理，多半是上面说的同区域限制

@@ -102,7 +102,7 @@ CloudSSH-client/
 │           ├── preload/                   app.ts（实例页面）/ manager.ts（实例管理）
 │           └── manager/                   实例管理页面（本地 HTML）
 ├── tools/
-│   └── reasoning-proxy/   AI 增强代理：思考深度、联网搜索、长上下文、兼容结果里回 store:true 的中转（独立的 Cloudflare Worker，部署方法见其 README；代码也内置在 AI 面板里可一键复制）
+│   └── reasoning-proxy/   AI 增强代理：思考深度、联网搜索、长上下文、兼容不规范的中转（结果回 store:true、最后一帧缺结果）（独立的 Cloudflare Worker，部署方法见其 README；代码也内置在 AI 面板里可一键复制）
 └── scripts/
     ├── sync-web-ui.mjs    从 CloudSSH 主仓库同步网页版前端
     ├── dev-ui.mjs         UI 热更新开发（Vite + 客户端）

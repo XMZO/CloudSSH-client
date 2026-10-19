@@ -40,6 +40,12 @@
  * false（流式输出只改 response.completed / response.incomplete 那一帧），日志记 "store":"rewritten"。
  * 这只是让 Worker 不再拦下；中转到底有没有保存对话，要看中转自己
  *
+ * 最后一帧缺结果（版本 6 起）：Worker 只认 response.completed 里的结果对象。有的中转那一帧的 output 是空的或只剩推理，
+ * 正文和函数调用只在前面的帧里（response.output_item.done、response.output_text.delta）给过，Worker 就会报
+ * “模型未返回正文或工具调用”。这时用前面帧里的条目补上（没有条目只有正文增量时拼成一条消息），日志记
+ * "output":"rebuilt"（或 "rebuilt-text"）和原来的条目类型 upstreamOutput；前面也什么都没给时只记
+ * upstreamOutput、streamedItems、streamedText（都是计数和类型，不含内容），说明模型或中转确实没回内容
+ *
  * 部署：Cloudflare Dashboard → Workers → 创建 → 粘贴本文件 → 部署；在“设置 → 变量”里加
  *   UPSTREAM = 原来在 CloudSSH 里填的 AI 接口地址（如 https://api.openai.com/v1）
  * 然后在 CloudSSH 的 AI 设置里把接口地址改成这个 Worker 的地址，并重新填一次 API 密钥。
@@ -55,7 +61,7 @@
  *    "reasoningTokens":812,"inputTokens":61120,"cachedTokens":57680,"cacheHit":"94%"}
  * 整理请求记 {"cloudsshCheckpoint":"kept","records":38,"historyBytes":182340,"storage":"kv"}
  */
-const VERSION = 5;
+const VERSION = 6;
 const LEVEL = '(auto|none|minimal|low|medium|high|xhigh)';
 const REASONING_TAG = new RegExp(`\\s*(?:<cloudssh_reasoning\\s+effort=\\\\*"${LEVEL}\\\\*"\\s*/>|\\[cloudssh-reasoning:${LEVEL}\\])`, 'g');
 const SEARCH_TAG = /\s*<cloudssh_web_search\s+mode=\\*"(on|off)\\*"\s*\/>/g;
@@ -117,13 +123,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const upstream = upstreamOf(env);
-    // 客户端检测：代理在不在、版本（2 起认正式标签，3 起联网搜索，4 起长上下文，5 起改写 store:true）、UPSTREAM 配了没有、模型窗口
+    // 客户端检测：代理在不在、版本（2 起认正式标签，3 起联网搜索，4 起长上下文，5 起改写 store:true，6 起补全最后一帧缺的结果）、UPSTREAM 配了没有、模型窗口
     if (url.pathname.endsWith('/cloudssh-reasoning')) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
       const features = ['reasoning'];
       if (searchSetting(env) !== 'off') features.push('web_search');
       if (longContext(env)) features.push('long_context');
       if (storeFix(env)) features.push('store_fix');
+      features.push('output_fix');
       const body = { cloudsshReasoningProxy: VERSION, upstream: !!upstream, features };
       const model = (url.searchParams.get('model') || '').slice(0, 200);
       if (upstream && model) {
@@ -232,8 +239,10 @@ export default {
     const strip = record.webSearch === 'on';
     const pack = long && main;
     const fixStore = storeFix(env);
-    if ((strip || pack || fixStore) && response.ok && stream) {
-      const edit = (value) => {
+    if (response.ok && stream) {
+      const edit = (value, streamed) => {
+        // 先补结果（补进来的条目里也可能有搜索条目，下面照常去掉）
+        if (!hasContent(value)) fillOutput(value, streamed, record);
         if (strip && Array.isArray(value.output)) value.output = keptOutput(value.output, record);
         if (pack) packUsage(value, byteLength(text), record);
         if (fixStore && value.store === true) {
@@ -351,11 +360,74 @@ function keptOutput(output, record) {
   return kept;
 }
 
-/** 流式输出：只改 response.completed / response.incomplete 那一帧里的结果对象，其余帧原样逐帧转发 */
+/** 结果里有没有 Worker 能用的内容：带正文的消息，或函数调用 */
+function hasContent(value) {
+  if (!Array.isArray(value?.output)) return false;
+  return value.output.some((item) => item?.type === 'function_call' || (item?.type === 'message' && messageText(item)));
+}
+
+function messageText(item) {
+  if (!Array.isArray(item?.content)) return '';
+  return item.content.map((part) => (typeof part?.text === 'string' ? part.text : typeof part?.refusal === 'string' ? part.refusal : '')).join('');
+}
+
+/** 一帧里 data: 行拼起来的内容 */
+function frameData(frame) {
+  return frame
+    .split(/\r\n|\n|\r/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).replace(/^ /, ''))
+    .join('\n');
+}
+
+/**
+ * 最后一帧的结果里没有正文、也没有函数调用（有的中转最后一帧的 output 是空的或只剩推理），但前面的帧给过：
+ * 用前面帧里完整给出的条目（response.output_item.done）补上；没有条目只有正文增量时，拼成一条消息。
+ * Worker 只认最后一帧的结果，不补就会报“模型未返回正文或工具调用”。日志里记原来的条目类型和补的方式；
+ * 前面的帧也什么都没给时，记下它们有多少，说明模型（或中转）确实什么都没回
+ */
+function fillOutput(value, streamed, record) {
+  const before = Array.isArray(value.output) ? value.output : [];
+  record.upstreamOutput = before.map((item) => item?.type ?? '?').join(',') || 'empty';
+  if (!streamed) return;
+  const items = [];
+  let text = '';
+  for (const frame of streamed) {
+    let event;
+    try {
+      event = JSON.parse(frameData(frame));
+    } catch {
+      continue;
+    }
+    if (event?.type === 'response.output_item.done' && event.item && typeof event.item === 'object') items.push(event.item);
+    else if (event?.type === 'response.output_text.delta' && typeof event.delta === 'string') text += event.delta;
+  }
+  record.streamedItems = items.length;
+  record.streamedText = text.length;
+  if (hasContent({ output: items })) {
+    // 只留 Worker 认的条目（联网没开时，搜索等内置工具条目也不能交给它）
+    value.output = keptOutput(items, record);
+    record.output = 'rebuilt';
+  } else if (text.trim()) {
+    const id = `msg_${crypto.randomUUID().replace(/-/g, '')}`;
+    value.output = [
+      ...before.filter((item) => item?.type === 'reasoning'),
+      { type: 'message', id, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] },
+    ];
+    record.output = 'rebuilt-text';
+  }
+}
+
+/**
+ * 流式输出：只改 response.completed / response.incomplete 那一帧里的结果对象，其余帧原样逐帧转发。
+ * 前面帧里的条目（output_item.done）和正文增量先原样记下（不解析），最后一帧缺内容时 fillOutput 才用
+ */
 function rewriteSse(stream, edit) {
   const decoder = new TextDecoder();
   let buffer = '';
+  const streamed = [];
   const rewrite = (frame) => {
+    if (frame.includes('response.output_item.done') || frame.includes('response.output_text.delta')) streamed.push(frame);
     if (!frame.includes('response.completed') && !frame.includes('response.incomplete')) return frame;
     const lines = frame.split(/\r\n|\n|\r/);
     const data = lines
@@ -369,7 +441,7 @@ function rewriteSse(stream, edit) {
       return frame;
     }
     if (!event?.response || typeof event.response !== 'object') return frame;
-    edit(event.response);
+    edit(event.response, streamed);
     const other = lines.filter((line) => line && !line.startsWith('data:'));
     return `${[...other, `data: ${JSON.stringify(event)}`].join('\n')}\n\n`;
   };
@@ -451,10 +523,38 @@ async function logUsage(record, status, stream) {
     return matches.length ? Number(matches[matches.length - 1][1]) : null;
   };
   const reasoningTokens = record.reasoningTokens ?? lastNumber('reasoning_tokens');
+  const outputTokens = lastNumber('output_tokens');
   const inputTokens = record.inputTokens ?? lastNumber('input_tokens');
   const cachedTokens = record.cachedTokens ?? lastNumber('cached_tokens');
   const cacheHit = inputTokens && cachedTokens != null ? `${Math.round((cachedTokens / inputTokens) * 100)}%` : null;
-  console.log(JSON.stringify({ ...record, status, reasoningTokens, inputTokens, cachedTokens, cacheHit }));
+  const error = status >= 400 ? errorSummary(tail) : undefined;
+  console.log(JSON.stringify({ ...record, status, error, outputTokens, reasoningTokens, inputTokens, cachedTokens, cacheHit }));
+}
+
+/**
+ * 接口报错时记下错误码与说明（如 429 是限流还是额度用完），最多 200 字；像密钥的片段换成 ***。
+ * 报错正文不是 JSON 时只记前 120 字
+ */
+function errorSummary(text) {
+  let summary;
+  try {
+    const body = JSON.parse(text);
+    const error = body?.error && typeof body.error === 'object' ? body.error : body;
+    summary = [error?.code, error?.type, error?.status, error?.message]
+      .filter((part) => typeof part === 'string' || typeof part === 'number')
+      .join(' | ');
+  } catch {
+    summary = text.slice(0, 120);
+  }
+  return (
+    summary
+      .replace(/\b(sk|rk|pk)-[\w-]{8,}/gi, '$1-***')
+      .replace(/Bearer\s+\S+/gi, 'Bearer ***')
+      .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '***')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200) || undefined
+  );
 }
 
 // ---------- 长上下文 ----------

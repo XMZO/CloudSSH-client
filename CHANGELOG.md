@@ -9,6 +9,7 @@
 ### 新增
 
 - **AI 增强代理版本 5：兼容结果里回 `store:true` 的中转**：CloudSSH 的 Worker 每个请求都带 `store:false`，结果里写着 `store:true` 就整轮失败（“服务商未按要求使用无状态 Responses 模式”），而不少中转（尤其转接 Gemini、Claude 的）不管请求怎么写都这样回。代理（`tools/reasoning-proxy`）现在把结果里的 `store:true` 改成 `false`，只改最后那一帧，其他帧原样转发，日志里记 `"store":"rewritten"`；变量 `STORE_FIX=off` 关闭。不改 CloudSSH 本身；已部署旧版代理的，重新复制代码部署
+- **AI 增强代理版本 6：补全最后一帧缺的结果**：Worker 只认流式输出最后的 `response.completed`，有的中转那一帧的 `output` 是空的或只剩推理，正文和函数调用只在前面的帧里给过，AI 面板就显示“模型未返回正文或工具调用”。代理现在用前面帧里的条目补上（只有正文增量时拼成一条消息），日志记 `"output":"rebuilt"`；前面也什么都没给时只记条目类型与计数，便于判断是模型还是中转没回内容。日志另加 `outputTokens`，接口报错时记错误码与说明（`error`，像密钥的片段打码）
 
 ### 变更
 
