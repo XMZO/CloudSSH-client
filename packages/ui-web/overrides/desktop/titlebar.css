@@ -459,18 +459,45 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
   }
 }
 
+/* 设置面板：两栏、标题与选项同一行，压低高度（不折叠、不分页）；窗口窄时叠成一栏 */
 .cs-dk-settings {
-  width: 320px;
+  width: min(620px, calc(100vw - 16px));
   padding: 8px;
+}
+
+.cs-dk-set-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 4px 8px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.cs-dk-set-head .cs-dk-action {
+  flex: none;
+  min-height: 28px;
+  font-size: 12.5px;
+}
+
+.cs-dk-set-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  column-gap: 6px;
+}
+
+.cs-dk-set-column {
+  display: grid;
+  align-content: start;
+  min-width: 0;
 }
 
 .cs-dk-user {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px 10px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
+  min-width: 0;
 }
 
 .cs-dk-avatar {
@@ -497,14 +524,18 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
 
 .cs-dk-set-section {
   display: grid;
-  gap: 6px;
-  padding: 8px;
+  grid-template-columns: 4.6em 1fr;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 8px;
 }
 
 .cs-dk-set-title {
+  padding-top: 5px;
   font-size: 12px;
   font-weight: 600;
   color: var(--on-surface-variant);
+  white-space: nowrap;
 }
 
 .cs-dk-choices {
@@ -514,8 +545,8 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
 }
 
 .cs-dk-choice {
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: transparent;
@@ -534,11 +565,12 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
   font-weight: 600;
 }
 
-/* 后台通知的分项开关 */
+/* 后台通知的分项开关、会话选项：缩进到选项那一列 */
 .cs-dk-checks {
   display: grid;
-  gap: 2px;
-  margin-top: 2px;
+  gap: 0;
+  margin: -2px 0 2px;
+  padding-left: calc(4.6em + 12px);
 }
 
 .cs-dk-checks.is-off {
@@ -550,10 +582,15 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 26px;
+  min-height: 24px;
   padding: 0 4px;
   border-radius: 6px;
   cursor: pointer;
+}
+
+.cs-dk-check.is-inline {
+  min-height: 26px;
+  margin-left: -4px;
 }
 
 .cs-dk-check:hover {
@@ -569,7 +606,8 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
 
 .cs-dk-actions {
   display: grid;
-  gap: 1px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 2px;
   margin-top: 4px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
@@ -578,7 +616,8 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
 .cs-dk-action {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
   min-height: 32px;
   padding: 0 8px;
   border: 0;
@@ -598,6 +637,12 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
 .cs-dk-action .cs-dk-icon {
   font-size: 18px;
   color: var(--on-surface-variant);
+}
+
+.cs-dk-action span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .cs-dk-action.is-danger,

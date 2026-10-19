@@ -11,7 +11,8 @@ interface CloudSSHDesktopBridgeInfo {
 interface Window {
   cloudsshDesktop?: {
     info(): Promise<CloudSSHDesktopBridgeInfo>;
-    openInstanceManager?(): Promise<void>;
+    /** view 为 'cli' 时直接打开“命令行与 Skill”设置页（旧版客户端忽略参数，只打开实例管理） */
+    openInstanceManager?(view?: 'cli'): Promise<void>;
     setTitleBarColors?(color: string, symbolColor: string): Promise<void>;
     menuState?(): Promise<CloudSSHDesktopMenuState>;
     command?(command: string, argument?: string): Promise<void>;

@@ -82,6 +82,8 @@ interface ManagerApi {
   cliUninstall(): Promise<CliStatus>;
   cliSettings(): Promise<CliSettings>;
   setCliSettings(patch: Partial<CliConfigView>): Promise<CliSettings>;
+  /** 应用里点了“命令行与 Skill”（旧版 preload 没有） */
+  onShowView?(listener: (view: string) => void): void;
 }
 
 const api = (window as unknown as { managerApi: ManagerApi }).managerApi;
@@ -550,6 +552,9 @@ async function saveCli(patch: Partial<CliConfigView>): Promise<boolean> {
 }
 
 $('cli-open-settings').addEventListener('click', () => showCliView(true));
+api.onShowView?.((view) => {
+  if (view === 'cli') showCliView(true);
+});
 cliFullAccess.addEventListener('change', () => {
   if (cliFullAccess.checked && !confirm('打开完全权限？AI 和命令行执行危险命令（删除、关机、改权限……）时不再要求确认。')) {
     cliFullAccess.checked = false;
@@ -719,4 +724,6 @@ $('open-config').addEventListener('click', () => void api.openPath('config'));
 $('open-logs').addEventListener('click', () => void api.openPath('logs'));
 
 api.onChanged((next) => applyState(next));
-void refresh();
+void refresh().then(() => {
+  if (location.hash === '#cli') showCliView(true);
+});

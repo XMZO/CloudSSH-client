@@ -58,6 +58,7 @@ export function toggleAppMenu(anchor: HTMLElement, mac: boolean): void {
       action: run('fullscreen'),
     },
     { label: dt('instanceManager'), icon: 'dns', shortcut: shortcut('Ctrl+Shift+M', mac), separated: true, action: run('manager') },
+    { label: dt('cliSkill'), icon: 'terminal', action: run('cli-settings') },
     { label: dt('menuConfigDir'), icon: 'folder_open', action: run('open-config') },
     { label: dt('menuLogs'), icon: 'description', action: run('open-logs') },
     { label: state.version, icon: 'info', separated: true, disabled: true },

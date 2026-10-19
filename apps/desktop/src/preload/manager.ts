@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld('managerApi', {
   cliUninstall: () => ipcRenderer.invoke('manager:cli-uninstall'),
   cliSettings: () => ipcRenderer.invoke('manager:cli-settings'),
   setCliSettings: (patch: unknown) => ipcRenderer.invoke('manager:cli-settings-set', patch),
+  /** 应用里点了“命令行与 Skill”：切到设置页 */
+  onShowView: (listener: (view: string) => void) => {
+    ipcRenderer.on('manager:show-view', (_event, view: unknown) => listener(String(view)));
+  },
   onChanged: (listener: (state: unknown) => void) => {
     const handler = (_event: unknown, state: unknown) => listener(state);
     ipcRenderer.on('manager:changed', handler);

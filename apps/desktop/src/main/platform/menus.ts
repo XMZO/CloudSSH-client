@@ -55,6 +55,7 @@ export function buildAppMenu(): void {
           }),
         },
         { label: '实例管理…', accelerator: 'CmdOrCtrl+Shift+M', click: () => openManagerWindow() },
+        { label: '命令行与 Skill…', click: () => openManagerWindow(undefined, 'cli') },
         { type: 'separator' },
         { role: 'quit', label: '退出' },
       ],
@@ -122,6 +123,7 @@ export function buildTray(): void {
       { label: '切换实例', submenu: instanceSwitchItems(false) },
       { label: '在新窗口打开', submenu: instanceSwitchItems(true) },
       { label: '实例管理…', click: () => openManagerWindow() },
+      { label: '命令行与 Skill…', click: () => openManagerWindow(undefined, 'cli') },
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },
     ])

@@ -134,6 +134,9 @@ export function registerIpc(): void {
       case 'manager':
         openManagerWindow();
         break;
+      case 'cli-settings':
+        openManagerWindow(undefined, 'cli');
+        break;
       case 'reload':
         contents.reload();
         break;
@@ -168,9 +171,9 @@ export function registerIpc(): void {
         log.warn('未知的菜单命令', command);
     }
   });
-  ipcMain.handle('desktop:open-manager', (event) => {
+  ipcMain.handle('desktop:open-manager', (event, view?: unknown) => {
     senderInstance(event);
-    openManagerWindow();
+    openManagerWindow(undefined, view === 'cli' ? 'cli' : undefined);
   });
   // 点了系统通知：把发通知的窗口叫到前台（托盘里隐藏的、最小化的也恢复）
   ipcMain.handle('desktop:focus', (event) => {

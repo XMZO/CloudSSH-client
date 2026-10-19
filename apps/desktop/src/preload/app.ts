@@ -7,12 +7,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('cloudsshDesktop', {
   /** { platform, appVersion, instance: { id, name, baseUrl } } */
   info: () => ipcRenderer.invoke('desktop:info'),
-  openInstanceManager: () => ipcRenderer.invoke('desktop:open-manager'),
+  /** view 为 'cli' 时直接打开“命令行与 Skill”设置页 */
+  openInstanceManager: (view?: 'cli') => ipcRenderer.invoke('desktop:open-manager', view),
   /** 自绘标题栏：系统窗口按钮的背景色与图标色（#rrggbb） */
   setTitleBarColors: (color: string, symbolColor: string) => ipcRenderer.invoke('desktop:titlebar', { color, symbolColor }),
   /** 自绘标题栏的应用菜单、实例菜单：{ instances: [{ id, name, host }], currentId, version, fullscreen } */
   menuState: () => ipcRenderer.invoke('desktop:menu-state'),
-  /** 菜单命令：switch-instance / new-window（参数为实例 id）、login、manager、reload、force-reload、devtools、
+  /** 菜单命令：switch-instance / new-window（参数为实例 id）、login、manager、cli-settings、reload、force-reload、devtools、
    *  zoom-reset / zoom-in / zoom-out、fullscreen、open-config、open-logs、quit */
   command: (command: string, argument?: string) => ipcRenderer.invoke('desktop:command', command, argument),
   /** 系统全局快捷键：打开命令面板（toggle 为 true 表示窗口本来就在前台，再按一次应关闭面板） */

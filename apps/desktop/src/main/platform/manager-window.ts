@@ -25,9 +25,11 @@ export function isManagerWebContents(id: number): boolean {
   return !!managerWindow && !managerWindow.isDestroyed() && managerWindow.webContents.id === id;
 }
 
-export function openManagerWindow(parent?: BrowserWindow): BrowserWindow {
+/** view 为 cli 时直接打开“命令行与 Skill”设置页 */
+export function openManagerWindow(parent?: BrowserWindow, view?: 'cli'): BrowserWindow {
   if (managerWindow && !managerWindow.isDestroyed()) {
     showWindow(managerWindow);
+    if (view) managerWindow.webContents.send('manager:show-view', view);
     return managerWindow;
   }
   managerWindow = new BrowserWindow({
@@ -59,7 +61,7 @@ export function openManagerWindow(parent?: BrowserWindow): BrowserWindow {
   managerWindow.on('closed', () => {
     managerWindow = null;
   });
-  void managerWindow.loadFile(path.join(app.getAppPath(), 'dist', 'manager', 'index.html'));
+  void managerWindow.loadFile(path.join(app.getAppPath(), 'dist', 'manager', 'index.html'), view ? { hash: view } : undefined);
   return managerWindow;
 }
 
