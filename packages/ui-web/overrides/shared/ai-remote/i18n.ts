@@ -22,6 +22,7 @@ const zhCN = {
   copied: '已传输 {size} · {method}',
   methodLocal: '同机复制',
   methodDirect: '服务器直连',
+  methodDirectJump: '服务器直连（经 {n} 个跳板）',
   methodRelay: '经本机中转',
   directPrepare: '准备直连…',
   directCopy: '直连传输中…',
@@ -32,6 +33,9 @@ const zhCN = {
   output: '输出',
   truncated: '（只保留了末尾 64KB）',
   roundLimit: '跨服务器操作已连续 {n} 轮，先停下来；需要继续请再发一条消息',
+  pickWaiting: '等你选择服务器',
+  pickServer: 'AI 说的“{name}”是哪台服务器？',
+  pickNoAnswer: '没有选择服务器',
 };
 
 type Key = keyof typeof zhCN;
@@ -59,6 +63,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     copied: '已傳輸 {size} · {method}',
     methodLocal: '同機複製',
     methodDirect: '伺服器直連',
+    methodDirectJump: '伺服器直連（經 {n} 個跳板）',
     methodRelay: '經本機中轉',
     directPrepare: '準備直連…',
     directCopy: '直連傳輸中…',
@@ -69,6 +74,9 @@ const dictionaries: Record<string, Record<Key, string>> = {
     output: '輸出',
     truncated: '（只保留了末尾 64KB）',
     roundLimit: '跨伺服器操作已連續 {n} 輪，先停下來；需要繼續請再傳一則訊息',
+    pickWaiting: '等你選擇伺服器',
+    pickServer: 'AI 說的「{name}」是哪台伺服器？',
+    pickNoAnswer: '沒有選擇伺服器',
   },
   'en-US': {
     title: 'Cross-server actions',
@@ -91,6 +99,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     copied: 'Transferred {size} · {method}',
     methodLocal: 'same-server copy',
     methodDirect: 'server to server',
+    methodDirectJump: 'server to server via {n} jump host(s)',
     methodRelay: 'relayed through this device',
     directPrepare: 'Preparing direct transfer…',
     directCopy: 'Transferring directly…',
@@ -101,6 +110,9 @@ const dictionaries: Record<string, Record<Key, string>> = {
     output: 'Output',
     truncated: '(only the last 64KB kept)',
     roundLimit: 'Stopped after {n} rounds of cross-server actions; send another message to continue',
+    pickWaiting: 'Waiting for you to pick the server',
+    pickServer: 'Which server does the AI mean by "{name}"?',
+    pickNoAnswer: 'No server picked',
   },
 };
 

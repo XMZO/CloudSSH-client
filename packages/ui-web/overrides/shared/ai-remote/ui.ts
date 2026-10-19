@@ -3,6 +3,7 @@
  * 需要确认时卡片里出现确认行，跟随 AI 面板当前的模式：交互模式等用户点；自动模式 3 秒后自动确认（期间可拒绝），
  * 与网页版处理危险命令的确认一致。
  */
+import { questionCard } from '../agent-output/ask';
 import { rt } from './i18n';
 
 export type CardState = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'rejected' | 'blocked' | 'cancelled';
@@ -99,6 +100,35 @@ export class ActionCard {
     const details = el('details', 'cs-ra-output');
     details.append(el('summary', '', truncated ? `${rt('output')} ${rt('truncated')}` : rt('output')), el('pre', '', text.replace(/\n+$/, '')));
     this.extra.append(details);
+  }
+
+  /** 卡片标题（解析出实际服务器后换成它的名字） */
+  setTarget(text: string): void {
+    const target = this.root.querySelector('.cs-ra-target');
+    if (target) target.textContent = text;
+  }
+
+  /**
+   * 让用户在几个选项里选一个（也可以选“其他”自己填），用于服务器名不确定时。
+   * cancelled() 变为 true（用户停止或发了新消息）时返回 null
+   */
+  ask(question: string, options: string[], cancelled: () => boolean): Promise<string | null> {
+    this.set('waiting', rt('pickWaiting'));
+    const card = questionCard([{ question, options, multiple: false }]);
+    this.extra.append(card.root);
+    card.root.scrollIntoView({ block: 'nearest' });
+    return new Promise((resolve) => {
+      const timer = setInterval(() => {
+        if (!cancelled()) return;
+        clearInterval(timer);
+        card.expire();
+        resolve(null);
+      }, 300);
+      card.activate((answer) => {
+        clearInterval(timer);
+        resolve(answer);
+      });
+    });
   }
 
   /**

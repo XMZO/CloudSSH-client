@@ -24,11 +24,14 @@ function plain(text: string, limit: number): string {
 
 const norm = (text: string) => text.trim().toLowerCase().replace(/\s+/g, ' ');
 
-export type Resolved = { server: ServerConfig } | { error: string };
+/**
+ * 按名字找服务器的结果：exact 为 false 表示只是部分匹配（要和用户确认）；candidates 是匹配到的多台
+ */
+export type Resolved = { server: ServerConfig; exact: boolean } | { candidates: ServerConfig[] } | { error: string };
 
 /**
- * 按名字找服务器：完全一致（不分大小写）优先，其次唯一包含；“current / 当前”指 AI 所在的服务器。
- * 找不到或有歧义时返回给 AI 的说明。
+ * 按名字找服务器：完全一致（不分大小写）优先，其次包含；“current / 当前”指 AI 所在的服务器。
+ * 只有完全一致且唯一才算确定；部分匹配或匹配到多台时由调用方让用户确认
  */
 export function resolveServer(name: unknown, currentId: number | null): Resolved {
   const servers = getServers() ?? [];
@@ -36,14 +39,14 @@ export function resolveServer(name: unknown, currentId: number | null): Resolved
   const key = norm(name);
   if (['current', 'this', 'local', '当前', '当前服务器', '本机'].includes(key)) {
     const current = servers.find((server) => server.id === currentId);
-    return current ? { server: current } : { error: 'the current server is not a saved server' };
+    return current ? { server: current, exact: true } : { error: 'the current server is not a saved server' };
   }
   const exact = servers.filter((server) => norm(server.name) === key);
-  if (exact.length === 1) return { server: exact[0] };
+  if (exact.length === 1) return { server: exact[0], exact: true };
   const partial = exact.length ? exact : servers.filter((server) => norm(server.name).includes(key));
-  if (partial.length === 1) return { server: partial[0] };
+  if (partial.length === 1) return { server: partial[0], exact: false };
   if (!partial.length) return { error: `no saved server named "${plain(name, 80)}"` };
-  return { error: `"${plain(name, 80)}" matches several servers: ${partial.slice(0, 8).map((s) => `"${plain(s.name, 60)}"`).join(', ')}` };
+  return { candidates: partial };
 }
 
 /** 服务器目录（每台一行），最多 maxChars 字 */

@@ -5,6 +5,7 @@
  * 执行期间面板保持“运行中”（停止按钮可用）：用户点停止或发了新消息即取消，正在跑的远程命令随会话关闭被结束。
  * 结果回传用 recovery.ts 的 startTurn：对话里不出现用户气泡；这一轮若遇上下文出错，同样会自动接续。
  */
+import type { ServerConfig } from '@cloudssh/core';
 import { onAgentFrame } from '../agent-output/frames';
 import { isFullAccess } from '../agent-output/full-access';
 import { decorateOutbound } from '../agent-output/outbound';
@@ -30,6 +31,8 @@ interface Chain {
 }
 
 const chains = new WeakMap<object, Chain>();
+/** 这一轮里用户为不确定的服务器名选过的服务器（名字 → 服务器） */
+const roundPicks = new WeakMap<object, Map<string, ServerConfig>>();
 
 function lastUserText(panel: PanelInternals): string {
   for (let i = panel.sessionMessages.length - 1; i >= 0; i--) {
@@ -80,6 +83,32 @@ async function approve(panel: PanelInternals, card: ActionCard, reason: string, 
   return card.confirm(reason, panel.agentMode === 'auto', cancelled);
 }
 
+/**
+ * 动作里的服务器名对应哪台：完全一致就直接用；只是部分匹配或匹配到多台时，在卡片里让用户选（可选“其他”自己填）。
+ * 这是确认是哪台而不是权限，完全模式下也问。返回服务器，或给 AI 的说明
+ */
+async function chooseServer(panel: PanelInternals, card: ActionCard, name: string, cancelled: () => boolean): Promise<ServerConfig | string> {
+  const current = panel.serverId ?? null;
+  const resolved = resolveServer(name, current);
+  if ('error' in resolved) return resolved.error;
+  if ('server' in resolved && resolved.exact) return resolved.server;
+  // 同一轮里同一个名字已经问过：沿用用户的选择
+  const picks = roundPicks.get(panel);
+  const key = name.trim().toLowerCase();
+  const known = picks?.get(key);
+  if (known) return known;
+  const candidates = 'server' in resolved ? [resolved.server] : resolved.candidates.slice(0, 8);
+  const answer = await card.ask(rt('pickServer', { name }), candidates.map((server) => server.name), cancelled);
+  if (answer === null) return `the user did not confirm which server "${name}" means`;
+  const again = resolveServer(answer, current);
+  if ('server' in again) {
+    picks?.set(key, again.server);
+    return again.server;
+  }
+  if ('candidates' in again) return `the user's answer "${answer}" still matches several servers`;
+  return again.error;
+}
+
 async function runExec(
   panel: PanelInternals,
   action: Extract<Action, { kind: 'exec' }>,
@@ -87,17 +116,19 @@ async function runExec(
   cancelled: () => boolean,
   budget: number
 ): Promise<string> {
-  const label = `exec on "${action.server}": $ ${action.command}`;
-  const resolved = resolveServer(action.server, panel.serverId ?? null);
-  if ('error' in resolved) {
-    card.set('failed', rt('failed', { reason: resolved.error }));
-    return `${label}\nerror: ${resolved.error}`;
-  }
+  let label = `exec on "${action.server}": $ ${action.command}`;
   const blocked = isBlockedCommand(action.command);
   if (blocked.blocked) {
     card.set('blocked', rt('blocked', { reason: blocked.reason ?? '' }));
     return `${label}\nblocked by the safety policy: ${blocked.reason}`;
   }
+  const server = await chooseServer(panel, card, action.server, cancelled);
+  if (typeof server === 'string') {
+    card.set(cancelled() ? 'cancelled' : 'failed', cancelled() ? rt('cancelled') : rt('failed', { reason: server }));
+    return `${label}\nnot executed: ${server}`;
+  }
+  card.setTarget(server.name);
+  if (server.name !== action.server) label = `exec on "${server.name}" (requested as "${action.server}"): $ ${action.command}`;
   const risky = needsConfirmation(action.command);
   if (risky.required) {
     const answer = await approve(panel, card, risky.reason ?? '', cancelled);
@@ -106,7 +137,6 @@ async function runExec(
       return `${label}\nrejected by the user, not executed`;
     }
   }
-  const server = resolved.server;
   card.set('running', rt('running'));
   try {
     const result = await cancellable(remoteExec(server.id, action.command, action.timeout), cancelled, () =>
@@ -135,18 +165,21 @@ async function runCopyAction(
   card: ActionCard,
   cancelled: () => boolean
 ): Promise<string> {
-  const label = `copy "${action.from.server}:${action.from.path}" -> "${action.to.server}:${action.to.path}"`;
-  const current = panel.serverId ?? null;
-  const source = resolveServer(action.from.server, current);
-  const target = resolveServer(action.to.server, current);
-  const problem = 'error' in source ? source.error : 'error' in target ? target.error : null;
-  if (problem || 'error' in source || 'error' in target) {
-    card.set('failed', rt('failed', { reason: problem ?? '' }));
-    return `${label}\nerror: ${problem}`;
+  let label = `copy "${action.from.server}:${action.from.path}" -> "${action.to.server}:${action.to.path}"`;
+  const source = await chooseServer(panel, card, action.from.server, cancelled);
+  const target = typeof source === 'string' ? source : await chooseServer(panel, card, action.to.server, cancelled);
+  if (typeof source === 'string' || typeof target === 'string') {
+    const problem = typeof source === 'string' ? source : (target as string);
+    card.set(cancelled() ? 'cancelled' : 'failed', cancelled() ? rt('cancelled') : rt('failed', { reason: problem }));
+    return `${label}\nnot copied: ${problem}`;
+  }
+  card.setTarget(`${source.name} → ${target.name}`);
+  if (source.name !== action.from.server || target.name !== action.to.server) {
+    label = `copy "${source.name}:${action.from.path}" -> "${target.name}:${action.to.path}" (requested as "${action.from.server}" -> "${action.to.server}")`;
   }
   card.set('running', rt('checking'));
   try {
-    const plan = await planCopy({ source: source.server, srcPath: action.from.path, target: target.server, dstPath: action.to.path });
+    const plan = await planCopy({ source, srcPath: action.from.path, target, dstPath: action.to.path });
     card.root.querySelector('.cs-ra-detail')!.textContent = `${plan.srcAbs} → ${plan.dest}`;
     if (plan.destExists) {
       const answer = await approve(panel, card, rt('overwrite', { path: plan.dest }), cancelled);
@@ -169,9 +202,12 @@ async function runCopyAction(
       closeRemoteSession(plan.source.id);
       closeRemoteSession(plan.target.id);
     });
-    const method = result.method === 'local' ? rt('methodLocal') : result.method === 'direct' ? rt('methodDirect') : rt('methodRelay');
+    const method =
+      result.method === 'local' ? rt('methodLocal')
+      : result.method === 'direct' ? (result.hops ? rt('methodDirectJump', { n: result.hops }) : rt('methodDirect'))
+      : rt('methodRelay');
     card.set('done', rt('copied', { size: formatSize(result.bytes), method }));
-    return `${label}\ndone: ${plan.kind} ${plan.srcAbs} copied to ${result.dest} (${formatSize(result.bytes)}, ${result.method === 'relay' ? 'relayed through the client' : result.method === 'direct' ? 'directly between the servers over SSH' : 'local copy'})${result.note ? `; note: ${result.note}` : ''}`;
+    return `${label}\ndone: ${plan.kind} ${plan.srcAbs} copied to ${result.dest} (${formatSize(result.bytes)}, ${result.method === 'relay' ? 'relayed through the client' : result.method === 'direct' ? `directly between the servers over SSH${result.hops ? ` through ${result.hops} jump host(s)` : ''}` : 'local copy'})${result.note ? `; note: ${result.note}` : ''}`;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     card.set(cancelled() ? 'cancelled' : 'failed', cancelled() ? rt('cancelled') : rt('failed', { reason }));
@@ -197,6 +233,7 @@ async function runRound(panel: PanelInternals, chain: Chain, reply: string): Pro
   panel.isAgentRunning = true;
   panel.updateInputState();
   const cancelled = () => panel.activeRequestId !== requestId || !panel.isAgentRunning;
+  roundPicks.set(panel, new Map());
 
   const group = new ActionGroup(panel.messagesEl);
   const cards = actions.map((action) => {

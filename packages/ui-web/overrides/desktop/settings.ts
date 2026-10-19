@@ -16,6 +16,7 @@ import {
 import { openPresetManager, presetText } from '../shared/credential-presets';
 import { qt } from '../shared/qr-sync/i18n';
 import { openQrSync } from './qr-sync';
+import { closeOnServerEnd, serverEndText, setCloseOnServerEnd } from '../shared/session-end';
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
 import { el, icon } from './dom';
@@ -180,6 +181,21 @@ export function toggleSettings(anchor: HTMLElement): void {
     syncKinds();
     notices.append(kinds);
     panel.append(notices);
+
+    // 会话：服务器端断开时自动关闭标签
+    const sessions = section(dt('sessionSection'));
+    const ending = serverEndText();
+    const endRow = el('label', 'cs-dk-check');
+    endRow.title = ending.hint;
+    const endBox = el('input');
+    endBox.type = 'checkbox';
+    endBox.checked = closeOnServerEnd();
+    endBox.addEventListener('change', () => setCloseOnServerEnd(endBox.checked));
+    endRow.append(endBox, el('span', '', ending.title));
+    const endChecks = el('div', 'cs-dk-checks');
+    endChecks.append(endRow);
+    sessions.append(endChecks);
+    panel.append(sessions);
 
     const actions = el('div', 'cs-dk-actions');
     const ai = document.getElementById('ai-config-btn');

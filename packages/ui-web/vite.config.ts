@@ -222,7 +222,9 @@ const COMMON_HOOKS: Hook[] = [
   // 会话曾经就绪过的才提示“按任意键重新连接”，按键后立即重连（复用上面的输入入口）：
   // 已保存的服务器重新申请一次性令牌，匿名连接用内存里这次的配置，与网页版自动重连同一套路径。
   // 从没连上（认证失败、主机指纹变化待确认）、分享会话（只允许秒级恢复）不提示。
-  // 关闭前是否就绪用实例属性传过去：任一锚点失效时条件不成立，行为与网页版一致
+  // 关闭前是否就绪用实例属性传过去：任一锚点失效时条件不成立，行为与网页版一致。
+  // 在这之前先问 overrides/shared/session-end.ts：开了“服务器端断开时自动关闭标签”且是服务器端断开（1000 / 1011）时，
+  // 它安排关闭标签并返回 true，这里直接结束，不再排定重连、不提示按键重连
   {
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '    this.ws.onclose = (event) => {\n      if (socket !== this.ws) return;\n',
@@ -232,6 +234,7 @@ const COMMON_HOOKS: Hook[] = [
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '      const willReconnect = event.code !== 1000 && this.hasReconnectStrategy();\n      this.onSessionClosed?.(event, willReconnect);\n',
     inject: [
+      '      if ((globalThis as any).__cloudsshServerEnded?.(this, event) === true) return;',
       '      const manualHint =',
       '        !willReconnect &&',
       '        (this as any).__cloudsshWasReady === true &&',

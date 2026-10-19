@@ -12,6 +12,7 @@ import { fontSizeControl } from './skin/font-size';
 import { st } from './skin/i18n';
 import { tabCount } from '../sidebar/hooks';
 import { CLOSE_CONFIRM_MODES, closeConfirmMode, setCloseConfirmMode, type CloseConfirmMode } from './close-confirm';
+import { closeOnServerEnd, serverEndText, setCloseOnServerEnd } from '../shared/session-end';
 import { openHighlightEditor } from '../shared/terminal';
 import { loadSettings as loadHighlight, saveSettings as saveHighlight } from '../shared/terminal/highlight-rules';
 import { ht } from '../shared/terminal/i18n';
@@ -248,7 +249,9 @@ function terminalGroup(): HTMLElement {
       openStyleEditor();
     },
   });
-  return settingsGroup('terminal', mt('grpTerminal'), [fontRow, highlightRow, aiStyleRow, closeRow]);
+  const ending = serverEndText();
+  const endRow = toggleRow({ title: ending.title, sub: ending.hint, checked: closeOnServerEnd(), onChange: setCloseOnServerEnd });
+  return settingsGroup('terminal', mt('grpTerminal'), [fontRow, highlightRow, aiStyleRow, closeRow, endRow]);
 }
 
 // ---------- 连接 ----------

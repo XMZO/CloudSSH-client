@@ -133,6 +133,12 @@ function copyHost(server: ServerConfig): void {
   });
 }
 
+function copyName(server: ServerConfig): void {
+  void copyTextToClipboard(server.name).then((ok) => {
+    if (ok) notify(dt('copied'), { variant: 'success', duration: 1500 });
+  });
+}
+
 function menuItems(server: ServerConfig): MenuItem[] {
   const open = sessionsByServer().get(server.id)?.length ?? 0;
   const items: MenuItem[] = [{ label: dt('connect'), icon: 'play_arrow', action: () => void connectServer(server.id) }];
@@ -140,6 +146,7 @@ function menuItems(server: ServerConfig): MenuItem[] {
   items.push(
     { label: dt('edit'), icon: 'edit', separated: true, action: () => void openServerModal('edit', server.id) },
     { label: dt('clone'), icon: 'content_copy', action: () => void openServerModal('clone', server.id) },
+    { label: dt('copyName'), icon: 'label', action: () => copyName(server) },
     { label: dt('copyHost'), icon: 'link', action: () => copyHost(server) }
   );
   if (canShare()) items.push({ label: dt('share'), icon: 'share', action: () => void shareServer(server.id) });

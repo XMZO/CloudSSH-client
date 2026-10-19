@@ -5,7 +5,7 @@
  *        root@203.0.*.* · 18 ms · 2/3
  *
  * - ←：回到服务器列表（网页版的“+”）；点标题：会话列表；左右滑动标题：切换上一个/下一个会话
- * - 📁：SFTP；⋮：更多操作（常用命令、AI 助手、搜索、导出、横屏、快捷键、字号、复制地址、界面设置、断开）
+ * - 📁：SFTP；⋮：更多操作（常用命令、AI 助手、搜索、导出、横屏、快捷键、字号、复制名称、复制地址、界面设置、断开）
  * 所有动作都转给网页版自己的按钮（即使被隐藏也能点），行为与网页版完全一致。
  * 网页版每次状态变化都会重绘标签栏与状态栏，这里据此同步刷新。
  */
@@ -13,6 +13,7 @@ import { copyTextToClipboard } from '../../../../upstream/frontend/src/clipboard
 import { maskIPAddress } from '../../../../upstream/frontend/src/host-display';
 import { notify } from '../../../../upstream/frontend/src/ui-feedback';
 import { activeTab, activeTabId, listTabs, switchToTab, type TabInfo } from '../../../sidebar/hooks';
+import { getServers } from '../../../sidebar/store';
 import { shouldConfirmClose } from '../../close-confirm';
 import { mt } from '../../i18n';
 import { openSettings } from '../../settings';
@@ -26,6 +27,12 @@ import { fontSizeControl } from '../font-size';
 import { onLocaleChange, st } from '../i18n';
 import type { SkinModule } from '../types';
 import './chrome.css';
+
+/** 会话对应的已保存服务器的名称（标签名可能被改过，复制服务器本来的名称） */
+function serverName(tab: TabInfo | null | undefined): string | undefined {
+  const id = tab?.hostInfo?.serverId;
+  return typeof id === 'number' ? getServers()?.find((server) => server.id === id)?.name : undefined;
+}
 
 const SWIPE_SLOP = 10;
 const SWIPE_DISTANCE = 56;
@@ -94,6 +101,15 @@ function openMoreSheet(): void {
       label: st('actShortcuts'),
       visible: upstreamButtonAvailable('mobile-shortcuts-terminal-btn'),
       run: () => clickById('mobile-shortcuts-terminal-btn'),
+    },
+    {
+      icon: 'label',
+      label: mt('copyName'),
+      visible: !!serverName(tab),
+      run: () => {
+        const name = serverName(activeTab());
+        if (name) void copyTextToClipboard(name).then((ok) => ok && notify(mt('copied'), { variant: 'success', duration: 1500 }));
+      },
     },
     {
       icon: 'content_copy',

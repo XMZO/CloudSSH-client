@@ -486,6 +486,11 @@ function showItemMenu(event: MouseEvent, server: ServerConfig): void {
     { label: st('edit'), icon: 'edit', action: () => void openServerModal('edit', server.id) },
     { label: st('clone'), icon: 'content_copy', action: () => void openServerModal('clone', server.id) },
     {
+      label: st('copyName'),
+      icon: 'label',
+      action: () => void copyTextToClipboard(server.name).then((ok) => ok && notify(st('copied'), { variant: 'success', duration: 1500 })),
+    },
+    {
       label: st('copyHost'),
       icon: 'link',
       action: () => {

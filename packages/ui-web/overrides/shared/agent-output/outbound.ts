@@ -10,6 +10,7 @@
 import { getServers } from '../../sidebar/store';
 import { serversContext } from '../ai-remote/protocol';
 import { hasOtherServers, mentionsOtherServers } from '../ai-remote/servers';
+import { askContext } from './ask';
 import { activeStylePrompt, styledMessage } from './style';
 
 const MAX_NAME = 100;
@@ -58,11 +59,13 @@ export interface DecorateOptions {
  */
 const directorySent = new WeakSet<object>();
 const styleSent = new WeakMap<object, string>();
+const askSent = new WeakSet<object>();
 
 export function forgetSession(panel: unknown): void {
   if (!panel || typeof panel !== 'object') return;
   directorySent.delete(panel);
   styleSent.delete(panel);
+  askSent.delete(panel);
 }
 
 /**
@@ -81,6 +84,11 @@ export function decorateOutbound(message: string, panel: unknown, options: Decor
   if (!options.noDirectory && hasOtherServers(current) && (options.fresh || !known || mentionsOtherServers(message, current))) {
     parts.push(serversContext(current));
     if (tracked) directorySent.add(panel);
+  }
+  // 提问格式（ask.ts）：每个会话说明一次
+  if (tracked && (options.fresh || !askSent.has(panel))) {
+    parts.push(askContext());
+    askSent.add(panel);
   }
   const style = activeStylePrompt();
   const reminder = tracked && !options.fresh && !!style && styleSent.get(panel) === style;

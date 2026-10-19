@@ -8,7 +8,7 @@
  * - 拦截级命令（rm -rf /、格式化磁盘等）仍然拒绝：Worker 对 AI 自己的命令一律拦截，跨服务器操作与之保持一致。
  *
  * 模式就存在网页版同一个设置里（cloudssh_agent_mode = full）。网页版加载时只认交互与自动，这里在面板渲染完后
- * （构建钩子 __cloudsshAgentPanelReady）补上按钮、恢复完全模式；切到交互 / 自动由网页版自己处理。
+ * （构建钩子 __cloudsshAgentPanelReady，在 index.ts 里分发）补上按钮、恢复完全模式；切到交互 / 自动由网页版自己处理。
  */
 import { getLocale, onLocaleChange } from '../../../upstream/frontend/src/i18n';
 
@@ -106,7 +106,6 @@ let installed = false;
 export function installFullAccess(): void {
   if (installed) return;
   installed = true;
-  (globalThis as { __cloudsshAgentPanelReady?: (panel: unknown) => void }).__cloudsshAgentPanelReady = onPanelReady;
   onLocaleChange(() => {
     for (const button of [...buttons]) {
       if (button.isConnected) applyText(button);

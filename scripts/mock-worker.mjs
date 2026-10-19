@@ -432,7 +432,7 @@ function boxMenu() {
 
 const HELP = [
   '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  size  clear  exit',
-  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）',
+  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
 
@@ -452,6 +452,11 @@ function runCommand(line, write, term, ws) {
     case 'drop':
       // 不发关闭帧直接断开 TCP：浏览器侧是异常断线，网页版会自动重连
       setTimeout(() => ws.destroy(), 100);
+      break;
+    case 'hangup':
+      // 模拟远程主机断开（服务器重启、sshd 被杀……）：Worker 报错后以 1011 关闭
+      ws.sendJson({ type: 'error', message: '远程主机已关闭连接', event: 'remote_closed' });
+      setTimeout(() => ws.close(1011), 50);
       break;
     case 'help':
       write(`${HELP}\r\n`);
@@ -571,7 +576,18 @@ function mockRemoteReply(request) {
     const lines = request.split('\n').filter((line) => /^\[\d+\]|^exit code|^done:|^failed:|^rejected|^blocked/.test(line));
     return `已拿到其他服务器的结果：\n\n${lines.map((line) => `- ${line}`).join('\n')}\n\n✅ 跨服务器操作完成。`;
   }
+  // 模拟 AI 提问（客户端 agent-output/ask.ts 换成选项卡片）
+  if (request.includes('#ask-multi')) {
+    return '先确认两件事。\n\n```cloudssh-ask\n[{"question":"要检查哪些项目？","options":["磁盘占用","Swap 配置","BBR 是否生效"],"multiple":true},{"question":"发现问题后怎么处理？","options":["只报告","直接修复"]}]\n```';
+  }
+  if (request.includes('#ask')) {
+    return '提问功能没问题，下面给你来一道题：\n\n```cloudssh-ask\n{"question":"你希望我先查哪一项？","options":["磁盘占用","Swap 配置","BBR 是否生效"]}\n```';
+  }
   if (!request.includes('#remote')) return null;
+  if (request.includes('#remote-jump')) {
+    // 源就是跳板机 JP-C：直接连它后面的 JP-D；从当前服务器传给 JP-D 则经 JP-C 一跳
+    return '经跳板直连传两份文件。\n\n```cloudssh-action\n{"action":"copy","from":{"server":"JP-C","path":"/root/notes.txt"},"to":{"server":"JP-D","path":"/tmp/from-jump/"}}\n{"action":"copy","from":{"server":"current","path":"/root/deploy.sh"},"to":{"server":"JP-D","path":"/tmp/via-jump.sh"}}\n```';
+  }
   if (request.includes('#remote-slow')) {
     return '先在 DE-03 上跑一个慢命令。\n\n```cloudssh-action\n{"action":"exec","server":"DE-03 法兰克福","command":"sleep 20","timeout":60}\n```';
   }
@@ -714,16 +730,24 @@ function mockExec(cmd) {
     const tag = /-C '([^']+)'/.exec(cmd)?.[1] ?? 'cloudssh-xfer';
     return ok(`/tmp/cloudssh.mock\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockClientKeyMockClientKeyMock ${tag}`);
   }
-  if (cmd.includes('restrict ssh-ed25519')) {
-    console.log('ai-remote 临时公钥加入 authorized_keys');
+  // 临时公钥：跳板上带 permitopen（只许转发到下一跳），目标上只有 restrict
+  if ((m = /'(restrict[^ ']*) ssh-ed25519 /.exec(cmd))) {
+    console.log('ai-remote 临时公钥加入 authorized_keys：', m[1]);
     return ok();
   }
   if (cmd.includes('awk -v now=')) {
     console.log('ai-remote 临时公钥已清理');
     return ok();
   }
+  // 源上写 known_hosts 与跳板链的 ssh 配置
+  if (cmd.includes("/cfg'") && cmd.includes('Host cs-hop')) {
+    const hops = (cmd.match(/'Host cs-hop\d+'/g) ?? []).length;
+    const proxies = (cmd.match(/ProxyCommand ssh -F/g) ?? []).length;
+    console.log(`ai-remote ssh 配置：${hops} 跳，${proxies} 条 ProxyCommand`);
+    return ok();
+  }
   // 直连传输：ssh 到目标（文件 cat > 、目录 tar 管道）
-  if (cmd.includes('ssh -F /dev/null')) {
+  if (cmd.includes('ssh -F ')) {
     const esc = String.raw`'\\''`;
     let src;
     let dest;
@@ -736,7 +760,7 @@ function mockExec(cmd) {
     }
     if (!dest || !sftpTree.has(src)) return { output: 'mock ssh: cannot parse transfer', rc: 255 };
     copyTree(src, dest.startsWith('/') ? dest : `/root/${dest}`);
-    console.log('ai-remote 直连传输', src, '→', dest);
+    console.log('ai-remote 直连传输', src, '→', dest, `（连 ${/ cs-hop(\d+) /.exec(cmd)?.[1] ?? '?'} 号跳）`);
     return ok();
   }
   // 中转：源上打包、目标上解包

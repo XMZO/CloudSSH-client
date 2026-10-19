@@ -11,6 +11,7 @@ import { colorAdjuster, TerminalHighlighter, type CompiledRule } from './highlig
 import { HIGHLIGHT_CHANGED_EVENT, loadSettings } from './highlight-rules';
 import { ht } from './i18n';
 import { startReconnectCountdown } from './reconnect-countdown';
+import { installSessionEnd } from '../session-end';
 import './terminal.css';
 
 export { openHighlightEditor } from './highlight-editor';
@@ -94,6 +95,8 @@ export function installTerminalEnhancements(): void {
   };
   scope.__cloudsshTerminalCreated = onCreated;
   scope.__cloudsshTerminalDisposed = onDisposed;
+  // 服务器端断开时自动关闭标签（可开关，见 ../session-end.ts）
+  installSessionEnd();
   // 等待自动重连时：构建钩子在网页版写出“x 秒后重连”之后调用，把那一行换成精确到毫秒的实时倒计时并附上按键提示
   (globalThis as { __cloudsshReconnectCountdown?: typeof startReconnectCountdown }).__cloudsshReconnectCountdown =
     startReconnectCountdown;

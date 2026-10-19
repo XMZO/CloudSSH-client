@@ -13,10 +13,14 @@
  *    重置会话并带上前文回顾重发这条请求，不用手动开新会话。
  * 5. AI 跨服务器操作（../ai-remote）：在 AI 的回复里识别操作请求，由客户端在其他服务器上执行命令、传文件，结果回传给 AI。
  * 6. “完全”权限模式（full-access.ts）：交互 / 自动之外的第三种，任何确认都不提示直接执行（含跨服务器操作）。
+ * 7. 对话历史（history.ts）：按服务器保存对话，断线重连、重启后自动恢复最近一段，接着聊时附上前文回顾；“历史”里可切换。
+ * 8. 提问卡片（ask.ts）：AI 用 cloudssh-ask 代码块提问，显示成可点的选项（单选 / 多选 / 其他 + 补充），答案作为下一条消息发出。
  */
 import { installAiRemote } from '../ai-remote';
+import { enhanceAsk, installAsk } from './ask';
 import { notifyAgentFrame, onAgentFrame } from './frames';
-import { autoApprove, installFullAccess } from './full-access';
+import { autoApprove, installFullAccess, onPanelReady } from './full-access';
+import { historyPanelReady, historyReset, saveConversation, takeHistoryRecap } from './history';
 import { decorateOutbound, forgetSession } from './outbound';
 import { handleAgentFrame, rememberOutbound } from './recovery';
 import { openStyleEditor } from './style';
@@ -50,6 +54,8 @@ export function toneOf(text: string): Tone | null {
 }
 
 function highlight(root: Element): void {
+  // AI 的提问代码块换成问题卡片（ask.ts）
+  enhanceAsk(root);
   for (const cell of root.querySelectorAll<HTMLElement>('td')) {
     const text = cell.textContent ?? '';
     const tone = text.trim().length <= MAX_CELL ? toneOf(text) : null;
@@ -143,9 +149,16 @@ export function installAgentOutput(): void {
     }
   ).__cloudsshAgentOutbound = (message, panel, kind) => {
     rememberOutbound(message);
-    // 编辑更早的消息时 Worker 回到那之前的上下文，之前附过的内容可能已不在：重新附上
-    const decorated = decorateOutbound(message, panel, { fresh: kind === 'edit' });
+    // 面板里恢复 / 打开的历史对话 Worker 不知道：这条前面附上前文回顾（只附一次）
+    const recap = takeHistoryRecap(panel);
+    // 编辑更早的消息、或接着历史对话时，Worker 端没有之前附过的内容：重新附上
+    const decorated = decorateOutbound(recap ? `${recap}\n\n${message}` : message, panel, { fresh: kind === 'edit' || !!recap });
+    saveConversation(panel);
     return decorated === message ? undefined : { message: decorated };
+  };
+  (globalThis as { __cloudsshAgentPanelReady?: (panel: unknown) => void }).__cloudsshAgentPanelReady = (panel) => {
+    onPanelReady(panel);
+    historyPanelReady(panel);
   };
   (globalThis as { __cloudsshAgentFrame?: (panel: unknown, frame: Record<string, unknown>) => boolean }).__cloudsshAgentFrame = (
     panel,
@@ -159,8 +172,12 @@ export function installAgentOutput(): void {
   // Worker 端会话重置或上下文被压缩后，服务器目录与完整的回复风格提示要重新附上
   onAgentFrame((panel, frame) => {
     if (frame.subType === 'reset_done' || (frame.subType === 'context_status' && frame.compacted === true)) forgetSession(panel);
+    if (frame.subType === 'reset_done') historyReset(panel);
+    // 每轮结束、出错后把对话记进历史（防抖，网页版先处理完这一帧）
+    if (frame.subType === 'run_end' || frame.subType === 'error' || frame.subType === 'stream_end' || frame.subType === 'response') saveConversation(panel);
   });
   installFullAccess();
+  installAsk();
   installAiRemote();
   const start = () => {
     watchReplies();

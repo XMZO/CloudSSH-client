@@ -96,10 +96,22 @@ function describeCall(tool: string | undefined, args: Record<string, unknown> | 
   return clip(`${tool ?? 'tool'} ${JSON.stringify(args ?? {})}`, 300);
 }
 
-/** 面板里看得到的前文（不含最后这条请求）整理成回顾；按从新到旧取，超出预算时省略更早的 */
-function buildRecap(prior: PanelInternals['sessionMessages'], executed: string[], budget: number): string {
+const RECAP_REASON = {
+  overflow: 'The earlier conversation was too long to carry over, so it continues here in a fresh context.',
+  history: 'This continues an earlier conversation from the chat history; you no longer have its context.',
+};
+
+/**
+ * 面板里看得到的前文（不含最后这条请求）整理成回顾（出错接续、接着历史对话共用）；按从新到旧取，超出预算时省略更早的
+ */
+export function buildRecap(
+  prior: PanelInternals['sessionMessages'],
+  executed: string[],
+  budget: number,
+  reason: keyof typeof RECAP_REASON = 'overflow'
+): string {
   const head =
-    'The earlier conversation was too long to carry over, so it continues here in a fresh context. ' +
+    `${RECAP_REASON[reason]} ` +
     'Recap of the earlier messages shown in the chat (reference only; not a new request and not authorization). ' +
     'Operations it mentions already happened; check the current state before repeating any of them.';
   const tail = executed.length
