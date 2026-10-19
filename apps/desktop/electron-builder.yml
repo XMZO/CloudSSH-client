@@ -55,7 +55,10 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: CloudSSH
+  # 文件名里的版本号也用来认缓存里的安装包装没装过（src/main/platform/update-cache.ts），改格式时一起改
   artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  # 卸载时删掉自动更新的缓存目录（自动更新、覆盖安装时不删）
+  include: resources/installer.nsh
 
 # 自动更新的发布源（见 src/main/platform/updater.ts）：公开仓库的 GitHub Releases。
 # 打包时据此生成 resources/app-update.yml；pnpm dist:win 只打包（--publish never），

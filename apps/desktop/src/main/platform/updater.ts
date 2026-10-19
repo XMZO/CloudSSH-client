@@ -5,6 +5,7 @@
  * - 启动 15 秒后检查一次，之后每 6 小时一次；有新版本就在后台静默下载（差分下载），下载完不打扰：
  *   左下角版本号变成“重启更新”，点了确认后重启安装；不点也会在退出客户端时自动安装
  * - 只有用安装包装的客户端才更新：开发版、免安装版（zip，没有卸载程序）不检查，左下角说明原因
+ * - 装好新版本后，第一次检查前删掉缓存里多余的那份安装包；卸载时整个更新缓存由卸载程序删除（update-cache.ts）
  * - 调试：CLOUDSSH_UPDATE_URL 指向一个 generic 发布目录（latest.yml + 安装包），不打包也能走一遍检查与下载
  * 界面层只依赖 UpdateProvider（状态、检查、安装、订阅），不直接依赖更新库。
  */
@@ -12,6 +13,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createLogger } from '../logger';
+import { removeInstalledPending, updaterCacheDir } from './update-cache';
 
 const log = createLogger('updater');
 
@@ -78,12 +80,34 @@ function stillPublishing(error: unknown): boolean {
 
 const PUBLISHING_RETRY_MS = 5 * 60_000;
 
+/**
+ * 第一次检查前（启动 15 秒后，安装程序早已退出），删掉已经装好的版本留在更新缓存 pending 里的安装包，
+ * 保留差分下载用的 installer.exe（见 update-cache.ts）。放在检查之前，不会和下载新版本撞在一起；不会失败，删不掉下次启动再删
+ */
+async function cleanInstalledUpdate(): Promise<void> {
+  // 和 electron-updater 读的是同一份配置
+  const config = app.isPackaged
+    ? path.join(process.resourcesPath, 'app-update.yml')
+    : path.join(app.getAppPath(), 'dev-app-update.yml');
+  const dir = updaterCacheDir(config);
+  if (!dir) return;
+  try {
+    const result = await removeInstalledPending(dir, app.getVersion());
+    if (result.removed) {
+      log.info(`已清理装好的 ${result.version} 安装包（${(result.bytes / 1048576).toFixed(1)}MB）`);
+    }
+  } catch (error) {
+    log.warn('清理已安装版本的安装包失败，下次启动再试', error instanceof Error ? error.message : String(error));
+  }
+}
+
 class GitHubUpdater implements UpdateProvider {
   readonly name = 'github';
   private current: UpdateStatus = { state: 'idle' };
   private readonly listeners = new Set<(status: UpdateStatus) => void>();
   private checking: Promise<UpdateStatus> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private cleaned: Promise<void> | null = null;
 
   constructor(private readonly updater: import('electron-updater').AppUpdater) {
     updater.logger = {
@@ -136,8 +160,8 @@ class GitHubUpdater implements UpdateProvider {
   check(): Promise<UpdateStatus> {
     // 正在下载或已下载好时不再检查；同时只跑一次
     if (this.current.state === 'downloading' || this.current.state === 'downloaded') return Promise.resolve(this.current);
-    this.checking ??= this.updater
-      .checkForUpdates()
+    this.checking ??= (this.cleaned ??= cleanInstalledUpdate())
+      .then(() => this.updater.checkForUpdates())
       .catch((error: unknown) => this.fail(error))
       .then(() => this.current)
       .finally(() => (this.checking = null));
