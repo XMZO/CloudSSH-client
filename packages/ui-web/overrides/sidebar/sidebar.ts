@@ -582,9 +582,10 @@ function onVersionClick(): void {
     .then((status) => {
       updateStatus = status;
       if (status.state === 'not-available') flash = { text: st('updateLatestShort'), until: Date.now() + 2500 };
-      if (status.state === 'error') flash = { text: st('updateFailShort'), until: Date.now() + 2500 };
+      // 真失败时直接说原因（“连不上 GitHub”之类），提示停留久一点
+      if (status.state === 'error') flash = { text: st('updateFailShort', { m: status.message }), until: Date.now() + 4000 };
       renderVersion();
-      setTimeout(renderVersion, 2600);
+      setTimeout(renderVersion, 4100);
     })
     .catch(() => undefined);
 }

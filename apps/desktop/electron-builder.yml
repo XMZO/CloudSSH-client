@@ -59,9 +59,10 @@ nsis:
 
 # 自动更新的发布源（见 src/main/platform/updater.ts）：公开仓库的 GitHub Releases。
 # 打包时据此生成 resources/app-update.yml；pnpm dist:win 只打包（--publish never），
-# pnpm release:win 打包并上传安装包、blockmap 与 latest.yml（需要环境变量 GH_TOKEN）
+# pnpm release:win 打包并上传安装包、blockmap 与 latest.yml 到草稿 Release，全部传完由 scripts/publish-release.mjs
+# 核对后再公开（直接建正式 Release 会有文件没传完、客户端找不到 latest.yml 的空档）。需要环境变量 GH_TOKEN
 publish:
   provider: github
   owner: XMZO
   repo: CloudSSH-client
-  releaseType: release
+  releaseType: draft

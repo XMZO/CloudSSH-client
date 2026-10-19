@@ -63,15 +63,27 @@ function shortMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const line = text.split('\n')[0];
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ECONNRESET|net::ERR_/i.test(text)) return '连不上 GitHub';
-  if (/\b404\b/.test(text)) return '还没有发布过版本';
+  if (/\b404\b|No published versions/i.test(text)) return '还没有发布过版本';
   return line.length > 120 ? `${line.slice(0, 117)}…` : line;
 }
+
+/**
+ * 最新的 Release 里还没有 latest.yml：新版本正在上传（文件还没传完），不是检查失败。
+ * 当作“暂时没有可用的更新”，过几分钟再查
+ */
+function stillPublishing(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /latest\.yml[\s\S]*\b404\b/i.test(text);
+}
+
+const PUBLISHING_RETRY_MS = 5 * 60_000;
 
 class GitHubUpdater implements UpdateProvider {
   readonly name = 'github';
   private current: UpdateStatus = { state: 'idle' };
   private readonly listeners = new Set<(status: UpdateStatus) => void>();
   private checking: Promise<UpdateStatus> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly updater: import('electron-updater').AppUpdater) {
     updater.logger = {
@@ -92,10 +104,24 @@ class GitHubUpdater implements UpdateProvider {
     });
     updater.on('update-not-available', () => this.set({ state: 'not-available', checkedAt: Date.now() }));
     updater.on('update-downloaded', (info) => this.set({ state: 'downloaded', version: info.version }));
-    updater.on('error', (error) => {
-      // 已下载好的不因为后面一次检查失败而丢掉“重启更新”
-      if (this.current.state !== 'downloaded') this.set({ state: 'error', message: shortMessage(error) });
-    });
+    updater.on('error', (error) => this.fail(error));
+  }
+
+  /** 检查出错：已下载好的不因为后面一次失败丢掉“重启更新”；新版本正在发布时按“暂时没有更新”处理并稍后再查 */
+  private fail(error: unknown): void {
+    if (this.current.state === 'downloaded') return;
+    if (stillPublishing(error)) {
+      if (this.current.state !== 'not-available') this.set({ state: 'not-available', checkedAt: Date.now() });
+      if (!this.retryTimer) {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          void this.check();
+        }, PUBLISHING_RETRY_MS);
+        this.retryTimer.unref?.();
+      }
+      return;
+    }
+    this.set({ state: 'error', message: shortMessage(error) });
   }
 
   private set(status: UpdateStatus): void {
@@ -112,9 +138,7 @@ class GitHubUpdater implements UpdateProvider {
     if (this.current.state === 'downloading' || this.current.state === 'downloaded') return Promise.resolve(this.current);
     this.checking ??= this.updater
       .checkForUpdates()
-      .catch((error: unknown) => {
-        if (this.current.state !== 'downloaded') this.set({ state: 'error', message: shortMessage(error) });
-      })
+      .catch((error: unknown) => this.fail(error))
       .then(() => this.current)
       .finally(() => (this.checking = null));
     return this.checking;

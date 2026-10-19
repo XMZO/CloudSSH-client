@@ -11,7 +11,7 @@
     "build": "pnpm run build:ui && pnpm --filter @cloudssh/desktop build",
     "build:ui": "pnpm --filter @cloudssh/ui-web build",
     "dist:win": "pnpm run build:ui && pnpm --filter @cloudssh/desktop dist:win",
-    "release:win": "pnpm run build:ui && pnpm --filter @cloudssh/desktop release:win",
+    "release:win": "pnpm run build:ui && pnpm --filter @cloudssh/desktop release:win && node scripts/publish-release.mjs",
     "sync:web-ui": "node scripts/sync-web-ui.mjs",
     "typecheck": "pnpm -r run typecheck",
     "test": "node scripts/version.mjs check && pnpm -r run test",
