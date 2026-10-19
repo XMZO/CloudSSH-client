@@ -11,7 +11,9 @@
 import { getLocale } from '../../../upstream/frontend/src/i18n';
 import { notify } from '../../../upstream/frontend/src/ui-feedback';
 import { at } from './i18n';
-import { buildRecap, type PanelInternals } from './recovery';
+import { instanceKey } from './instance';
+import { expectReset } from './outbound';
+import { buildRecap, clearSummaryBase, RECAP_BYTES, type PanelInternals } from './recovery';
 
 interface StoredMessage {
   role: 'user' | 'response';
@@ -52,8 +54,6 @@ const STORE = 'conversations';
 const PER_SERVER = 30;
 const PER_CONVERSATION = 80;
 const MESSAGE_CLIP = 30_000;
-/** 回顾的长度：Worker 拒收 16000 字以上的消息，留出原话与附加内容的余量 */
-const RECAP_BUDGET = 6000;
 
 const states = new WeakMap<object, PanelState>();
 
@@ -119,16 +119,6 @@ async function remove(id: string): Promise<void> {
   }
 }
 
-/** 实例：电脑端页面就在实例的地址下；手机端所有实例共用一个页面地址，取当前实例 */
-function instanceKey(): string {
-  const mobile = (window as { __cloudsshMobile?: { state?: { current?: { baseUrl?: string } } | null } }).__cloudsshMobile;
-  const base = mobile?.state?.current?.baseUrl;
-  try {
-    return base ? new URL(base).host : location.host;
-  } catch {
-    return location.host;
-  }
-}
 
 // ---------- 面板 ----------
 
@@ -226,7 +216,7 @@ export function takeHistoryRecap(panel: unknown): string {
   state.needsRecap = false;
   const lastUser = panel.sessionMessages.map((item) => item.role).lastIndexOf('user');
   const prior = lastUser > 0 ? panel.sessionMessages.slice(0, lastUser) : [];
-  return prior.length ? buildRecap(prior, [], RECAP_BUDGET, 'history') : '';
+  return prior.length ? buildRecap(prior, [], RECAP_BYTES, 'history') : '';
 }
 
 /** Worker 端会话重置（新对话或出错接续）：回顾已经不需要了 */
@@ -263,6 +253,8 @@ async function openConversation(panel: HistoryPanel, conversation: Conversation)
   }
   // 换成另一段对话：Worker 端清空上下文，下一条消息带上这段的回顾
   state.ownReset = true;
+  expectReset(panel);
+  clearSummaryBase(panel);
   panel.wsSend?.(JSON.stringify({ type: 'agent_reset' }));
   panel.activeRequestId = null;
   panel.hasConfirmedSession = false;

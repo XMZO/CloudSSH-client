@@ -8,15 +8,17 @@
  *
  * 遇到这几种错误（responses_schema / responses_budget / responses_history）时：重置 Worker 端会话，把面板里看得到的
  * 前文整理成一段简短回顾放在原请求前面，在新会话里重发这条请求（或编辑后的内容）。面板里的对话照常保留，
- * 只加一行说明；失败那一轮已经执行过的命令写进回顾，提醒模型先检查状态再决定是否重做。
- * 每条请求最多这样接续两次，仍失败就显示原来的错误。
+ * 只加一行说明；失败那一轮已经执行过的命令写进回顾，提醒模型先检查状态再决定是否重做。之前压缩过（compact.ts）
+ * 就用当时的摘要加上之后的消息。每条请求最多这样接续两次，仍失败就显示原来的错误。
+ * 换了 AI 模型后，已经跑过的会话再发消息 Worker 报 responses_config_changed（会话绑定了旧模型），同样这样接着做。
  *
  * 构建钩子（vite.config.ts）在网页版 AI 面板处理每个 agent_frame 前调用 __cloudsshAgentFrame(面板, 帧)，返回 true 时
  * 网页版不再处理这一帧。用到的面板内部字段与方法缺失时（网页版改了实现）不接管，行为与网页版一致。
  */
 import { getLocale } from '../../../upstream/frontend/src/i18n';
 import { at } from './i18n';
-import { decorateOutbound } from './outbound';
+import { bytesOf, meterSent } from './meter';
+import { decorateOutbound, expectReset } from './outbound';
 
 /** 用到的网页版 AgentPanel 内部成员（ai-remote 也用） */
 export interface PanelInternals {
@@ -55,11 +57,12 @@ interface RequestState {
   recoveries: number;
 }
 
-const RECOVERABLE = new Set(['responses_schema', 'responses_budget', 'responses_history']);
+const RECOVERABLE = new Set(['responses_schema', 'responses_budget', 'responses_history', 'responses_config_changed']);
 const MAX_RECOVERIES = 2;
 /** Worker 拒收超过 16000 字的消息，留些余量 */
 const MAX_MESSAGE = 15_500;
-const RECAP_BUDGET = 6000;
+/** 回顾按 UTF-8 字节计（Worker 也按字节算上下文，见 meter.ts）：约占整理线的四分之一，中文约 3000 字 */
+export const RECAP_BYTES = 9000;
 const USER_CLIP = 600;
 const REPLY_CLIP = 1200;
 
@@ -99,16 +102,48 @@ function describeCall(tool: string | undefined, args: Record<string, unknown> | 
 const RECAP_REASON = {
   overflow: 'The earlier conversation was too long to carry over, so it continues here in a fresh context.',
   history: 'This continues an earlier conversation from the chat history; you no longer have its context.',
+  model: 'The AI model was switched, so the conversation continues here in a fresh context.',
+  compact: 'The CloudSSH app compacted the conversation to save context, so it continues here in a fresh context.',
 };
 
+/** 最近一次压缩（compact.ts）的摘要与当时面板里有几条消息：之后出错接续时用“摘要 + 之后的消息”做回顾 */
+const summaryBases = new WeakMap<object, { summary: string; index: number }>();
+
+export function setSummaryBase(panel: object, summary: string, index: number): void {
+  summaryBases.set(panel, { summary, index });
+}
+
+export function clearSummaryBase(panel: object): void {
+  summaryBases.delete(panel);
+}
+
+export function summaryBaseOf(panel: object): { summary: string; index: number } | null {
+  return summaryBases.get(panel) ?? null;
+}
+
+/** 截到 limit 字节以内（按字符截，不切坏多字节字符） */
+export function clipBytes(text: string, limit: number): string {
+  if (bytesOf(text) <= limit) return text;
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (bytesOf(text.slice(0, mid)) + 3 <= limit) low = mid;
+    else high = mid - 1;
+  }
+  return `${text.slice(0, low)}…`;
+}
+
 /**
- * 面板里看得到的前文（不含最后这条请求）整理成回顾（出错接续、接着历史对话共用）；按从新到旧取，超出预算时省略更早的
+ * 面板里看得到的前文（不含最后这条请求）整理成回顾（出错接续、接着历史对话、压缩失败时共用）；按从新到旧取，
+ * 超出预算（UTF-8 字节）时省略更早的。summary 是之前压缩时的摘要，放在这些消息前面
  */
 export function buildRecap(
   prior: PanelInternals['sessionMessages'],
   executed: string[],
   budget: number,
-  reason: keyof typeof RECAP_REASON = 'overflow'
+  reason: keyof typeof RECAP_REASON = 'overflow',
+  summary = ''
 ): string {
   const head =
     `${RECAP_REASON[reason]} ` +
@@ -117,7 +152,11 @@ export function buildRecap(
   const tail = executed.length
     ? `\nAlready started while attempting the request below (results unavailable; inspect the current state before running any of them again):\n${executed.map((item) => `- ${item}`).join('\n')}`
     : '';
-  let room = budget - head.length - tail.length - 64;
+  let room = budget - bytesOf(head) - bytesOf(tail) - 64;
+  const intro = summary
+    ? `[summary of the conversation before these messages, written when it was compacted]\n${clipBytes(summary.trim(), Math.floor(room / 2))}`
+    : '';
+  room -= bytesOf(intro);
   const lines: string[] = [];
   let omitted = false;
   for (let i = prior.length - 1; i >= 0; i--) {
@@ -125,15 +164,17 @@ export function buildRecap(
     const line =
       item.role === 'user' ? `[user] ${clip(item.content, USER_CLIP)}` : item.role === 'response' ? `[assistant] ${clip(item.content, REPLY_CLIP)}` : '';
     if (!line) continue;
-    if (line.length + 1 > room) {
+    const size = bytesOf(line) + 1;
+    if (size > room) {
       omitted = true;
       break;
     }
-    room -= line.length + 1;
+    room -= size;
     lines.unshift(line);
   }
-  if (!lines.length && !tail) return '';
+  if (!lines.length && !tail && !intro) return '';
   if (omitted) lines.unshift('[earlier messages omitted]');
+  if (intro) lines.unshift(intro);
   return `<earlier_conversation>\n${head}\n${lines.join('\n')}${tail}\n</earlier_conversation>`;
 }
 
@@ -162,17 +203,27 @@ function closeFailedAttempt(panel: PanelInternals, notice: string): void {
 
 function recover(panel: PanelInternals, state: RequestState, code: string): boolean {
   if (state.recoveries >= MAX_RECOVERIES || !state.outbound.trim()) return false;
-  // 新会话里要重新告诉 AI 有哪些服务器、怎么跨服务器操作
+  // 新会话里之前附过的服务器信息、回复风格都不在了：全部重新附上
   const original = decorateOutbound(state.outbound, panel, { fresh: true });
   if (original.length > MAX_MESSAGE) return false;
+  // 刚附上的这些就是发给新会话的：这次重置回来时不要再忘掉
+  expectReset(panel, true);
   const lastUser = panel.sessionMessages.map((item) => item.role).lastIndexOf('user');
-  const prior = lastUser > 0 ? panel.sessionMessages.slice(0, lastUser) : [];
-  // 编辑被拒时 Worker 还没开始执行，只有上下文出错的那一轮才可能已经跑过命令
-  const executed = code === 'responses_history' ? [] : state.executed;
-  const recap = buildRecap(prior, executed, Math.min(RECAP_BUDGET, MAX_MESSAGE - original.length - 2));
+  // 之前压缩过：用摘要加上压缩之后的消息
+  const base = summaryBases.get(panel);
+  const from = base && base.index <= lastUser ? base.index : 0;
+  const prior = lastUser > 0 ? panel.sessionMessages.slice(from, lastUser) : [];
+  // 编辑被拒、换了模型时 Worker 还没开始执行，只有上下文出错的那一轮才可能已经跑过命令
+  const before = code === 'responses_history' || code === 'responses_config_changed';
+  const executed = before ? [] : state.executed;
+  const reason = code === 'responses_config_changed' ? 'model' : 'overflow';
+  const recap = buildRecap(prior, executed, Math.min(RECAP_BYTES, MAX_MESSAGE - original.length - 2), reason, from ? base!.summary : '');
   const message = recap ? `${recap}\n\n${original}` : original;
 
-  closeFailedAttempt(panel, at(code === 'responses_history' ? 'recoveredEdit' : 'recovered'));
+  closeFailedAttempt(
+    panel,
+    at(code === 'responses_history' ? 'recoveredEdit' : code === 'responses_config_changed' ? 'recoveredModel' : 'recovered')
+  );
   // Worker 立即处理 agent_reset（不排队），随后的 agent_start 在全新的上下文里开始
   panel.wsSend!(JSON.stringify({ type: 'agent_reset' }));
   startTurn(panel, message, state.outbound, { recoveries: state.recoveries + 1 });
@@ -194,6 +245,7 @@ export function startTurn(
   panel.isAgentRunning = true;
   panel.updateInputState();
   states.set(panel, { requestId, outbound, executed: [], recoveries: options.recoveries ?? 0 });
+  meterSent(panel, message);
   panel.wsSend!(
     JSON.stringify({
       type: 'agent_start',

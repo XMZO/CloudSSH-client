@@ -456,7 +456,8 @@ export default defineConfig(({ command, mode }) => {
       port,
       strictPort: true,
       fs: {
-        allow: [packageDir, path.resolve(packageDir, '..', '..', 'node_modules')],
+        // tools/reasoning-proxy：思考深度代理的代码内置在 AI 面板里供复制（agent-output/bar.ts）
+        allow: [packageDir, path.resolve(packageDir, '..', '..', 'node_modules'), path.resolve(packageDir, '..', '..', 'tools')],
       },
       // 桌面端页面运行在 Worker origin 下（由 origin bridge 转发到本服务），
       // HMR WebSocket 必须显式指回本地开发服务器，否则会连到 Worker。

@@ -8,10 +8,10 @@
 import type { ServerConfig } from '@cloudssh/core';
 import { onAgentFrame } from '../agent-output/frames';
 import { isFullAccess } from '../agent-output/full-access';
-import { decorateOutbound } from '../agent-output/outbound';
+import { decorateOutbound, directoryKnown, markDirectorySent } from '../agent-output/outbound';
 import { startTurn, usable, type PanelInternals } from '../agent-output/recovery';
 import { rt } from './i18n';
-import { CONTINUE_HINT, parseActions, type Action } from './protocol';
+import { CONTINUE_HINT, parseActions, serversContext, type Action } from './protocol';
 import { isBlockedCommand, needsConfirmation } from './safety';
 import { resolveServer, serverDirectory } from './servers';
 import { closeRemoteSession, remoteExec, RemoteError } from './session';
@@ -20,7 +20,8 @@ import { ActionCard, ActionGroup, formatDuration, formatSize, noticeLine } from 
 
 const MAX_ROUNDS = 8;
 /** 回传给 AI 的结果总长（Worker 拒收 16000 字以上的消息） */
-const RESULT_BUDGET = 11_000;
+/** 每轮结果的总长（字）：Worker 按字节算上下文、整理得早（见 agent-output/meter.ts），结果不宜太长 */
+const RESULT_BUDGET = 7000;
 
 interface Chain {
   requestId: string;
@@ -253,7 +254,9 @@ async function runRound(panel: PanelInternals, chain: Chain, reply: string): Pro
       result = 'cancelled by the user, not executed';
     } else if (action.kind === 'list') {
       card.set('done', rt('list'));
-      result = `list servers:\n${serverDirectory(panel.serverId ?? null)}`;
+      // 只拿到过简介的会话：连同用法一起给（serversContext），之后再要只给列表
+      result = directoryKnown(panel) ? `list servers:\n${serverDirectory(panel.serverId ?? null)}` : serversContext(panel.serverId ?? null);
+      markDirectorySent(panel);
     } else if (action.kind === 'exec') {
       result = await runExec(panel, action, card, cancelled, budget);
     } else {

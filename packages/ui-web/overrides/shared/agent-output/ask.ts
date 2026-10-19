@@ -247,13 +247,12 @@ export function installAsk(): void {
 export function askContext(): string {
   return [
     '<cloudssh_ask>',
-    "From the user's CloudSSH app: when you need the user to choose or confirm something (which item to look at first, which server, which option), ask with clickable choices instead of a question in prose.",
-    `End your reply with one fenced code block whose language is ${ASK_LANGUAGE} containing JSON, then stop and wait:`,
+    "From the user's CloudSSH app: when the user should choose or confirm something (which item first, which server, which option), end your reply with one short sentence and a fenced block in language " +
+      `${ASK_LANGUAGE}, then stop; it shows as clickable choices:`,
     '```' + ASK_LANGUAGE,
-    '{"question":"Which one should I check first?","options":["Disk usage","Swap","BBR"],"multiple":false}',
+    '{"question":"Which one first?","options":["Disk usage","Swap"],"multiple":false}',
     '```',
-    'Use a JSON array for up to 4 questions; give 2-6 short options each and set "multiple": true when several can be picked. The app always adds an "Other" choice where the user can type their own answer, and sends the answer as the user\'s next message.',
-    "Write the question and options in the user's language, put one short sentence of context before the block, and do not combine it with a cloudssh-action block. To approve a risky command, keep using your ask_user_confirmation tool.",
+    'Up to 4 questions as a JSON array, 2-6 short options each, in the user\'s language. The app adds an "Other" choice with a text box and sends the answer as the user\'s next message. Never combine it with a cloudssh-action block; for risky commands keep using your confirmation tool.',
     '</cloudssh_ask>',
   ].join('\n');
 }

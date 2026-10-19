@@ -15,13 +15,19 @@
  * 6. “完全”权限模式（full-access.ts）：交互 / 自动之外的第三种，任何确认都不提示直接执行（含跨服务器操作）。
  * 7. 对话历史（history.ts）：按服务器保存对话，断线重连、重启后自动恢复最近一段，接着聊时附上前文回顾；“历史”里可切换。
  * 8. 提问卡片（ask.ts）：AI 用 cloudssh-ask 代码块提问，显示成可点的选项（单选 / 多选 / 其他 + 补充），答案作为下一条消息发出。
+ * 9. 输入框下方一行（bar.ts）：模型（可切换）、思考深度（经思考深度代理加进请求，ai-model.ts）、上下文占用圆环（meter.ts 估算）。
+ * 10. 压缩上下文（compact.ts）：让 AI 写摘要后重置会话、带着摘要接着聊，带进度条；手动、/compact、快满时自动、切换模型前。
  */
 import { installAiRemote } from '../ai-remote';
 import { enhanceAsk, installAsk } from './ask';
+import { loadAiConfig } from './ai-model';
+import { addComposerBar, installComposerBar } from './bar';
+import { autoCompactCheck, compactFrame, dropCompact, installCompactCommand, reasoningHintCheck, takeCompactRecap, workerCompactNotice } from './compact';
 import { notifyAgentFrame, onAgentFrame } from './frames';
 import { autoApprove, installFullAccess, onPanelReady } from './full-access';
 import { historyPanelReady, historyReset, saveConversation, takeHistoryRecap } from './history';
-import { decorateOutbound, forgetSession } from './outbound';
+import { meterFrame, meterSent } from './meter';
+import { consumeReset, decorateOutbound, forgetSession } from './outbound';
 import { handleAgentFrame, rememberOutbound } from './recovery';
 import { openStyleEditor } from './style';
 import { at } from './i18n';
@@ -149,35 +155,61 @@ export function installAgentOutput(): void {
     }
   ).__cloudsshAgentOutbound = (message, panel, kind) => {
     rememberOutbound(message);
-    // 面板里恢复 / 打开的历史对话 Worker 不知道：这条前面附上前文回顾（只附一次）
-    const recap = takeHistoryRecap(panel);
+    // 刚压缩过：附上摘要；面板里恢复 / 打开的历史对话 Worker 不知道：附上前文回顾（都只附一次）
+    const compacted = takeCompactRecap(panel);
+    const history = takeHistoryRecap(panel);
+    const recap = compacted || history;
     // 编辑更早的消息、或接着历史对话时，Worker 端没有之前附过的内容：重新附上
-    const decorated = decorateOutbound(recap ? `${recap}\n\n${message}` : message, panel, { fresh: kind === 'edit' || !!recap });
+    const decorated = decorateOutbound(recap ? `${recap}\n\n${message}` : message, panel, {
+      fresh: kind === 'edit' || !!recap,
+      about: message,
+    });
+    meterSent(panel, decorated);
     saveConversation(panel);
     return decorated === message ? undefined : { message: decorated };
   };
   (globalThis as { __cloudsshAgentPanelReady?: (panel: unknown) => void }).__cloudsshAgentPanelReady = (panel) => {
     onPanelReady(panel);
     historyPanelReady(panel);
+    addComposerBar(panel);
+    installCompactCommand(panel);
   };
   (globalThis as { __cloudsshAgentFrame?: (panel: unknown, frame: Record<string, unknown>) => boolean }).__cloudsshAgentFrame = (
     panel,
     frame
   ) => {
+    // 每轮开始、或 Worker 说模型配置变了（在别处改过）时重新读 AI 配置，输入框下方的模型名跟着更新
+    if (frame.subType === 'run_start') void loadAiConfig();
+    if (frame.subType === 'error' && frame.code === 'responses_config_changed') void loadAiConfig(true);
+    // 压缩那一轮（compact.ts）的帧全部接管，确认请求一律拒绝
+    if (compactFrame(panel, frame)) return true;
     if (autoApprove(panel, frame)) return true;
     if (handleAgentFrame(panel, frame)) return true;
     notifyAgentFrame(panel, frame);
     return false;
   };
-  // Worker 端会话重置或上下文被压缩后，服务器目录与完整的回复风格提示要重新附上
+  // Worker 端会话重置或上下文被压缩后，服务器目录与完整的回复风格提示要重新附上（客户端自己发的重置在发的时候就处理了）
   onAgentFrame((panel, frame) => {
-    if (frame.subType === 'reset_done' || (frame.subType === 'context_status' && frame.compacted === true)) forgetSession(panel);
-    if (frame.subType === 'reset_done') historyReset(panel);
+    if (frame.subType === 'reset_done') {
+      // 网页版的“新对话”：之前压缩的摘要也不要了
+      if (!consumeReset(panel)) {
+        forgetSession(panel);
+        dropCompact(panel);
+      }
+      historyReset(panel);
+    }
+    if (frame.subType === 'context_status' && frame.compacted === true) forgetSession(panel);
+    // 上下文占用估算，之后看要不要自动压缩、接口是不是拒绝了思考深度
+    meterFrame(panel as object, frame);
+    autoCompactCheck(panel, frame);
+    reasoningHintCheck(panel, frame);
+    workerCompactNotice(panel, frame);
     // 每轮结束、出错后把对话记进历史（防抖，网页版先处理完这一帧）
     if (frame.subType === 'run_end' || frame.subType === 'error' || frame.subType === 'stream_end' || frame.subType === 'response') saveConversation(panel);
   });
   installFullAccess();
   installAsk();
+  installComposerBar();
   installAiRemote();
   const start = () => {
     watchReplies();

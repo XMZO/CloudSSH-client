@@ -599,3 +599,584 @@
     font-size: 16px;
   }
 }
+
+/* ---------- 输入框下方一行（bar.ts）：模型、思考深度、上下文占用圆环 ---------- */
+
+.cs-agent-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+.cs-bar-spacer {
+  flex: 1 1 auto;
+}
+
+.cs-bar-btn,
+.cs-bar-ring {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cs-bar-btn:is(:hover, :focus-visible, [aria-expanded='true']),
+.cs-bar-ring:is(:hover, :focus-visible, [aria-expanded='true']) {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+  outline: none;
+}
+
+.cs-bar-btn[hidden] {
+  display: none;
+}
+
+.cs-bar-btn .material-symbols-outlined {
+  flex: none;
+  font-size: 15px;
+}
+
+.cs-bar-btn .cs-bar-caret {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.cs-bar-model .cs-bar-label {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code, ui-monospace, monospace);
+}
+
+.cs-bar-ring {
+  flex: none;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-bar-ring svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.cs-ring-track,
+.cs-ring-fill {
+  fill: none;
+  stroke-width: 2.6;
+}
+
+.cs-ring-track {
+  stroke: color-mix(in srgb, var(--on-surface) 16%, transparent);
+}
+
+.cs-ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.cs-bar-ring[data-level='warn'] .cs-ring-fill {
+  stroke: var(--cs-tone-warn, #d29922);
+}
+
+.cs-bar-ring[data-level='bad'] .cs-ring-fill {
+  stroke: var(--error);
+}
+
+.cs-bar-ring[data-busy='true'] svg {
+  animation: cs-ring-spin 1.2s linear infinite;
+}
+
+@keyframes cs-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-bar-ring[data-busy='true'] svg {
+    animation: none;
+  }
+}
+
+/* 弹出层（挂在 body 上，跟随主题变量） */
+.cs-pop {
+  position: fixed;
+  z-index: 1600;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(340px, calc(100vw - 16px));
+  max-height: min(440px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg));
+  color: var(--on-surface);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 28%);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.cs-pop:focus {
+  outline: none;
+}
+
+.cs-pop-model {
+  width: 300px;
+}
+
+.cs-pop-effort,
+.cs-pop-context {
+  width: 290px;
+}
+
+.cs-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cs-pop-title {
+  margin-bottom: 6px;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cs-pop-value {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-pop-meter {
+  height: 6px;
+  margin: 2px 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+}
+
+.cs-pop-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.cs-pop-meter[data-level='warn'] i {
+  background: var(--cs-tone-warn, #d29922);
+}
+
+.cs-pop-meter[data-level='bad'] i {
+  background: var(--error);
+}
+
+.cs-pop-line {
+  margin: 2px 0;
+}
+
+.cs-pop-line.is-muted {
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+.cs-pop-line.is-error {
+  display: block;
+  color: var(--error);
+  font-size: 11.5px;
+}
+
+.cs-pop-line[hidden] {
+  display: none;
+}
+
+.cs-pop-note {
+  margin: 8px 0 0;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.cs-pop-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-pop-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.cs-pop-check input {
+  accent-color: var(--accent);
+}
+
+.cs-pop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cs-pop-btn .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.cs-pop-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cs-pop-search {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  margin-bottom: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.cs-pop-search:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cs-pop-list {
+  display: grid;
+  gap: 1px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.cs-pop-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cs-pop-item:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  outline: none;
+}
+
+.cs-pop-item[aria-selected='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cs-pop-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cs-pop-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-pop-model .cs-pop-item-name {
+  font-family: var(--font-code, ui-monospace, monospace);
+}
+
+.cs-pop-item-text {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cs-pop-item-hint {
+  overflow: hidden;
+  color: var(--on-surface-variant);
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-pop-item .material-symbols-outlined {
+  flex: none;
+  font-size: 16px;
+}
+
+.cs-pop-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px 2px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cs-pop-link:is(:hover, :focus-visible) {
+  color: var(--accent);
+  outline: none;
+}
+
+.cs-pop-link .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.cs-bar-effort[data-inactive='true'] .cs-bar-label {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* 思考深度代理状态一行 */
+.cs-pop-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+.cs-pop-status[data-state='ok'] {
+  background: color-mix(in srgb, var(--cs-tone-ok, var(--accent)) 12%, transparent);
+  color: var(--cs-tone-ok, var(--accent));
+}
+
+.cs-pop-status[data-state='absent'],
+.cs-pop-status[data-state='no-upstream'] {
+  background: color-mix(in srgb, var(--cs-tone-warn, #d29922) 12%, transparent);
+  color: var(--cs-tone-warn, #d29922);
+}
+
+.cs-pop-status .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.cs-pop-inline {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 部署思考深度代理的步骤 */
+.cs-deploy-dialog {
+  width: min(560px, calc(100vw - 24px));
+}
+
+.cs-deploy-body {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.cs-deploy-intro {
+  margin: 0;
+  color: var(--on-surface-variant);
+}
+
+.cs-deploy-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+  list-style: decimal;
+}
+
+.cs-deploy-steps li::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cs-deploy-steps li > span {
+  display: block;
+}
+
+.cs-deploy-action {
+  margin-top: 6px;
+  margin-right: 8px;
+}
+
+.cs-deploy-code {
+  display: block;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cs-deploy-status {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.cs-deploy-status[data-state='ok'] {
+  color: var(--cs-tone-ok, var(--accent));
+}
+
+@media (max-width: 600px) {
+  .cs-bar-btn,
+  .cs-bar-ring {
+    height: 30px;
+    font-size: 12px;
+  }
+
+  .cs-bar-model .cs-bar-label {
+    max-width: 110px;
+  }
+
+  .cs-pop-item {
+    min-height: 38px;
+  }
+
+  .cs-pop-search {
+    height: 36px;
+    font-size: 16px;
+  }
+}
+
+/* ---------- 压缩上下文（compact.ts）：进度卡片 ---------- */
+
+:root .agent-message.cs-compact {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+:root .agent-message.cs-compact:not([data-state='running']) {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.cs-compact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--on-surface);
+}
+
+.cs-compact:not([data-state='running']) .cs-compact-head {
+  color: var(--on-surface-variant);
+}
+
+.cs-compact-head .material-symbols-outlined {
+  flex: none;
+  font-size: 15px;
+}
+
+.cs-compact[data-state='done'] .cs-compact-head .material-symbols-outlined {
+  color: var(--cs-tone-ok, var(--accent));
+}
+
+.cs-compact-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+}
+
+.cs-compact-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.cs-compact-meta {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-compact-details summary {
+  width: max-content;
+  color: var(--accent);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.cs-compact-summary {
+  max-height: 260px;
+  margin-top: 6px;
+  overflow: auto;
+  color: var(--on-surface);
+  font-size: 12px;
+  white-space: pre-wrap;
+}

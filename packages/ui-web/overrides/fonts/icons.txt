@@ -15,12 +15,14 @@ audio_file
 block
 bolt
 bookmark_add
+cached
 cancel
 category
 check
 check_circle
 checklist
 chevron_right
+circle
 class
 clear
 close
@@ -29,6 +31,7 @@ cloud
 code
 code_blocks
 colors
+compress
 content_copy
 content_paste
 create
@@ -41,6 +44,7 @@ database
 delete
 deployed_code
 description
+details
 dns
 dock
 done
@@ -111,11 +115,13 @@ more_vert
 mouse
 movie
 my_location
+neurology
 no_photography
 note
 note_add
 notifications
 open_in_new
+output
 palette
 passkey
 password
@@ -128,6 +134,7 @@ play_arrow
 play_circle
 power_settings_new
 preview
+problem
 progress_activity
 psychology
 qr_code
@@ -177,6 +184,7 @@ text_increase
 title
 today
 toolbar
+transform
 translate
 trending_up
 tune

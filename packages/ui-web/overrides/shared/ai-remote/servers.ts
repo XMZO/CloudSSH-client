@@ -83,17 +83,22 @@ function nameParts(name: string): string[] {
     .filter((part) => part.length >= 3 || /[一-鿿]{2,}/.test(part));
 }
 
+/** 去掉空格与符号再比：“berohost” 也算提到了 “BERO-HOST” */
+const squash = (text: string) => norm(text).replace(/[^a-z0-9一-鿿]+/g, '');
+
 /** 消息里提到了别的服务器（名称或其片段、标签，或跨服务器的说法）；当前服务器自己名称里的片段不算 */
 export function mentionsOtherServers(message: string, currentId: number | null): boolean {
   const text = norm(message);
   if (CROSS_WORDS.some((word) => text.includes(word))) return true;
+  const squashed = squash(message);
   const servers = getServers() ?? [];
   const own = new Set(nameParts(servers.find((server) => server.id === currentId)?.name ?? ''));
+  const mentioned = (part: string) => text.includes(part) || (squash(part).length >= 4 && squashed.includes(squash(part)));
   for (const server of servers) {
     if (server.id === currentId) continue;
     const name = norm(server.name);
-    if (name.length >= 2 && text.includes(name)) return true;
-    if (nameParts(server.name).some((part) => !own.has(part) && text.includes(part))) return true;
+    if (name.length >= 2 && mentioned(name)) return true;
+    if (nameParts(server.name).some((part) => !own.has(part) && mentioned(part))) return true;
     for (const tag of server.tags ?? []) {
       const value = norm(tag).replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '').trim();
       if (value.length >= 2 && text.includes(value)) return true;

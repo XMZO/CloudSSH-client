@@ -198,6 +198,27 @@ async function handleHttp(req, res) {
     return json(res, 200, { id: 1, github_id: 1, username: 'tester', avatar_url: null });
   }
   if (path === '/api/servers' && method === 'GET') return json(res, 200, servers);
+  // 模拟思考深度代理的检测接口（客户端直接访问，要带 CORS）
+  if (path === '/mock-proxy/cloudssh-reasoning') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    return res.end(JSON.stringify({ cloudsshReasoningProxy: 1, upstream: true }));
+  }
+  // AI 配置（客户端 agent-output/ai-model.ts 读、切换模型）：与 Worker 一致，换接口地址必须带新密钥
+  if (path === '/api/ai/config' && method === 'GET') return json(res, 200, { configured: true, base_url: aiBase, model: aiModel, api_key_last4: 'mock' });
+  if (path === '/api/ai/config' && method === 'PUT') {
+    const body = await readBody(req);
+    if (!body.base_url || !body.model) return json(res, 400, { error: 'Missing user_id, base_url or model' });
+    if (body.base_url !== aiBase && !body.api_key) return json(res, 400, { error: 'API address changed; provide a new key', code: 'responses_key_required' });
+    aiBase = String(body.base_url);
+    aiModel = String(body.model);
+    console.log('  AI 接口 →', aiBase, '模型 →', aiModel);
+    return json(res, 200, { success: true });
+  }
+  if (path === '/api/ai/models' && method === 'POST') {
+    const body = await readBody(req);
+    if (body.base_url && body.base_url !== aiBase && !body.api_key) return json(res, 400, { error: '接口地址与已保存配置不一致，请提供对应的 API 密钥' });
+    return json(res, 200, { models: AI_MODELS.map((id) => ({ id })), fallback: false });
+  }
   if (path === '/api/health') return json(res, 200, { ok: true });
   if (path === '/api/known-hosts' && method === 'GET') return json(res, 200, []);
 
@@ -511,6 +532,30 @@ function runCommand(line, write, term, ws) {
 }
 
 // AI 助手：打印收到的完整 message（调试客户端附加的回复风格提示），再流式返回一份固定的巡检报告（调试回复配色与状态高亮）
+/**
+ * 假的 AI 配置：模型可由客户端切换。接口地址默认是普通中转；在 AI 设置里改成 MOCK_PROXY（要重新填密钥）就模拟
+ * 接了思考深度代理（tools/reasoning-proxy）：客户端检测得到它，消息末尾的 [cloudssh-reasoning:x] 被“代理”换成 reasoning.effort
+ */
+const AI_RELAY = 'https://relay.example.com/v1';
+const MOCK_PROXY = `http://127.0.0.1:${port}/mock-proxy`;
+const AI_MODELS = ['claude-sonnet-4-5', 'deepseek-chat', 'gemini-2.5-pro', 'gpt-5', 'gpt-5-mini', 'gpt-5.1-codex'];
+let aiBase = args.includes('--reasoning-proxy') ? MOCK_PROXY : AI_RELAY;
+let aiModel = 'gpt-5';
+const REASONING_MARK = /\s*\[cloudssh-reasoning:(auto|none|minimal|low|medium|high|xhigh)\]/g;
+
+/** 与 Worker 的上下文口径一致：系统提示 + 工具约 1.15 万字节，到 37760 字节整理；这里按每 token 3.3 字节换算 */
+const MOCK_PREFIX_TOKENS = 3500;
+const MOCK_LIMIT_TOKENS = Math.floor(37760 / 3.3);
+const mockTokens = (text) => Math.ceil(Buffer.byteLength(String(text)) / 3.3);
+
+const COMPACT_SUMMARY = [
+  '- 用户目标：检查几台服务器的负载与磁盘',
+  '- prohosting24 6c12g：负载 0.06，内存 11Gi 可用，根分区用了 4%',
+  '- BERO-HOST 德国 v6 12o：单核 2G，负载 0.13，Docker 与 valkey 在跑',
+  '- 已执行：uptime、free -h、df -h，均为只读命令',
+  '- 待办：需要时再用 docker ps 看容器',
+].join('\n');
+
 const AGENT_REPLY = [
   '我将并行采集 CPU、内存、磁盘三类信息。',
   '',
@@ -553,6 +598,11 @@ const AGENT_REPLY = [
  *   消息里带 #long：本轮正常回复，之后上下文“过长”，再发消息都会在压缩时报 responses_schema（与 Worker 一样会先执行一条命令），
  *                   直到 agent_reset；
  *   消息里带 #compact：本轮回复后“压缩成功”，清空编辑检查点，之后编辑更早的消息报 responses_history。
+ *   消息里带 #big：这一轮模拟调用三次、工具输出很长，上下文涨得快（客户端上下文圆环、自动压缩）；
+ *   上下文涨到整理线时与用户遇到的一样报 responses_schema（Worker 整理失败），带 #checkpoint-ok 则模拟整理成功。
+ *   客户端压缩（<cloudssh_compact>）：流式写一段摘要；之前发过 #compact-fail 就报错（测试改用对话要点），#compact-tool 则先调工具。
+ *   会话绑定第一次用的模型，换了模型报 responses_config_changed，直到 agent_reset；模型名不认识报 responses_http 404。
+ *   接了思考深度代理（--reasoning-proxy，或 AI 设置里接口地址改成 MOCK_PROXY）时，#reasoning-reject 带思考深度报 400。
  * 判断标记时忽略客户端接续时附带的 <earlier_conversation> 回顾。
  */
 const agentStates = new WeakMap();
@@ -560,7 +610,7 @@ const agentStates = new WeakMap();
 function agentState(ws) {
   let state = agentStates.get(ws);
   if (!state) {
-    state = { nextTurn: 0, turns: new Set(), long: false, compacted: false };
+    state = { nextTurn: 0, turns: new Set(), long: false, compacted: false, ctx: 0, model: null, current: null, flags: new Set() };
     agentStates.set(ws, state);
   }
   return state;
@@ -584,6 +634,8 @@ function mockRemoteReply(request) {
     return '提问功能没问题，下面给你来一道题：\n\n```cloudssh-ask\n{"question":"你希望我先查哪一项？","options":["磁盘占用","Swap 配置","BBR 是否生效"]}\n```';
   }
   if (!request.includes('#remote')) return null;
+  // 只拿到简介时 AI 先要列表与用法（客户端把完整的目录与用法作为结果发回来）
+  if (request.includes('#remote-list')) return '先看看有哪些服务器。\n\n```cloudssh-action\n{"action":"list"}\n```';
   if (request.includes('#remote-jump')) {
     // 源就是跳板机 JP-C：直接连它后面的 JP-D；从当前服务器传给 JP-D 则经 JP-C 一跳
     return '经跳板直连传两份文件。\n\n```cloudssh-action\n{"action":"copy","from":{"server":"JP-C","path":"/root/notes.txt"},"to":{"server":"JP-D","path":"/tmp/from-jump/"}}\n{"action":"copy","from":{"server":"current","path":"/root/deploy.sh"},"to":{"server":"JP-D","path":"/tmp/via-jump.sh"}}\n```';
@@ -602,6 +654,17 @@ function mockRemoteReply(request) {
   return `我来在其他服务器上处理这些操作。\n\n\`\`\`cloudssh-action\n${actions.map((item) => JSON.stringify(item)).join('\n')}\n\`\`\``;
 }
 
+/** agent_stop：停掉正在流式输出的那一轮（与 Worker 一样回 agent.stopped 与 run_end stopped） */
+function mockAgentStop(ws) {
+  const current = agentState(ws).current;
+  if (!current) return;
+  agentState(ws).current = null;
+  current.timers.forEach((timer) => clearTimeout(timer));
+  console.log('AGENT stop');
+  current.frame('response', { messageKey: 'agent.stopped' });
+  current.frame('run_end', { outcome: 'stopped', usage: current.usage(0) });
+}
+
 function mockAgentReset(ws) {
   agentStates.delete(ws);
   console.log('AGENT reset');
@@ -612,15 +675,67 @@ function mockAgentReply(ws, msg) {
   console.log(`AGENT 收到的 message（userIndex=${msg.userIndex ?? '-'}）↓\n` + msg.message + '\nAGENT ↑');
   const frame = (subType, extra = {}) => ws.sendJson({ type: 'agent_frame', runId: 'mock-run', requestId: msg.requestId, subType, ...extra });
   const state = agentState(ws);
-  const request = String(msg.message ?? '').replace(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>/, '');
+  // 思考深度标记：接了代理时由“代理”删掉、换成 reasoning.effort；没接代理还带着标记说明客户端判断错了
+  let effort = null;
+  const rawMessage = String(msg.message ?? '').replace(REASONING_MARK, (_, level) => {
+    effort = level;
+    return '';
+  });
+  if (effort && aiBase !== MOCK_PROXY) console.log(`AGENT 警告：没接思考深度代理，标记 [cloudssh-reasoning:${effort}] 会原样发给模型`);
+  else if (aiBase === MOCK_PROXY) console.log(`AGENT 代理：reasoning.effort = ${effort && effort !== 'auto' ? effort : '（不加）'}`);
+  const request = rawMessage.replace(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>/, '');
+  for (const flag of ['#compact-fail', '#compact-tool', '#checkpoint-ok']) if (request.includes(flag)) state.flags.add(flag);
+  // 上一轮还在流式输出（客户端顶掉了它）：与 Worker 一样先停掉
+  if (state.current) mockAgentStop(ws);
+  const timers = [];
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+  // 用量：这一轮各次调用的输入 / 输出合计（与 Worker run_end 的 usage 一致）
+  const firstInput = MOCK_PREFIX_TOKENS + state.ctx + mockTokens(msg.message) + 300;
+  const usage = (output, calls = 1, growth = 0) => {
+    const inputs = Array.from({ length: calls }, (_, i) => firstInput + Math.round((growth * i) / Math.max(1, calls - 1)));
+    const input = inputs.reduce((a, b) => a + b, 0);
+    return { calls, reportedCalls: calls, input, cached: Math.floor(input * 0.6), output, reasoning: 90 * calls, checkpointCalls: 0 };
+  };
+  state.current = { frame, timers, usage };
+  const finishRun = (outcome, use) => {
+    if (state.current?.frame !== frame) return;
+    state.current = null;
+    frame('run_end', { outcome, usage: use });
+  };
   frame('run_start');
-  const fail = (code, executed) => {
+  const fail = (code, executed, extra = {}) => {
     if (executed) frame('executing', { tool: 'execute_command', args: { command: 'df -h' } });
-    setTimeout(() => {
-      frame('error', { code });
-      frame('run_end', { outcome: 'failed' });
+    later(() => {
+      frame('error', { code, ...extra });
+      // 与 Worker 一样：调用模型之前就失败的没有调用次数（整理失败的那次检查点调用不计入这里）
+      finishRun('failed', usage(0, 0));
     }, 150);
   };
+  // 会话绑定模型；不认识的模型名（含不认的后缀）报 404
+  if (state.model && state.model !== aiModel) return fail('responses_config_changed');
+  if (!AI_MODELS.includes(aiModel)) return fail('responses_http', false, { status: 404 });
+  // #reasoning-reject：模型不支持 reasoning.effort，接口报 400
+  if (request.includes('#reasoning-reject') && effort && effort !== 'auto' && aiBase === MOCK_PROXY) return fail('responses_http', false, { status: 400 });
+  state.model = aiModel;
+  console.log(`AGENT 上下文约 ${firstInput} tokens（整理线约 ${MOCK_LIMIT_TOKENS}），模型 ${aiModel}`);
+  // 客户端压缩：写摘要
+  if (request.includes('<cloudssh_compact>')) {
+    if (state.flags.has('#compact-fail')) return fail('responses_schema');
+    if (state.flags.has('#compact-tool')) frame('executing', { tool: 'execute_command', args: { command: 'uptime' } });
+    const pieces = COMPACT_SUMMARY.match(/[\s\S]{1,24}/g);
+    pieces.forEach((piece, index) => later(() => frame('stream_chunk', { content: piece }), 400 + 120 * index));
+    later(() => {
+      frame('stream_end', { content: COMPACT_SUMMARY });
+      finishRun('completed', usage(mockTokens(COMPACT_SUMMARY)));
+    }, 400 + 120 * (pieces.length + 1));
+    return;
+  }
+  // 到了整理线：与用户遇到的一样整理失败（带 #checkpoint-ok 时模拟整理成功）
+  if (firstInput >= MOCK_LIMIT_TOKENS && !state.flags.has('#checkpoint-ok')) return fail('responses_schema', true);
+  if (firstInput >= MOCK_LIMIT_TOKENS) {
+    state.ctx = 2500;
+    frame('context_status', { compacted: true, earliestEditableTurn: state.nextTurn });
+  }
   if (typeof msg.userIndex === 'number') {
     if (!state.turns.has(msg.userIndex) && (state.turns.size > 0 || state.compacted)) return fail('responses_history');
     for (const turn of [...state.turns]) if (turn >= msg.userIndex) state.turns.delete(turn);
@@ -642,22 +757,28 @@ function mockAgentReply(ws, msg) {
       const text = answer.approved ? `✅ 已执行 \`${command}\`。` : `❌ 用户拒绝了 \`${command}\`，没有执行。`;
       frame('stream_chunk', { content: text });
       frame('stream_end', { content: text });
-      frame('run_end', { outcome: 'completed' });
+      finishRun('completed', usage(mockTokens(text)));
     };
     return;
   }
   const reply = mockRemoteReply(request) ?? AGENT_REPLY;
+  const big = request.includes('#big');
+  if (big) frame('executing', { tool: 'execute_command', args: { command: 'journalctl -n 300' } });
   const pieces = reply.match(/[\s\S]{1,60}/g);
-  pieces.forEach((piece, index) => setTimeout(() => frame('stream_chunk', { content: piece }), 40 * (index + 1)));
-  setTimeout(() => {
+  pieces.forEach((piece, index) => later(() => frame('stream_chunk', { content: piece }), 40 * (index + 1)));
+  later(() => {
+    if (state.current?.frame !== frame) return;
     frame('stream_end', { content: reply });
+    const output = mockTokens(reply);
+    const use = big ? usage(output, 3, 2600) : usage(output);
+    state.ctx = firstInput - MOCK_PREFIX_TOKENS + (big ? 2600 : 0) + output;
     if (request.includes('#long')) state.long = true;
     if (request.includes('#compact')) {
       state.turns.clear();
       state.compacted = true;
       frame('context_status', { compacted: true, earliestEditableTurn: state.nextTurn });
     }
-    frame('run_end', { outcome: 'completed' });
+    finishRun('completed', use);
   }, 40 * (pieces.length + 2));
 }
 
@@ -849,6 +970,7 @@ function attachShell(ws, url) {
         if (msg.type === 'resize' && Number(msg.cols) > 0 && Number(msg.rows) > 0) Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
         if (msg.type === 'agent_start') mockAgentReply(ws, msg);
         if (msg.type === 'agent_reset') mockAgentReset(ws);
+        if (msg.type === 'agent_stop') mockAgentStop(ws);
         if (msg.type === 'agent_confirm') agentState(ws).pendingConfirm?.(msg);
         return;
       } catch {

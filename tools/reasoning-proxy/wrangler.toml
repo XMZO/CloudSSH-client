@@ -1,0 +1,9 @@
+# CloudSSH 思考深度代理（用 wrangler 部署时使用；Dashboard 部署直接粘贴 worker.js 即可）
+# 部署：npx wrangler deploy（在本目录下运行）
+name = "cloudssh-reasoning-proxy"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# 原来在 CloudSSH 的 AI 设置里填的接口地址
+UPSTREAM = "https://api.openai.com/v1"
