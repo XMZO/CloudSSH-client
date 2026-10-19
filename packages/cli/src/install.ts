@@ -5,8 +5,10 @@
  *   客户端更新时命令跟着更新）
  * - 运行时：当前这个 node；在桌面客户端里运行时（Electron 当 Node 用）是 CloudSSH.exe，启动脚本带上
  *   ELECTRON_RUN_AS_NODE=1，不需要另装 Node
- * - 命令：在 ~/.local/bin（可用 --bin-dir 换）写 cloudssh、cssh：Windows 上同时写 .cmd（PowerShell / cmd 用）
- *   和不带扩展名的 sh 脚本（Git Bash 用）。脚本里有 cloudssh-shim 标记，卸载时只删带标记的
+ * - 命令：在 ~/.local/bin（可用 --bin-dir 换）写 cloudssh、cssh：Windows 上是启动器 .exe + 同名 .shim 配置
+ *   （PowerShell / cmd 用，见 packages/cli/shim）和不带扩展名的 sh 脚本（Git Bash 用）。不用 .cmd：PowerShell 调
+ *   批处理时不转义参数里的双引号，带引号的命令会被拆开；找不到启动器时才退回 .cmd。
+ *   这些文件里都有 cloudssh-shim 标记，卸载时只删带标记的
  * - skill（--no-skill 不装）：SKILL.md 是通用的 Agent Skills 格式（name + description 的 frontmatter），装到
  *   ~/.claude/skills/cloudssh（Claude Code，总装）、~/.codex/skills/cloudssh（Codex，装了 Codex 才装）、
  *   ~/.agents/skills/cloudssh（多个工具共用的目录，有这个目录才装）。其他 agent 只要能执行命令，cloudssh 一样能用。
@@ -28,6 +30,10 @@ import { launchFor, mcpTargets, parseMcpClients, refreshMcp, registerMcp, unregi
 const MARK = 'cloudssh-shim';
 const NAMES = ['cloudssh', 'cssh'];
 const windows = process.platform === 'win32';
+/** Windows 启动器：构建时放在程序旁边（dist/、安装包的 resources/cli/），复制安装时一起复制 */
+const LAUNCHER = 'cloudssh-shim.exe';
+
+export type Launcher = 'exe' | 'cmd' | 'sh';
 
 export interface InstallOptions {
   binDir?: string;
@@ -47,6 +53,8 @@ export interface InstallStatus {
   exists: boolean;
   /** 运行时是 CloudSSH 客户端（Electron 当 Node 用） */
   appRuntime: boolean;
+  /** 命令的启动方式：Windows 上 exe 是现在的，cmd 是旧版装的（重新安装即换成 exe） */
+  launcher: Launcher | null;
   binDir: string;
   onPath: boolean;
   /** Claude Code 的 skill 装了没有 */
@@ -182,24 +190,97 @@ export function installSkills(): string[] {
   });
 }
 
+/** 程序旁边的 Windows 启动器（dist/、安装包的 resources/cli/、复制安装的目录）；没有就是 null */
+function launcherNextTo(program: string): string | null {
+  const file = path.join(path.dirname(program), LAUNCHER);
+  return fs.existsSync(file) ? file : null;
+}
+
+/**
+ * 放启动器：内容一样就不动。正在运行的 exe 不能覆盖（经 cloudssh.exe 运行 cloudssh install 时就是这样），
+ * 但能改名：挪成 .old-时间 再写新的，旧的下次安装或卸载时删
+ */
+function placeLauncher(source: string, target: string): void {
+  const bytes = fs.readFileSync(source);
+  try {
+    if (fs.readFileSync(target).equals(bytes)) return;
+  } catch {
+    // 还没有
+  }
+  try {
+    fs.writeFileSync(target, bytes);
+  } catch (error) {
+    if (!['EBUSY', 'EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    fs.renameSync(target, `${target}.old-${Date.now()}`);
+    fs.writeFileSync(target, bytes);
+  }
+}
+
+/** 挪开的旧启动器（cloudssh.exe.old-时间）：删得掉就删 */
+function staleLaunchers(binDir: string): string[] {
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(binDir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => /^c(loud)?ssh\.exe\.old-\d+$/i.test(name))
+    .map((name) => path.join(binDir, name))
+    .filter(isOurs);
+}
+
+function removeStaleLaunchers(binDir: string): void {
+  for (const file of staleLaunchers(binDir)) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      // 还在运行，下次再删
+    }
+  }
+}
+
+/**
+ * 正在用的启动脚本或启动器（经 .cmd 运行时 cmd 还要接着读那个文件；经 .exe 运行时它被锁着）：退出后再删。
+ * 启动器的作业允许子进程脱离，这个 cmd 不会随它一起被结束
+ */
+function deleteAfterExit(files: string[]): void {
+  if (!files.length) return;
+  // 原样传给 cmd（不让 Node 转义引号）：命令行以 ping 开头，cmd /c 不会去掉路径两边的引号
+  const list = files.map((file) => `"${file}"`).join(' ');
+  spawn('cmd.exe', ['/d', '/c', `ping -n 2 127.0.0.1 >nul & del /f /q ${list}`], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    windowsVerbatimArguments: true,
+  }).unref();
+}
+
 export function install(options: InstallOptions): string[] {
   const lines: string[] = [];
   // 先认客户端名字：写错了什么都不装
   const mcpClients = options.mcp ? parseMcpClients(options.mcp) : [];
   const self = fileURLToPath(import.meta.url);
+  const launcher = windows ? launcherNextTo(self) : null;
   let program = self;
   if (!options.inPlace) {
     program = path.join(copyDir(), 'cloudssh.mjs');
     fs.mkdirSync(path.dirname(program), { recursive: true });
-    if (path.resolve(self) !== path.resolve(program)) fs.copyFileSync(self, program);
+    if (path.resolve(self) !== path.resolve(program)) {
+      fs.copyFileSync(self, program);
+      // 启动器也放一份：以后从这份程序重新安装（cloudssh install）时还找得到
+      if (launcher) fs.copyFileSync(launcher, path.join(path.dirname(program), LAUNCHER));
+    }
   }
   lines.push(`程序：${program}`);
 
   const binDir = defaultBinDir(options.binDir);
   fs.mkdirSync(binDir, { recursive: true });
+  removeStaleLaunchers(binDir);
   const runtime = process.execPath;
   const electron = !!process.versions.electron;
   const posix = (value: string) => (windows ? value.replace(/\\/g, '/') : value);
+  const deferred: string[] = [];
   for (const name of NAMES) {
     // Git Bash（MSYS）调用 Windows 程序时会把 /tmp/x 这类参数改写成 Windows 路径，远程路径会被改坏：关掉
     // （本机路径由命令行自己用 cygpath 换）
@@ -212,14 +293,37 @@ export function install(options: InstallOptions): string[] {
       `#!/bin/sh\n# ${MARK} ${CLIENT_VERSION}\n${env.map((line) => `${line}\n`).join('')}exec "${posix(runtime)}" "${posix(program)}" "$@"\n`,
       { mode: 0o755 }
     );
-    if (windows) {
+    if (windows && launcher) {
+      fs.writeFileSync(
+        path.join(binDir, `${name}.shim`),
+        `# ${MARK} ${CLIENT_VERSION}\r\nruntime=${runtime}\r\nprogram=${program}\r\n${electron ? 'env=ELECTRON_RUN_AS_NODE=1\r\n' : ''}`
+      );
+      placeLauncher(launcher, path.join(binDir, `${name}.exe`));
+      // 旧版装的 .cmd 删掉（.exe 在 PATHEXT 里排在前面，留着也用不到）
+      const legacy = path.join(binDir, `${name}.cmd`);
+      if (isOurs(legacy)) {
+        if (process.env.CLOUDSSH_SHIM === 'cmd') deferred.push(legacy);
+        else fs.rmSync(legacy, { force: true });
+      }
+    } else if (windows) {
+      // 找不到启动器：退回 .cmd，以前装的 .exe 要拿掉（.exe 排在 .cmd 前面，留着会指向旧程序）
+      for (const file of [path.join(binDir, `${name}.exe`), path.join(binDir, `${name}.shim`)]) {
+        if (!isOurs(file)) continue;
+        if (file.endsWith('.exe') && process.env.CLOUDSSH_SHIM === 'exe') deferred.push(file);
+        else fs.rmSync(file, { force: true });
+      }
       fs.writeFileSync(
         path.join(binDir, `${name}.cmd`),
         `@echo off\r\nrem ${MARK} ${CLIENT_VERSION}\r\nsetlocal\r\nset CLOUDSSH_SHIM=cmd\r\n${electron ? 'set ELECTRON_RUN_AS_NODE=1\r\n' : ''}"${runtime}" "${program}" %*\r\nexit /b %ERRORLEVEL%\r\n`
       );
     }
   }
-  lines.push(`命令：${path.join(binDir, windows ? 'cloudssh.cmd' : 'cloudssh')}（以及 cssh）${electron ? '，用 CloudSSH 客户端运行' : ''}`);
+  deleteAfterExit(deferred);
+  const command = windows ? (launcher ? 'cloudssh.exe' : 'cloudssh.cmd') : 'cloudssh';
+  lines.push(`命令：${path.join(binDir, command)}（以及 cssh）${electron ? '，用 CloudSSH 客户端运行' : ''}`);
+  if (windows && !launcher) {
+    lines.push(`注意：程序旁边没有 ${LAUNCHER}，命令装成了 .cmd；在 PowerShell 里带双引号的参数会被拆开，复杂命令请用 --stdin`);
+  }
   if (!onPath(binDir)) lines.push(`注意：${binDir} 不在 PATH 里，请把它加进 PATH，或用 --bin-dir 指定一个在 PATH 里的目录`);
   if (options.skill) lines.push(...installSkills());
   const launch = launchFor(runtime, program, electron);
@@ -236,13 +340,25 @@ function isOurs(file: string): boolean {
   }
 }
 
-/** 读命令脚本：装了没有、指向的运行时与程序 */
-function readShim(binDir: string): { installed: boolean; runtime: string | null; program: string | null; appRuntime: boolean } {
+/** 读命令脚本：装了没有、指向的运行时与程序、启动方式（Windows 上先认启动器的 .shim，再认旧版的 .cmd） */
+function readShim(binDir: string): { installed: boolean; runtime: string | null; program: string | null; appRuntime: boolean; launcher: Launcher | null } {
+  const config = path.join(binDir, 'cloudssh.shim');
+  if (windows && isOurs(config) && isOurs(path.join(binDir, 'cloudssh.exe'))) {
+    const text = fs.readFileSync(config, 'utf8');
+    const value = (key: string) => new RegExp(`^${key}=(.*)$`, 'm').exec(text)?.[1]?.trim() || null;
+    return { installed: true, runtime: value('runtime'), program: value('program'), appRuntime: /^env=ELECTRON_RUN_AS_NODE=/m.test(text), launcher: 'exe' };
+  }
   const script = path.join(binDir, windows ? 'cloudssh.cmd' : 'cloudssh');
-  if (!isOurs(script)) return { installed: false, runtime: null, program: null, appRuntime: false };
+  if (!isOurs(script)) return { installed: false, runtime: null, program: null, appRuntime: false, launcher: null };
   const text = fs.readFileSync(script, 'utf8');
   const match = /"([^"\r\n]+)" "([^"\r\n]+)" (?:%\*|"\$@")/.exec(text);
-  return { installed: true, runtime: match?.[1] ?? null, program: match?.[2] ?? null, appRuntime: /ELECTRON_RUN_AS_NODE/.test(text) };
+  return {
+    installed: true,
+    runtime: match?.[1] ?? null,
+    program: match?.[2] ?? null,
+    appRuntime: /ELECTRON_RUN_AS_NODE/.test(text),
+    launcher: windows ? 'cmd' : 'sh',
+  };
 }
 
 /**
@@ -259,7 +375,7 @@ export function mcpLaunch(binDirOption?: string): McpLaunch {
 
 export function installStatus(binDirOption?: string): InstallStatus {
   const binDir = defaultBinDir(binDirOption);
-  const { installed, runtime, program, appRuntime } = readShim(binDir);
+  const { installed, runtime, program, appRuntime, launcher } = readShim(binDir);
   const skills = skillTargets();
   const file = skillPath();
   const skill = skills.some((item) => item.id === 'claude' && item.installed);
@@ -271,6 +387,7 @@ export function installStatus(binDirOption?: string): InstallStatus {
     runtime,
     exists: !!program && !!runtime && fs.existsSync(program) && fs.existsSync(runtime),
     appRuntime,
+    launcher,
     binDir,
     onPath: onPath(binDir),
     skill,
@@ -291,24 +408,24 @@ export function uninstall(options: { binDir?: string; keepSkill?: boolean; purge
   lines.push(...unregisterMcp());
   const deferred: string[] = [];
   for (const name of NAMES) {
-    for (const file of [path.join(binDir, name), path.join(binDir, `${name}.cmd`)]) {
+    const files = ['', '.cmd', '.exe', '.shim'].map((ext) => path.join(binDir, `${name}${ext}`));
+    for (const file of files) {
       if (!isOurs(file)) continue;
-      // 正在经 .cmd 运行时，cmd 还要接着读这个文件：退出后再删，不然报“找不到批处理文件”
-      if (file.endsWith('.cmd') && process.env.CLOUDSSH_SHIM === 'cmd') deferred.push(file);
+      // 正在经 .cmd 运行时 cmd 还要接着读这个文件（不然报“找不到批处理文件”），经 .exe 运行时它被锁着：退出后再删
+      const busy = (file.endsWith('.cmd') && process.env.CLOUDSSH_SHIM === 'cmd') || (file.endsWith('.exe') && process.env.CLOUDSSH_SHIM === 'exe');
+      if (busy) deferred.push(file);
       else fs.rmSync(file, { force: true });
       lines.push(`已删除 ${file}`);
     }
   }
-  if (deferred.length) {
-    // 原样传给 cmd（不让 Node 转义引号）：命令行以 ping 开头，cmd /c 不会去掉路径两边的引号
-    const files = deferred.map((file) => `"${file}"`).join(' ');
-    spawn('cmd.exe', ['/d', '/c', `ping -n 2 127.0.0.1 >nul & del /f /q ${files}`], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-    }).unref();
+  for (const file of staleLaunchers(binDir)) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      deferred.push(file);
+    }
   }
+  deleteAfterExit(deferred);
   const copy = path.join(copyDir(), 'cloudssh.mjs');
   if (program && path.resolve(program).toLowerCase() === path.resolve(copy).toLowerCase() && fs.existsSync(copy)) {
     fs.rmSync(copyDir(), { recursive: true, force: true });

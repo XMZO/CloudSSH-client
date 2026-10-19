@@ -5,10 +5,13 @@
  * 它们在浏览器里从侧栏数据源（sidebar/store，模块加载时要用 window）取服务器列表，这里换成命令行自己的 store-shim。
  * skill 说明（skill/SKILL.md）以文本打进产物，cloudssh install 时写到 ~/.claude/skills/cloudssh。
  * 桌面端构建（apps/desktop/build.mjs）会先调这里的 buildCli，再把产物打进安装包的 resources/cli/。
+ * Windows 启动器（shim/cloudssh-shim.exe，Rust 编好提交在仓库里，改源码后用 shim/build.mjs 重编）复制到
+ * dist/，与 cloudssh.mjs 放在一起：Windows 上 cloudssh install 用它装 cloudssh.exe / cssh.exe。
  *
  *   node build.mjs
  */
 import { build } from 'esbuild';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -39,6 +42,7 @@ export async function buildCli({ logLevel = 'info' } = {}) {
     banner: { js: '#!/usr/bin/env node' },
     plugins: [sidebarStore],
   });
+  fs.copyFileSync(path.join(root, 'shim', 'cloudssh-shim.exe'), path.join(path.dirname(CLI_OUTFILE), 'cloudssh-shim.exe'));
   return CLI_OUTFILE;
 }
 

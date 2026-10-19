@@ -426,10 +426,11 @@ cloudssh alias set web srv-12         # 别名；cloudssh config set confirm nev
 - **安全**：拦截级命令（`rm -rf /` 等）一律拒绝；危险命令（删除、关机、改权限……，与 AI 跨服务器操作同一套判定）要加 `--yes`，在终端里会直接问；`copy` 覆盖已有目标也要 `--yes`
 - **限制**：命令在非交互 Shell 里跑（没有 TTY、stdin 为空），只保留最后 64KB 输出；需要交互式认证（验证码）的服务器不能用；下载内容先放内存（默认上限 2GB，`--max-size` 可改）
 - **Git Bash**：启动脚本设了 `MSYS_NO_PATHCONV=1`，`/tmp/x` 这类远程路径不会被改写成 Windows 路径；本机路径 `/c/Users/...` 会自动换成 `C:/Users/...`
+- **PowerShell / cmd**：命令是启动器 `cloudssh.exe`（`packages/cli/shim`，Rust 写的小程序，不依赖任何 crate，静态链接 C 运行时）加同名的 `cloudssh.shim` 配置（运行时、程序、环境变量）。启动器把命令行原样交给 Node，不再经 `.cmd`：PowerShell 调批处理时不转义参数里的双引号，`'echo "a b"'` 会被拆成两个参数，后面的 `--json` 也会算进远程命令。它还会把退出码原样返回，Ctrl+C 交给 Node 处理，并把 Node 放进作业对象，启动器被杀时 Node 跟着结束。shell 推荐 PowerShell 7.3 以上（`pwsh`）或 Git Bash：Windows PowerShell 5.1（以及 7.3 之前的 pwsh、`$PSNativeCommandArgumentPassing = 'Legacy'`）调任何程序都会拆掉参数里的引号；启动器发现由 PowerShell 启动、而命令行里有“词中间的引号”（只有这种拆坏的情况才会出现）时拒绝运行并提示改用 `pwsh` 或 `--stdin`（退出码 2），免得远端执行拆坏的命令。`--stdin` 会去掉 5.1 管道加在开头的 BOM。启动器编好的 exe 提交在 `packages/cli/shim/cloudssh-shim.exe`，平时构建只是复制，改了 `src/main.rs` 后用 `pnpm cli:shim` 重编（需要 Rust 与 VS 生成工具）
 - **配置**：`~/.cloudssh/config.json`（实例、默认实例、别名、`confirm`、`concurrency`、`timeout`、`skills` 各 AI 开关、`skillNotes` 补充说明）；命令行里用 `cloudssh config set confirm|concurrency|timeout|notes|default <值>`、`cloudssh skill enable|disable claude|codex|agents`、`cloudssh skill sync`；`--instance` / 环境变量 `CLOUDSSH_INSTANCE` 选实例，`CLOUDSSH_HOME` 换配置目录
 - **skill**：`packages/cli/skill/SKILL.md`，打进程序里，是通用的 Agent Skills 格式。`cloudssh install` 时写到 `~/.claude/skills/cloudssh/`（Claude Code），这台电脑上有 Codex 就写到 `~/.codex/skills/cloudssh/`，有 `~/.agents` 就写到 `~/.agents/skills/cloudssh/`（多个工具共用的目录）；其他 agent 只要能执行命令，`cloudssh` 一样能用。skill 里告诉 AI 用主机 ID、复杂命令走 `--stdin`、危险命令先问用户再加 `--yes`、不要索要密码
 - **在桌面客户端里安装与设置**（实例管理 → 命令行与 AI → 安装 / 设置…）：设置页里可以开关每个 AI 的 skill（Claude Code、Codex、通用目录，关掉即删除）、完全权限（危险命令不再要 `--yes`、`copy` 覆盖不再确认，拦截级命令仍拒绝）、同步登录、默认实例、默认超时、批量并发、别名、给 AI 的补充说明；完全权限、超时、并发、别名与补充说明都会写进 skill，改了就同步到各个 AI。安装：安装包带着打好的命令行（`resources/cli/cloudssh.mjs`，`apps/desktop/build.mjs` 构建时一起打），用客户端自己当 Node 运行（`ELECTRON_RUN_AS_NODE=1`），不需要另装 Node；命令直接指向安装包里的程序，客户端更新时跟着更新，启动时发现客户端换了位置或 skill 不是新版就悄悄重装。同一处还有“同步登录给命令行”开关、卸载按钮与安装状态（命令目录不在 PATH 里会提示）
-- **安装与卸载**：`cloudssh install`（`--in-place` 不复制程序、`--status` 看状态、`--bin-dir` 换命令目录、`--no-skill`、`--mcp <应用>` 同时登记 MCP，见下），`cloudssh uninstall`（`--keep-skill`、`--purge` 连 `~/.cloudssh` 一起删；MCP 登记一并移除）；命令脚本带 `cloudssh-shim` 标记，卸载只删带标记的
+- **安装与卸载**：`cloudssh install`（`--in-place` 不复制程序、`--status` 看状态、`--bin-dir` 换命令目录、`--no-skill`、`--mcp <应用>` 同时登记 MCP，见下），`cloudssh uninstall`（`--keep-skill`、`--purge` 连 `~/.cloudssh` 一起删；MCP 登记一并移除）；命令脚本与启动器带 `cloudssh-shim` 标记，卸载只删带标记的。旧版装的 `.cmd` 重新安装时换成 `.exe`（桌面客户端启动时自动重装）
 
 ### MCP 服务器（给不支持 skill 的应用）
 
@@ -656,7 +657,7 @@ Android 的 `versionCode` 由 Tauri 按 主×1000000 + 次×1000 + 修订 推导
 | `pnpm android:dev` | 在手机/模拟器上热更新运行 |
 | `pnpm mobile:dev` | 在电脑窗口里运行移动端（界面迭代） |
 | `pnpm typecheck` | 类型检查（core / ui-web / desktop） |
-| `pnpm test` | 检查版本号是否一致，然后运行单元测试（core）与命令行测试（cli：MCP 对假 Worker 的端到端测试、MCP 登记） |
+| `pnpm test` | 检查版本号是否一致，然后运行单元测试（core）与命令行测试（cli：MCP 对假 Worker 的端到端测试、MCP 登记、Windows 启动器传参） |
 | `pnpm version:check` | 查看版本号与代号，检查各处是否一致 |
 | `pnpm version:set <版本> [中文代号 英文代号]` | 修改版本号和代号，并同步到各处 |
 | `node scripts/mock-worker.mjs` | 启动本地假 Worker，不连真实服务器调界面 |

@@ -37,6 +37,8 @@ export interface CliStatus {
   program: string | null;
   exists: boolean;
   appRuntime: boolean;
+  /** 命令的启动方式（旧版命令行没有）：Windows 上 cmd 是旧版装的批处理，重新安装换成 exe 启动器 */
+  launcher?: 'exe' | 'cmd' | 'sh' | null;
   /** 命令指向的是这个客户端带的程序 */
   managed: boolean;
   binDir: string;
@@ -205,14 +207,19 @@ export async function updateCliSettings(patch: CliSettingsPatch): Promise<CliSet
   return cliSettings();
 }
 
-/** 启动时：命令是这个客户端装的（或指向的程序已经不在了）就重装一次，跟上客户端的位置、skill 版本与 MCP 登记 */
+/**
+ * 启动时：命令是这个客户端装的（或指向的程序已经不在了）就重装一次，跟上客户端的位置、skill 版本、MCP 登记，
+ * 以及启动方式（旧版装的 .cmd 换成带着的 exe 启动器）
+ */
 export async function refreshCliInstall(): Promise<void> {
   try {
     const status = await cliStatus();
     if (!status.available || !status.installed) return;
     const ours = status.managed || (status.appRuntime && !status.exists);
     const mcpCurrent = (status.mcp ?? []).every((item) => !item.registered || item.current);
-    if (!ours || (status.exists && status.skillCurrent && mcpCurrent && status.managed)) return;
+    const bundledLauncher = fs.existsSync(path.join(path.dirname(bundledCli()), 'cloudssh-shim.exe'));
+    const launcherCurrent = !(process.platform === 'win32' && status.launcher === 'cmd' && bundledLauncher);
+    if (!ours || (status.exists && status.skillCurrent && mcpCurrent && launcherCurrent && status.managed)) return;
     await installCli();
     log.info('已更新命令行 cloudssh 的安装');
   } catch (error) {

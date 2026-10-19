@@ -1,0 +1,3 @@
+# 静态链接 C 运行时：不依赖 VCRUNTIME140.dll，没装 VC++ 运行库的电脑也能直接运行
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

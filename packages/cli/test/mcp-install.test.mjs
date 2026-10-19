@@ -121,7 +121,7 @@ describe('MCP 登记', { timeout: 120_000 }, () => {
     assert.deepEqual(claudeConfig.mcpServers.other, { command: 'other-mcp', args: [] });
     assert.equal(claudeConfig.globalShortcut, 'Ctrl+Space');
     assert.match(result.stderr, /Claude Desktop：已移除 MCP 服务器 cloudssh/);
-    assert.ok(!fs.existsSync(path.join(bin, windows ? 'cloudssh.cmd' : 'cloudssh')));
+    assert.ok(!fs.existsSync(path.join(bin, windows ? 'cloudssh.exe' : 'cloudssh')));
   });
 
   test('别人的同名项不删；客户端名写错或配置坏了报错且不改文件', () => {
@@ -134,7 +134,7 @@ describe('MCP 登记', { timeout: 120_000 }, () => {
     const typo = runCli(['install', '--bin-dir', bin, '--mcp', 'claude-desk'], env);
     assert.equal(typo.code, 2);
     assert.match(typo.stderr, /不认识的 MCP 客户端 claude-desk/);
-    assert.ok(!fs.existsSync(path.join(bin, windows ? 'cloudssh.cmd' : 'cloudssh')), '名字写错时什么都不装');
+    assert.ok(!fs.existsSync(path.join(bin, windows ? 'cloudssh.exe' : 'cloudssh')), '名字写错时什么都不装');
 
     fs.writeFileSync(claude, '{ broken');
     const broken = runCli(['mcp', 'add', 'claude-desktop', '--bin-dir', bin], env);

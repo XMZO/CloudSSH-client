@@ -168,7 +168,7 @@ function isOurEntry(entry: unknown): boolean {
   const command = typeof entry.command === 'string' ? entry.command : '';
   const mcpAt = args.indexOf('mcp');
   if (mcpAt < 0) return false;
-  return args.slice(0, mcpAt).some((arg) => /cloudssh\.mjs$/i.test(arg)) || /(^|[\\/])c(loud)?ssh(\.cmd)?$/i.test(command);
+  return args.slice(0, mcpAt).some((arg) => /cloudssh\.mjs$/i.test(arg)) || /(^|[\\/])c(loud)?ssh(\.cmd|\.exe)?$/i.test(command);
 }
 
 /** 登记项与要登记的一致：程序、运行时、ELECTRON_RUN_AS_NODE 一样（用户加的参数与环境变量不管） */

@@ -22,6 +22,7 @@
     "update:icon-font": "node scripts/update-icon-font.mjs",
     "cli:build": "pnpm --filter @cloudssh/cli build",
     "cli:install": "pnpm --filter @cloudssh/cli build && node packages/cli/dist/cloudssh.mjs install",
+    "cli:shim": "node packages/cli/shim/build.mjs",
     "version:check": "node scripts/version.mjs check",
     "version:set": "node scripts/version.mjs set"
   }

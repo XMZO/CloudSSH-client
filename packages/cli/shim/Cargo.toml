@@ -1,0 +1,21 @@
+[package]
+name = "cloudssh-shim"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "cloudssh 的 Windows 启动器：读同名 .shim 配置，把命令行原样交给运行时"
+license = "Apache-2.0"
+
+# 独立构建，不并入其他 Cargo 工作区；不依赖任何 crate
+[workspace]
+
+[[bin]]
+name = "cloudssh-shim"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

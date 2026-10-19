@@ -44,9 +44,12 @@ export async function confirm(question: string): Promise<boolean> {
   return /^(y|yes|是|好)$/i.test(await ask(`${question} [y/N] `));
 }
 
-/** 读完标准输入（exec --stdin） */
+/**
+ * 读完标准输入（exec --stdin）。去掉开头的 BOM：Windows PowerShell 5.1 经管道传给程序时会在前面加一个，
+ * 留着会变成远程命令第一个词的一部分（“command not found”）
+ */
 export async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks).toString('utf8').replace(/^﻿/, '');
 }

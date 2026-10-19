@@ -20,11 +20,19 @@
 
 - **电脑端设置面板变矮**（不折叠、不分页）：用户与退出登录合成一行；界面、配色、语言放左栏，后台通知、会话放右栏，标题与选项同一行；功能按钮排成网格。高度从约 640px 降到约 310px，窗口窄时两栏自动叠成一栏
 - **命令行与 Skill 更好找**：设置面板、应用菜单、托盘菜单都有“命令行与 Skill”，点了直接打开实例管理里的设置页（原来要先进实例管理、再点侧栏的“设置…”）；实例管理里这一块也改叫“命令行与 Skill”
+- **skill 教 AI 在 Windows 上选 shell**：优先 PowerShell 7（命令是 `pwsh`，要 7.3 起），其次 Git Bash，Windows PowerShell 5.1 与 cmd 最后；5.1 里带引号的命令走 `--stdin`。示例里 `--json` 等选项挪到目标前面
+
+### 修复
+
+- **PowerShell 里带引号的命令被拆开**：`cloudssh exec srv-1 'echo "$(hostname) ok"' --json` 原来远端收到的是 `echo $(hostname) ok --json`。原因是 Windows 上的命令是 `.cmd` 批处理，PowerShell 调批处理时不转义参数里的双引号。现在命令换成 Rust 写的小启动器 `cloudssh.exe` / `cssh.exe`（加同名 `.shim` 配置），把命令行原样交给 Node；退出码原样返回，Ctrl+C 交给 Node，启动器被杀时 Node 跟着结束。旧版装的 `.cmd` 重新安装时自动换掉（桌面客户端启动时自动重装）
+- **Windows PowerShell 5.1 拆坏引号时不再执行**：5.1 调任何程序都会拆掉参数里的双引号，启动器认出这种情况就拒绝运行（退出码 2），提示改用 `pwsh` 或 `--stdin`，免得远端执行与所写不同的命令
+- **`--stdin` 开头的 BOM**：Windows PowerShell 5.1 经管道传入时会在前面加 BOM，原来会变成远程命令第一个词的一部分
 
 ### 开发
 
-- 命令行有了测试（`pnpm --filter @cloudssh/cli test`，已接入 `pnpm test`）：对假 Worker 的 MCP 端到端测试与各应用配置的登记测试，全部在临时目录里跑
+- 命令行有了测试（`pnpm --filter @cloudssh/cli test`，已接入 `pnpm test`）：对假 Worker 的 MCP 端到端测试与各应用配置的登记测试，全部在临时目录里跑；Windows 上另测启动器：安装、pwsh / Windows PowerShell 传参、从 `.cmd` 升级、经启动器重装与卸载
 - 假 Worker 端口写 0 时由系统分配，并打印实际端口
+- Windows 启动器源码在 `packages/cli/shim`（不依赖任何 crate），编好的 exe 提交在仓库里，构建只是复制；改了源码用 `pnpm cli:shim` 重编
 
 ## [0.3.25] - 2026-10-19 · 牛郎 Altair
 

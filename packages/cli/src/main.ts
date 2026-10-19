@@ -414,7 +414,9 @@ async function main(argv: string[]): Promise<number> {
         const status = installStatus(str(parsed, 'bin-dir'));
         out(status, bool(parsed, 'json'), () =>
           [
-            status.installed ? `命令：${status.binDir}（${status.exists ? '正常' : '指向的程序不在了，请重新安装'}${status.onPath ? '' : '，不在 PATH 里'}）` : '命令：未安装',
+            status.installed
+              ? `命令：${status.binDir}（${status.exists ? '正常' : '指向的程序不在了，请重新安装'}${status.onPath ? '' : '，不在 PATH 里'}${status.launcher === 'cmd' ? '，旧版的 .cmd 启动脚本，重新安装可换成 .exe' : ''}）`
+              : '命令：未安装',
             status.installed ? `程序：${status.program}，运行时：${status.appRuntime ? 'CloudSSH 客户端' : status.runtime}` : '',
             ...status.skills.map(
               (item) => `${item.name} skill：${item.installed ? (item.current ? '已装' : '已装（不是这个版本的，重新安装可更新）') : '未装'}`
