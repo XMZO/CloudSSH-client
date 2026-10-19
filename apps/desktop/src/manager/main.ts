@@ -10,7 +10,7 @@ interface UiManifest {
 interface ManagerState {
   instances: InstanceConfig[];
   defaultInstanceId: string;
-  preferences: { closeToTray: boolean; showMenuBar: boolean; quickConnectShortcut: string };
+  preferences: { closeToTray: boolean; showMenuBar: boolean; quickConnectShortcut: string; cliLoginSync: boolean };
   openInstanceIds: string[];
   bundledUis: { id: string; manifest: UiManifest | null }[];
   appVersion: string;
@@ -30,6 +30,39 @@ interface TestResult {
   config?: { authMode: string; githubAuthRequired: boolean; sshSharingEnabled: boolean; turnstileEnabled: boolean };
 }
 
+interface CliStatus {
+  available: boolean;
+  installed: boolean;
+  program: string | null;
+  exists: boolean;
+  appRuntime: boolean;
+  managed: boolean;
+  binDir: string;
+  onPath: boolean;
+  skill: boolean;
+  skillCurrent: boolean;
+  skillPath: string;
+  skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean }[];
+  version: string;
+  error?: string;
+}
+
+interface CliConfigView {
+  confirm: 'ask' | 'never';
+  concurrency: number;
+  timeout: number;
+  aliases: Record<string, string>;
+  skills: Record<string, boolean>;
+  skillNotes: string;
+  defaultInstance?: string;
+}
+
+interface CliSettings {
+  status: CliStatus;
+  config: CliConfigView;
+  instances: { name: string; url: string; signedIn: boolean }[];
+}
+
 interface ManagerApi {
   state(): Promise<ManagerState>;
   saveInstance(input: Partial<InstanceConfig>): Promise<InstanceConfig>;
@@ -44,6 +77,11 @@ interface ManagerApi {
   pickDirectory(): Promise<string | null>;
   openPath(kind: 'config' | 'logs'): Promise<void>;
   onChanged(listener: (state: ManagerState) => void): () => void;
+  cliStatus(): Promise<CliStatus>;
+  cliInstall(): Promise<CliStatus>;
+  cliUninstall(): Promise<CliStatus>;
+  cliSettings(): Promise<CliSettings>;
+  setCliSettings(patch: Partial<CliConfigView>): Promise<CliSettings>;
 }
 
 const api = (window as unknown as { managerApi: ManagerApi }).managerApi;
@@ -66,6 +104,7 @@ const testResult = $('test-result');
 const formError = $('form-error');
 const prefCloseToTray = $<HTMLInputElement>('pref-close-to-tray');
 const prefShowMenuBar = $<HTMLInputElement>('pref-show-menubar');
+const prefCliSync = $<HTMLInputElement>('pref-cli-sync');
 const prefQuickConnect = $<HTMLButtonElement>('pref-quick-connect');
 const prefQuickConnectToggle = $<HTMLButtonElement>('pref-quick-connect-toggle');
 const DEFAULT_QUICK_CONNECT = 'CommandOrControl+Alt+T';
@@ -270,6 +309,11 @@ function fillForm(instance: InstanceConfig | null): void {
 }
 
 function select(id: string | null): void {
+  if (!cliView.hidden) {
+    cliView.hidden = true;
+    form.hidden = false;
+    actionbar.hidden = false;
+  }
   selectedId = id;
   renderList();
   fillForm(id && state ? state.instances.find((instance) => instance.id === id) ?? null : null);
@@ -282,6 +326,7 @@ function applyState(next: ManagerState): void {
   }
   prefCloseToTray.checked = next.preferences.closeToTray;
   prefShowMenuBar.checked = next.preferences.showMenuBar;
+  prefCliSync.checked = next.preferences.cliLoginSync;
   renderShortcut();
   $('app-meta').textContent = `客户端 ${next.appVersionLabel} · Electron ${next.electronVersion}`;
   renderList();
@@ -291,6 +336,254 @@ async function refresh(keepForm = false): Promise<void> {
   applyState(await api.state());
   if (!keepForm) select(selectedId ?? state!.defaultInstanceId);
 }
+
+// ---------- 命令行与 Claude Code ----------
+
+const cliStatusEl = $('cli-status');
+const cliInstallBtn = $<HTMLButtonElement>('cli-install');
+const cliViewStatus = $('cli-view-status');
+const cliViewInstall = $<HTMLButtonElement>('cli-view-install');
+const cliViewUninstall = $<HTMLButtonElement>('cli-view-uninstall');
+const cliView = $('cli-view');
+const actionbar = document.querySelector<HTMLElement>('.actionbar')!;
+const cliError = $('cli-error');
+let cliSettingsState: CliSettings | null = null;
+
+function renderCli(status: CliStatus): void {
+  const lines: string[] = [];
+  let warning = false;
+  if (!status.available) {
+    lines.push(status.error ?? '这个客户端没有带命令行程序');
+    warning = true;
+  } else if (!status.installed) {
+    lines.push('未安装。装好后可以在终端，或让 Claude Code、Codex 等 AI 用 cloudssh 操作服务器（执行命令、传文件、批量），不用开客户端。');
+  } else {
+    lines.push(`已安装：cloudssh、cssh（${status.binDir}）`);
+    if (!status.exists) {
+      lines.push('命令指向的程序不在了，请重新安装');
+      warning = true;
+    } else if (status.managed) lines.push('用客户端运行，随客户端更新');
+    else lines.push(`用${status.appRuntime ? '另一个客户端' : ' Node '}运行（${status.program}）；重新安装可改用这个客户端`);
+    if (!status.onPath) {
+      lines.push(`${status.binDir} 不在 PATH 里，终端里找不到命令：请把它加进 PATH`);
+      warning = true;
+    }
+  }
+  if (status.available) {
+    const skills = status.skills ?? [];
+    const on = skills.filter((item) => item.enabled !== false);
+    const done = on.filter((item) => item.installed && item.current).map((item) => item.name);
+    const old = on.filter((item) => item.installed && !item.current).map((item) => item.name);
+    const missing = on.filter((item) => !item.installed).map((item) => item.name);
+    const off = skills.filter((item) => item.enabled === false).map((item) => item.name);
+    if (done.length) lines.push(`skill 已装：${done.join('、')}`);
+    if (old.length) lines.push(`skill 不是最新的（点“重新安装”更新）：${old.join('、')}`);
+    if (missing.length) lines.push(`skill 未装：${missing.join('、')}`);
+    if (off.length) lines.push(`skill 已关：${off.join('、')}`);
+  }
+  for (const el of [cliStatusEl, cliViewStatus]) {
+    el.textContent = lines.join('\n');
+    el.classList.toggle('is-warning', warning);
+  }
+  for (const button of [cliInstallBtn, cliViewInstall]) {
+    button.disabled = !status.available;
+    button.textContent = status.installed ? '重新安装' : '安装';
+  }
+  cliViewUninstall.disabled = !status.installed && !(status.skills ?? []).some((item) => item.installed);
+}
+
+const remoteMessage = (error: unknown) => (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+async function cliAction(action: () => Promise<CliStatus>): Promise<void> {
+  cliInstallBtn.disabled = cliViewInstall.disabled = cliViewUninstall.disabled = true;
+  try {
+    renderCli(await action());
+    if (!cliView.hidden) await loadCliSettings();
+  } catch (error) {
+    for (const el of [cliStatusEl, cliViewStatus]) {
+      el.textContent = remoteMessage(error);
+      el.classList.add('is-warning');
+    }
+    cliInstallBtn.disabled = cliViewInstall.disabled = cliViewUninstall.disabled = false;
+  }
+}
+
+cliInstallBtn.addEventListener('click', () => void cliAction(() => api.cliInstall()));
+cliViewInstall.addEventListener('click', () => void cliAction(() => api.cliInstall()));
+cliViewUninstall.addEventListener('click', () => {
+  if (confirm('卸载命令行 cloudssh 与所有 AI 的 skill？（~/.cloudssh 里的配置与登录保留）')) void cliAction(() => api.cliUninstall());
+});
+void cliAction(() => api.cliStatus());
+
+// ---------- 命令行与 AI 设置页 ----------
+
+const cliSkills = $('cli-skills');
+const cliFullAccess = $<HTMLInputElement>('cli-full-access');
+const cliDefaultInstance = $<HTMLSelectElement>('cli-default-instance');
+const cliTimeout = $<HTMLInputElement>('cli-timeout');
+const cliConcurrency = $<HTMLInputElement>('cli-concurrency');
+const cliAliases = $('cli-aliases');
+const cliAliasName = $<HTMLInputElement>('cli-alias-name');
+const cliAliasTarget = $<HTMLInputElement>('cli-alias-target');
+const cliNotes = $<HTMLTextAreaElement>('cli-notes');
+const cliNotesState = $('cli-notes-state');
+
+function showCliView(show: boolean): void {
+  cliView.hidden = !show;
+  form.hidden = show;
+  actionbar.hidden = show;
+  if (show) {
+    selectedId = null;
+    renderList();
+    void loadCliSettings();
+  }
+}
+
+function switchRow(id: string, title: string, hint: string, checked: boolean, onChange: (on: boolean) => void): HTMLLabelElement {
+  const label = document.createElement('label');
+  label.className = 'switch';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.id = id;
+  input.checked = checked;
+  input.addEventListener('change', () => onChange(input.checked));
+  const track = document.createElement('span');
+  track.className = 'switch-track';
+  track.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = 'switch-text';
+  const small = document.createElement('small');
+  small.textContent = hint;
+  text.append(title, small);
+  label.append(input, track, text);
+  return label;
+}
+
+function renderCliSettings(settings: CliSettings): void {
+  cliSettingsState = settings;
+  renderCli(settings.status);
+  const { config } = settings;
+  // skill：每个 AI 一个开关
+  cliSkills.replaceChildren();
+  const skills = settings.status.skills ?? [];
+  if (!skills.length) cliSkills.textContent = '还没有可以装 skill 的 AI';
+  for (const item of skills) {
+    const enabled = item.enabled ?? config.skills[item.id] !== false;
+    const state = enabled
+      ? item.installed
+        ? item.current
+          ? '已装'
+          : '已装，设置改了还没同步（点“重新安装”）'
+        : settings.status.installed
+          ? '开着，还没装（点“重新安装”）'
+          : '开着，安装后生效'
+      : '关';
+    cliSkills.append(
+      switchRow(`cli-skill-${item.id}`, item.name, `${state} · ${item.path}`, enabled, (on) =>
+        void saveCli({ skills: { ...config.skills, [item.id]: on } })
+      )
+    );
+  }
+  cliFullAccess.checked = config.confirm === 'never';
+  // 默认实例
+  cliDefaultInstance.replaceChildren();
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = settings.instances.length ? '（未设置：只有一个已登录的实例时用它）' : '（还没有实例）';
+  cliDefaultInstance.append(none);
+  for (const instance of settings.instances) {
+    const option = document.createElement('option');
+    option.value = instance.url;
+    option.textContent = `${instance.name}（${hostOf(instance.url)}）${instance.signedIn ? '' : ' · 未登录'}`;
+    cliDefaultInstance.append(option);
+  }
+  cliDefaultInstance.value = config.defaultInstance ?? '';
+  cliTimeout.value = String(config.timeout);
+  cliConcurrency.value = String(config.concurrency);
+  // 别名
+  cliAliases.replaceChildren();
+  for (const [name, target] of Object.entries(config.aliases)) {
+    const li = document.createElement('li');
+    const code = document.createElement('code');
+    code.textContent = name;
+    const arrow = document.createElement('span');
+    arrow.textContent = '→';
+    arrow.className = 'muted';
+    const value = document.createElement('span');
+    value.className = 'alias-target';
+    value.textContent = target;
+    value.title = target;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'link';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => {
+      const next = { ...config.aliases };
+      delete next[name];
+      void saveCli({ aliases: next });
+    });
+    li.append(code, arrow, value, remove);
+    cliAliases.append(li);
+  }
+  if (document.activeElement !== cliNotes) cliNotes.value = config.skillNotes;
+}
+
+async function loadCliSettings(): Promise<void> {
+  cliError.textContent = '';
+  try {
+    renderCliSettings(await api.cliSettings());
+  } catch (error) {
+    cliError.textContent = remoteMessage(error);
+  }
+}
+
+async function saveCli(patch: Partial<CliConfigView>): Promise<boolean> {
+  cliError.textContent = '';
+  try {
+    renderCliSettings(await api.setCliSettings(patch));
+    return true;
+  } catch (error) {
+    cliError.textContent = remoteMessage(error);
+    if (cliSettingsState) renderCliSettings(cliSettingsState);
+    return false;
+  }
+}
+
+$('cli-open-settings').addEventListener('click', () => showCliView(true));
+cliFullAccess.addEventListener('change', () => {
+  if (cliFullAccess.checked && !confirm('打开完全权限？AI 和命令行执行危险命令（删除、关机、改权限……）时不再要求确认。')) {
+    cliFullAccess.checked = false;
+    return;
+  }
+  void saveCli({ confirm: cliFullAccess.checked ? 'never' : 'ask' });
+});
+cliDefaultInstance.addEventListener('change', () => {
+  if (cliDefaultInstance.value) void saveCli({ defaultInstance: cliDefaultInstance.value });
+});
+for (const [input, key] of [
+  [cliTimeout, 'timeout'],
+  [cliConcurrency, 'concurrency'],
+] as const) {
+  input.addEventListener('change', () => void saveCli({ [key]: Number(input.value) }));
+}
+$('cli-alias-add').addEventListener('click', async () => {
+  const name = cliAliasName.value.trim();
+  const target = cliAliasTarget.value.trim();
+  if (!name || !target || !cliSettingsState) {
+    cliError.textContent = '别名的名字和目标都要填';
+    return;
+  }
+  if (await saveCli({ aliases: { ...cliSettingsState.config.aliases, [name]: target } })) {
+    cliAliasName.value = '';
+    cliAliasTarget.value = '';
+  }
+});
+cliNotes.addEventListener('input', () => {
+  cliNotesState.textContent = cliSettingsState && cliNotes.value !== cliSettingsState.config.skillNotes ? '未保存' : '';
+});
+$('cli-notes-save').addEventListener('click', async () => {
+  if (await saveCli({ skillNotes: cliNotes.value })) cliNotesState.textContent = '已保存，已写进 skill';
+});
 
 async function run(action: () => Promise<unknown>): Promise<void> {
   formError.textContent = '';
@@ -399,6 +692,7 @@ $('delete-instance').addEventListener('click', () => {
 
 prefCloseToTray.addEventListener('change', () => void run(() => api.setPreferences({ closeToTray: prefCloseToTray.checked })));
 prefShowMenuBar.addEventListener('change', () => void run(() => api.setPreferences({ showMenuBar: prefShowMenuBar.checked })));
+prefCliSync.addEventListener('change', () => void run(() => api.setPreferences({ cliLoginSync: prefCliSync.checked })));
 prefQuickConnect.addEventListener('click', () => {
   if (recordingShortcut) return;
   recordingShortcut = true;

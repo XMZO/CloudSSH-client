@@ -1,4 +1,4 @@
-# CloudSSH AI 增强代理（思考深度、联网搜索）（用 wrangler 部署时使用；Dashboard 部署直接粘贴 worker.js 即可）
+# CloudSSH AI 增强代理（思考深度、联网搜索、长上下文）（用 wrangler 部署时使用；Dashboard 部署直接粘贴 worker.js 即可）
 # 部署：npx wrangler deploy（在本目录下运行）
 name = "cloudssh-reasoning-proxy"
 main = "worker.js"
@@ -9,6 +9,13 @@ compatibility_date = "2025-09-01"
 UPSTREAM = "https://api.openai.com/v1"
 # 联网搜索工具（可选）：不填按接口自动选；off 关闭；或按模型名分开，见 worker.js 开头的说明
 # WEB_SEARCH = '{"claude":{"type":"web_search_20250305","name":"web_search","max_uses":5},"gemini":{"type":"google_search"},"default":{"type":"web_search"}}'
+
+# 长上下文：保存前文的 KV（建议；不绑定时只存在内存里，可能被回收）。先运行
+#   npx wrangler kv namespace create reasoning-history
+# 再把返回的 id 填到下面并去掉注释
+# [[kv_namespaces]]
+# binding = "HISTORY"
+# id = "<命名空间 ID>"
 
 # 保留 Worker 日志（每个请求一行：思考深度档位、联网搜索、模型、状态码、token 用量），控制台“日志”里可查
 [observability]

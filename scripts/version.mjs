@@ -22,7 +22,7 @@ const VERSION_FILE = path.join(root, 'version.json');
 const TAURI_DIR = path.join(root, 'apps', 'mobile', 'src-tauri');
 const GENERATED_TS = path.join(root, 'packages', 'core', 'src', 'version.ts');
 
-const PACKAGE_JSONS = ['package.json', 'apps/desktop/package.json', 'apps/mobile/package.json', 'packages/core/package.json'];
+const PACKAGE_JSONS = ['package.json', 'apps/desktop/package.json', 'apps/mobile/package.json', 'packages/core/package.json', 'packages/cli/package.json'];
 
 /** 只接受 x.y.z：次版本号与修订号小于 1000、主版本号小于 2000，保证 Android versionCode 单调且不溢出 */
 export function parseVersion(text) {

@@ -17,6 +17,8 @@ import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
 import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
 import { refreshMenus } from './menus';
+import { cliSettings, cliStatus, type CliSettingsPatch, installCli, uninstallCli, updateCliSettings } from './cli-install';
+import { applyCliSync } from './cli-sync';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
 import { clearInstanceData } from './session';
@@ -270,6 +272,7 @@ export function registerIpc(): void {
     }
     const prefs = configStore.setPreferences(patch);
     applyMenuBarVisibility(prefs.showMenuBar);
+    if (prefs.cliLoginSync !== before.cliLoginSync) applyCliSync(prefs.cliLoginSync);
     // 改了快捷键（或重新录了同一个，例如占用它的程序已退出）都重新注册
     if (patch.quickConnectShortcut !== undefined || prefs.quickConnectShortcut !== before.quickConnectShortcut) {
       applyGlobalShortcut(prefs.quickConnectShortcut);
@@ -305,6 +308,28 @@ export function registerIpc(): void {
   ipcMain.handle('manager:check-update', async (event) => {
     assertManager(event);
     return getUpdater().check();
+  });
+
+  // 命令行 cloudssh 与 Claude Code skill
+  ipcMain.handle('manager:cli-status', (event) => {
+    assertManager(event);
+    return cliStatus();
+  });
+  ipcMain.handle('manager:cli-install', (event) => {
+    assertManager(event);
+    return installCli();
+  });
+  ipcMain.handle('manager:cli-uninstall', (event) => {
+    assertManager(event);
+    return uninstallCli();
+  });
+  ipcMain.handle('manager:cli-settings', (event) => {
+    assertManager(event);
+    return cliSettings();
+  });
+  ipcMain.handle('manager:cli-settings-set', (event, patch: CliSettingsPatch) => {
+    assertManager(event);
+    return updateCliSettings(patch && typeof patch === 'object' ? patch : {});
   });
 }
 

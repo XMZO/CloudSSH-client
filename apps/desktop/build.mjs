@@ -9,6 +9,7 @@ import { context, build } from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildCli } from '../../packages/cli/build.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const out = path.join(root, 'dist');
@@ -67,6 +68,8 @@ function copyStatic() {
 }
 
 fs.rmSync(out, { recursive: true, force: true });
+// 命令行 cloudssh：打进安装包的 resources/cli/（electron-builder.yml extraResources），实例管理里一键安装
+await buildCli({ logLevel: 'warning' });
 
 if (watch) {
   for (const options of targets) {

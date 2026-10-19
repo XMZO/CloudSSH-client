@@ -11,6 +11,8 @@ import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { configStore } from './config/store';
 import { createLogger } from './logger';
+import { refreshCliInstall } from './platform/cli-install';
+import { applyCliSync } from './platform/cli-sync';
 import { registerDragOutIpc } from './platform/drag-out';
 import { registerIpc } from './platform/ipc';
 import { openManagerWindow } from './platform/manager-window';
@@ -70,7 +72,12 @@ if (!app.requestSingleInstanceLock()) {
     buildAppMenu();
     buildTray();
 
-    configStore.on('instances-changed', () => refreshMenus());
+    configStore.on('instances-changed', () => {
+      refreshMenus();
+      if (configStore.preferences.cliLoginSync) applyCliSync(true);
+    });
+    applyCliSync(configStore.preferences.cliLoginSync);
+    void refreshCliInstall();
     app.on('browser-window-focus', () => refreshMenus());
 
     const requested = instanceFromArgv(process.argv);

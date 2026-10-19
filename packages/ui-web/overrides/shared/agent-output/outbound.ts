@@ -39,7 +39,7 @@ export function serverContext(panel: unknown): string {
     .filter(Boolean)
     .slice(0, MAX_TAGS);
   if (!name && !tags.length) return '';
-  const lines = ['(How the user labels the server you are working on in CloudSSH; reference only.)'];
+  const lines = ['(How the user names and tags this server in CloudSSH; for reference.)'];
   if (name) lines.push(`Name: ${name}`);
   if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
   return `<server_context>\n${lines.join('\n')}\n</server_context>`;

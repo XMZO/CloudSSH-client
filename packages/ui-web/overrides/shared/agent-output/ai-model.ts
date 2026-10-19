@@ -11,8 +11,11 @@
  * 填它）。客户端在每条消息末尾附指令标签 <cloudssh_reasoning effort="high"/> <cloudssh_web_search mode="on"/>，
  * 代理转发前删掉所有标签，按最后一个给请求加上 reasoning.effort、模型的原生搜索工具（并把 Worker 不认的搜索条目
  * 从结果里去掉）。每条消息各自带标签，所以随时切换、不用开新会话。
- * 只有检测到代理时才附标签（GET 接口地址/cloudssh-reasoning，返回版本与功能）：没有代理时标签会被原样发给模型。
- * 0.3.23 部署的版本 1 代理只认 [cloudssh-reasoning:high]；版本 3 起才有联网搜索。
+ * 只有检测到代理时才附标签（GET 接口地址/cloudssh-reasoning?model=…，返回版本、功能与模型窗口）：没有代理时标签会被
+ * 原样发给模型。0.3.23 部署的版本 1 代理只认 [cloudssh-reasoning:high]；版本 3 起才有联网搜索；版本 4 起有长上下文
+ * （代理接管 CloudSSH 服务端的上下文整理、保留完整对话，按模型自己的窗口放回，见 tools/reasoning-proxy/worker.js）。
+ *
+ * 模型上下文窗口：有代理时由代理查（接口的 /models 列表、代理变量、常见模型表），没有时按下面的常见模型表。
  */
 import { instanceKey } from './instance';
 
@@ -39,6 +42,17 @@ export const EFFORT_LABEL = {
 /** 代理状态：ok 已生效；no-upstream 代理在但没设 UPSTREAM；absent 接口地址不是代理；checking 检测中 */
 export type ProxyState = 'ok' | 'no-upstream' | 'absent' | 'checking';
 
+/** 模型的输入上下文窗口（token）与来源：upstream 接口的模型列表；setting 代理变量；table 常见模型表；default 认不出 */
+export interface ModelWindow {
+  tokens: number;
+  source: 'upstream' | 'setting' | 'table' | 'default';
+}
+
+interface ProxyContext extends ModelWindow {
+  model: string;
+  storage: 'kv' | 'memory';
+}
+
 const EFFORT_KEY = 'cloudssh_ai_effort';
 const SEARCH_KEY = 'cloudssh_ai_web_search';
 const CONFIG_TTL = 30_000;
@@ -48,7 +62,8 @@ const PROXY_TTL = 5 * 60_000;
 let cache: { key: string; config: AiConfig | null; at: number } | null = null;
 let loading: Promise<AiConfig | null> | null = null;
 let models: { key: string; list: string[]; at: number } | null = null;
-let proxy: { base: string; state: ProxyState; version: number; features: string[]; at: number } | null = null;
+let proxy: { base: string; model: string; state: ProxyState; version: number; features: string[]; context: ProxyContext | null; at: number } | null =
+  null;
 let probing: Promise<ProxyState> | null = null;
 const listeners = new Set<() => void>();
 
@@ -167,41 +182,107 @@ export function proxyState(): ProxyState {
   return proxy?.base === base ? proxy.state : 'checking';
 }
 
-/** 检测接口地址是不是思考深度代理（结果缓存 5 分钟） */
+function contextOf(value: unknown, model: string): ProxyContext | null {
+  const data = value as Partial<ProxyContext> | null;
+  if (!data || typeof data !== 'object' || typeof data.tokens !== 'number' || !(data.tokens > 0)) return null;
+  const source = (['upstream', 'setting', 'table', 'default'] as const).find((item) => item === data.source) ?? 'default';
+  return { model, tokens: Math.round(data.tokens), source, storage: data.storage === 'kv' ? 'kv' : 'memory' };
+}
+
+/** 检测接口地址是不是 AI 增强代理（结果缓存 5 分钟；换模型时重新检测，顺便取模型窗口） */
 export function detectProxy(force = false): Promise<ProxyState> {
   const base = currentAiConfig()?.base_url;
+  const model = currentAiConfig()?.model ?? '';
   if (!base) return Promise.resolve<ProxyState>('absent');
-  if (!force && proxy?.base === base && Date.now() - proxy.at < PROXY_TTL) return Promise.resolve(proxy.state);
+  if (!force && proxy?.base === base && proxy.model === model && Date.now() - proxy.at < PROXY_TTL) return Promise.resolve(proxy.state);
   if (probing) return probing;
   probing = (async () => {
     let state: ProxyState = 'absent';
     let version = 0;
     let features: string[] = [];
+    let context: ProxyContext | null = null;
     try {
-      const response = await fetch(`${base.replace(/\/+$/, '')}/cloudssh-reasoning`, {
+      const query = model ? `?model=${encodeURIComponent(model)}` : '';
+      const response = await fetch(`${base.replace(/\/+$/, '')}/cloudssh-reasoning${query}`, {
         cache: 'no-store',
         credentials: 'omit',
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(8000),
       });
       const data = response.ok
-        ? ((await response.json().catch(() => null)) as { cloudsshReasoningProxy?: unknown; upstream?: unknown; features?: unknown } | null)
+        ? ((await response.json().catch(() => null)) as {
+            cloudsshReasoningProxy?: unknown;
+            upstream?: unknown;
+            features?: unknown;
+            context?: unknown;
+          } | null)
         : null;
       if (typeof data?.cloudsshReasoningProxy === 'number' && data.cloudsshReasoningProxy >= 1) {
         version = data.cloudsshReasoningProxy;
         state = data.upstream === false ? 'no-upstream' : 'ok';
         features = Array.isArray(data.features) ? data.features.filter((item): item is string => typeof item === 'string') : ['reasoning'];
+        context = contextOf(data.context, model);
       }
     } catch {
       // 不是代理、或访问不到
     }
-    const changed = proxy?.base !== base || proxy.state !== state || proxy.features.join() !== features.join();
-    proxy = { base, state, version, features, at: Date.now() };
+    const changed =
+      proxy?.base !== base ||
+      proxy.state !== state ||
+      proxy.features.join() !== features.join() ||
+      proxy.context?.tokens !== context?.tokens ||
+      proxy.context?.model !== context?.model;
+    proxy = { base, model, state, version, features, context, at: Date.now() };
     if (changed) notifyAll();
     return state;
   })().finally(() => {
     probing = null;
+    // 检测期间换了模型：再取一次新模型的窗口
+    if (currentAiConfig()?.base_url === proxy?.base && (currentAiConfig()?.model ?? '') !== proxy?.model) void detectProxy();
   });
   return probing;
+}
+
+/** 代理版本（没检测到为 0） */
+export function proxyVersion(): number {
+  return proxyState() === 'ok' ? (proxy?.version ?? 0) : 0;
+}
+
+/** 代理接管了 CloudSSH 服务端的上下文整理、保留完整对话（版本 4 起，没用 LONG_CONTEXT=off 关掉） */
+export function longContextActive(): boolean {
+  return proxyState() === 'ok' && !!proxy?.features.includes('long_context');
+}
+
+/** 代理把前文存在哪：kv（绑定了 KV，可靠）或 memory（只在内存里，长时间不用会丢）；没有代理为 null */
+export function proxyStorage(): 'kv' | 'memory' | null {
+  return longContextActive() ? (proxy?.context?.storage ?? null) : null;
+}
+
+/**
+ * 常见模型的输入上下文窗口（token），按顺序匹配模型名（不分大小写）。
+ * 与 tools/reasoning-proxy/worker.js 的 WINDOWS 保持一致
+ */
+const WINDOWS: Array<[RegExp, number]> = [
+  [/gemini/, 1_048_576],
+  [/gpt-4\.1/, 1_047_576],
+  [/gpt-5[\d.]*-chat/, 128_000],
+  [/gpt-(?:[5-9]|\d{2})/, 272_000],
+  [/(?:^|\/)o[134](?:-|$)/, 200_000],
+  [/claude/, 200_000],
+  [/grok-4/, 256_000],
+  [/grok/, 131_072],
+  [/gpt-4o|gpt-4-turbo/, 128_000],
+  [/gpt-oss|qwen|kimi|moonshot/, 131_072],
+  [/deepseek|glm|llama|mistral|mixtral|codestral/, 128_000],
+];
+const DEFAULT_WINDOW = 128_000;
+
+/** 模型的输入上下文窗口：代理查到的优先，其次常见模型表；认不出按 128K（source 为 default） */
+export function modelWindow(model = currentAiConfig()?.model ?? ''): ModelWindow {
+  const context = proxyState() === 'ok' ? proxy?.context : null;
+  if (context && context.model === model) return { tokens: context.tokens, source: context.source };
+  const name = model.toLowerCase();
+  for (const [pattern, tokens] of WINDOWS) if (pattern.test(name)) return { tokens, source: 'table' };
+  return { tokens: DEFAULT_WINDOW, source: 'default' };
 }
 
 // ---------- 联网搜索 ----------

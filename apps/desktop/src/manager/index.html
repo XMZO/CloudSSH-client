@@ -48,6 +48,15 @@
           </div>
         </section>
 
+        <section class="prefs cli-section" aria-labelledby="cli-title">
+          <h2 id="cli-title">命令行与 AI</h2>
+          <p id="cli-status" class="cli-status muted" role="status">检查中…</p>
+          <div class="cli-actions">
+            <button id="cli-install" class="btn btn-small btn-primary" type="button">安装</button>
+            <button id="cli-open-settings" class="btn btn-small" type="button" aria-controls="cli-view">设置…</button>
+          </div>
+        </section>
+
         <footer class="sidebar-footer">
           <div id="app-meta" class="muted"></div>
           <div class="footer-actions">
@@ -137,6 +146,95 @@
             </div>
           </section>
         </form>
+
+        <div id="cli-view" class="detail-scroll" hidden>
+          <div class="detail-head">
+            <h2 class="view-title">命令行与 AI</h2>
+            <p class="muted view-subtitle">cloudssh 命令，以及给 Claude Code、Codex 等 AI 用的 skill：不开客户端也能操作服务器</p>
+          </div>
+
+          <section class="card">
+            <h3>安装</h3>
+            <p id="cli-view-status" class="cli-status muted" role="status">检查中…</p>
+            <div class="cli-actions">
+              <button id="cli-view-install" class="btn btn-primary" type="button">安装</button>
+              <button id="cli-view-uninstall" class="btn" type="button">卸载</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3>Skill</h3>
+            <p class="hint">给哪些 AI 装 skill，关掉即删除。其他 agent 只要能执行命令，也能直接用 cloudssh。</p>
+            <div id="cli-skills" class="switch-list"></div>
+          </section>
+
+          <section class="card">
+            <h3>权限</h3>
+            <label class="switch">
+              <input type="checkbox" id="cli-full-access" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"
+                >完全权限<small
+                  >危险命令（删除、关机、改权限……）不再要求 --yes，服务器之间 copy 覆盖也不再确认；rm -rf / 这类拦截级命令仍然拒绝。会写进 skill 告诉 AI</small
+                ></span
+              >
+            </label>
+          </section>
+
+          <section class="card">
+            <h3>登录</h3>
+            <label class="switch">
+              <input type="checkbox" id="pref-cli-sync" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"
+                >同步登录给命令行<small
+                  >客户端运行时把各实例的登录写到 ~/.cloudssh/，不用再 cloudssh login（会话 7 天有效）；关掉即删除</small
+                ></span
+              >
+            </label>
+            <label class="field field-gap">
+              <span>默认实例（命令行不带 --instance 时用）</span>
+              <select id="cli-default-instance"></select>
+            </label>
+          </section>
+
+          <section class="card">
+            <h3>执行</h3>
+            <div class="field-grid">
+              <label class="field">
+                <span>默认超时（秒，1～3600）</span>
+                <input id="cli-timeout" type="number" min="1" max="3600" step="1" />
+              </label>
+              <label class="field">
+                <span>批量执行同时连几台（1～32）</span>
+                <input id="cli-concurrency" type="number" min="1" max="32" step="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3>别名</h3>
+            <p class="hint">命令里可以用别名代替目标，例如 web → srv-12、db → tag:数据库、hk → srv-3,srv-4</p>
+            <ul id="cli-aliases" class="alias-list"></ul>
+            <div class="row alias-add">
+              <input id="cli-alias-name" type="text" maxlength="40" placeholder="名字，例如 web" />
+              <input id="cli-alias-target" type="text" maxlength="200" placeholder="目标，例如 srv-12 或 tag:德国" />
+              <button id="cli-alias-add" class="btn" type="button">添加</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3>给 AI 的补充说明</h3>
+            <p class="hint">写进 skill，AI 用 cloudssh 时会照着做，例如“tag:prod 只做只读操作”“改 nginx 配置前先 nginx -t”</p>
+            <textarea id="cli-notes" rows="5" maxlength="4000" spellcheck="false"></textarea>
+            <div class="cli-actions">
+              <button id="cli-notes-save" class="btn" type="button">保存说明</button>
+              <small id="cli-notes-state" class="hint"></small>
+            </div>
+          </section>
+
+          <p id="cli-error" class="error" role="alert"></p>
+        </div>
 
         <div class="actionbar">
           <button id="save-instance" class="btn btn-primary" type="submit" form="instance-form">保存</button>

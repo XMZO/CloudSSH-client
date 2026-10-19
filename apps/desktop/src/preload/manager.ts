@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('managerApi', {
   pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
   openPath: (kind: 'config' | 'logs') => ipcRenderer.invoke('manager:open-path', kind),
   checkUpdate: () => ipcRenderer.invoke('manager:check-update'),
+  cliStatus: () => ipcRenderer.invoke('manager:cli-status'),
+  cliInstall: () => ipcRenderer.invoke('manager:cli-install'),
+  cliUninstall: () => ipcRenderer.invoke('manager:cli-uninstall'),
+  cliSettings: () => ipcRenderer.invoke('manager:cli-settings'),
+  setCliSettings: (patch: unknown) => ipcRenderer.invoke('manager:cli-settings-set', patch),
   onChanged: (listener: (state: unknown) => void) => {
     const handler = (_event: unknown, state: unknown) => listener(state);
     ipcRenderer.on('manager:changed', handler);

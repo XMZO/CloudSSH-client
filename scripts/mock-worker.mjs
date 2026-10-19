@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import nodePath from 'node:path';
+import zlib from 'node:zlib';
 
 const args = process.argv.slice(2);
 const port = Number(args.find((arg) => /^\d+$/.test(arg)) ?? 8788);
@@ -200,10 +201,19 @@ async function handleHttp(req, res) {
     return json(res, 200, { id: 1, github_id: 1, username: 'tester', avatar_url: null });
   }
   if (path === '/api/servers' && method === 'GET') return json(res, 200, servers);
-  // 模拟思考深度代理的检测接口（客户端直接访问，要带 CORS）
+  // 模拟 AI 增强代理的检测接口（客户端直接访问，要带 CORS）；--proxy-v3 模拟没有长上下文的旧版
   if (path === '/mock-proxy/cloudssh-reasoning') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    return res.end(JSON.stringify({ cloudsshReasoningProxy: 3, upstream: true, features: ['reasoning', 'web_search'] }));
+    const model = url.searchParams.get('model') || '';
+    const body = MOCK_PROXY_VERSION >= 4
+      ? {
+          cloudsshReasoningProxy: 4,
+          upstream: true,
+          features: ['reasoning', 'web_search', 'long_context'],
+          ...(model ? { context: { model, ...mockWindow(model), maxBytes: 1200000, storage: args.includes('--proxy-kv') ? 'kv' : 'memory' } } : {}),
+        }
+      : { cloudsshReasoningProxy: 3, upstream: true, features: ['reasoning', 'web_search'] };
+    return res.end(JSON.stringify(body));
   }
   // AI 配置（客户端 agent-output/ai-model.ts 读、切换模型）：与 Worker 一致，换接口地址必须带新密钥
   if (path === '/api/ai/config' && method === 'GET') return json(res, 200, { configured: true, base_url: aiBase, model: aiModel, api_key_last4: 'mock' });
@@ -564,6 +574,16 @@ const MOCK_PROXY = `http://127.0.0.1:${port}/mock-proxy`;
 const AI_MODELS = ['claude-sonnet-4-5', 'deepseek-chat', 'gemini-2.5-pro', 'gpt-5', 'gpt-5-mini', 'gpt-5.1-codex'];
 let aiBase = args.includes('--reasoning-proxy') ? MOCK_PROXY : AI_RELAY;
 let aiModel = 'gpt-5';
+/** 模拟的代理版本：4 起有长上下文（代理接管 Worker 的整理、保留完整对话，用量打包），--proxy-v3 模拟旧版 */
+const MOCK_PROXY_VERSION = args.includes('--proxy-v3') ? 3 : 4;
+const USAGE_PACK = 2 ** 26;
+/** 模型窗口（代理从接口的 /models 查到的；这里简单按名字给） */
+function mockWindow(model) {
+  if (/gemini/.test(model)) return { tokens: 1048576, source: 'upstream' };
+  if (/claude/.test(model)) return { tokens: 200000, source: 'upstream' };
+  if (/gpt-5/.test(model)) return { tokens: 400000, source: 'upstream' };
+  return { tokens: 64000, source: 'upstream' };
+}
 // 与 tools/reasoning-proxy 一致：正式标签 <cloudssh_reasoning effort="high"/>，也认 0.3.23 的旧写法
 const SEARCH_MARK = /\s*<cloudssh_web_search\s+mode=\\*"(on|off)\\*"\s*\/>/g;
 const REASONING_MARK = /\s*(?:<cloudssh_reasoning\s+effort=\\*"(auto|none|minimal|low|medium|high|xhigh)\\*"\s*\/>|\[cloudssh-reasoning:(auto|none|minimal|low|medium|high|xhigh)\])/g;
@@ -638,7 +658,8 @@ const agentStates = new WeakMap();
 function agentState(ws) {
   let state = agentStates.get(ws);
   if (!state) {
-    state = { nextTurn: 0, turns: new Set(), long: false, compacted: false, ctx: 0, model: null, current: null, flags: new Set() };
+    // ctx：Worker 那份对话的量（到线就整理）；modelCtx：模型实际看到的（长上下文代理把前文放回，整理也不丢）
+    state = { nextTurn: 0, turns: new Set(), long: false, compacted: false, ctx: 0, modelCtx: 0, model: null, current: null, flags: new Set() };
     agentStates.set(ws, state);
   }
   return state;
@@ -670,6 +691,16 @@ function mockRemoteReply(request) {
   }
   if (request.includes('#remote-slow')) {
     return '先在 DE-03 上跑一个慢命令。\n\n```cloudssh-action\n{"action":"exec","server":"DE-03 法兰克福","command":"sleep 20","timeout":60}\n```';
+  }
+  // #remote-id：像 AI 读过服务器目录那样用主机 ID（srv-编号，也有写成数字的），不用确认是哪台
+  if (request.includes('#remote-id')) {
+    const id = (name) => servers.find((item) => item.name === name)?.id;
+    const byId = [
+      { action: 'exec', server: `srv-${id('DE-03 法兰克福')}`, command: 'df -h' },
+      { action: 'copy', from: { server: 'current', path: '/root/deploy.sh' }, to: { server: `srv-${id('JP-D 福冈')}`, path: '/tmp/deploy-copy.sh' } },
+      { action: 'exec', server: id('US-A 洛杉矶'), command: 'uptime' },
+    ];
+    return `按主机 ID 在其他服务器上处理。\n\n\`\`\`cloudssh-action\n${byId.map((item) => JSON.stringify(item)).join('\n')}\n\`\`\``;
   }
   const actions = [
     { action: 'exec', server: 'DE-03 法兰克福', command: 'df -h' },
@@ -727,12 +758,20 @@ function mockAgentReply(ws, msg) {
   const later = (fn, ms) => timers.push(setTimeout(fn, ms));
   // 用量：这一轮各次调用的输入 / 输出合计（与 Worker run_end 的 usage 一致）
   const firstInput = MOCK_PREFIX_TOKENS + mockBaseExtra + state.ctx + mockTokens(msg.message) + 300;
+  // 长上下文代理：模型看到的是完整前文；联网搜索的结果也算进接口回报的输入（Worker 那份里没有）
+  const longCtx = aiBase === MOCK_PROXY && MOCK_PROXY_VERSION >= 4;
+  const searchExtra = aiBase === MOCK_PROXY && webSearch === 'on' ? 6000 : 0;
+  const modelFirst = MOCK_PREFIX_TOKENS + mockBaseExtra + (longCtx ? state.modelCtx : state.ctx) + mockTokens(msg.message) + 300 + searchExtra;
   const usage = (output, calls = 1, growth = 0) => {
-    const inputs = Array.from({ length: calls }, (_, i) => firstInput + Math.round((growth * i) / Math.max(1, calls - 1)));
+    const inputs = Array.from({ length: calls }, (_, i) => modelFirst + Math.round((growth * i) / Math.max(1, calls - 1)));
     const input = inputs.reduce((a, b) => a + b, 0);
     // 推理用量随“代理”加上的档位变化（客户端思考深度菜单里显示上一轮的推理用量，用来确认是否生效）
     const perCall = { minimal: 0, low: 120, medium: 400, high: 900, xhigh: 1600 }[aiBase === MOCK_PROXY ? effort : ''] ?? 300;
-    return { calls, reportedCalls: calls, input, cached: Math.floor(input * 0.6), output, reasoning: perCall * calls, checkpointCalls: 0 };
+    const cached = Math.floor(input * 0.6);
+    const use = { calls, reportedCalls: calls, input, cached, output, reasoning: perCall * calls, checkpointCalls: 0 };
+    // 代理回给 Worker：输入按 Worker 那份算，实际输入编进缓存（客户端解开）
+    if (longCtx && calls) Object.assign(use, { input: Math.min(input, Math.round(firstInput * calls * 0.8)), cached: cached + input * USAGE_PACK });
+    return use;
   };
   state.current = { frame, timers, usage };
   const finishRun = (outcome, use) => {
@@ -756,7 +795,7 @@ function mockAgentReply(ws, msg) {
   if (request.includes('#reasoning-reject') && effort && effort !== 'auto' && aiBase === MOCK_PROXY) return fail('responses_http', false, { status: 400 });
   if (request.includes('#proxy-down') && aiBase === MOCK_PROXY) return fail('responses_http', false, { status: 522 });
   state.model = aiModel;
-  console.log(`AGENT 上下文约 ${firstInput} tokens（整理线约 ${MOCK_LIMIT_TOKENS}），模型 ${aiModel}`);
+  console.log(`AGENT 上下文约 ${firstInput} tokens（整理线约 ${MOCK_LIMIT_TOKENS}），模型实际看到约 ${modelFirst}，模型 ${aiModel}`);
   // 客户端压缩：写摘要
   if (request.includes('<cloudssh_compact>')) {
     if (state.flags.has('#compact-fail')) return fail('responses_schema');
@@ -769,10 +808,13 @@ function mockAgentReply(ws, msg) {
     }, 400 + 120 * (pieces.length + 1));
     return;
   }
-  // 到了整理线：与用户遇到的一样整理失败（带 #checkpoint-ok 时模拟整理成功）
-  if (firstInput >= MOCK_LIMIT_TOKENS && !state.flags.has('#checkpoint-ok')) return fail('responses_schema', true);
+  // 到了整理线：与用户遇到的一样整理失败（带 #checkpoint-ok 时模拟整理成功）；长上下文代理接管整理，总是成功、不丢内容
+  if (firstInput >= MOCK_LIMIT_TOKENS && !longCtx && !state.flags.has('#checkpoint-ok')) return fail('responses_schema', true);
+  let workerFirst = firstInput;
   if (firstInput >= MOCK_LIMIT_TOKENS) {
     state.ctx = 2500;
+    workerFirst = MOCK_PREFIX_TOKENS + mockBaseExtra + 2500 + mockTokens(msg.message) + 300;
+    console.log(`AGENT Worker 整理上下文${longCtx ? '（代理接管，模型仍看到完整前文）' : ''}`);
     frame('context_status', { compacted: true, earliestEditableTurn: state.nextTurn });
   }
   if (typeof msg.userIndex === 'number') {
@@ -810,7 +852,8 @@ function mockAgentReply(ws, msg) {
     frame('stream_end', { content: reply });
     const output = mockTokens(reply);
     const use = big ? usage(output, 3, 2600) : usage(output);
-    state.ctx = firstInput - MOCK_PREFIX_TOKENS - mockBaseExtra + (big ? 2600 : 0) + output;
+    state.ctx = workerFirst - MOCK_PREFIX_TOKENS - mockBaseExtra + (big ? 2600 : 0) + output;
+    state.modelCtx = modelFirst - MOCK_PREFIX_TOKENS - mockBaseExtra - searchExtra + (big ? 2600 : 0) + output;
     if (request.includes('#long')) state.long = true;
     if (request.includes('#compact')) {
       state.turns.clear();
@@ -851,6 +894,79 @@ function removeTree(path) {
   for (const key of [...sftpTree.keys()]) if (key === path || key.startsWith(`${path}/`)) sftpTree.delete(key);
 }
 
+/** 真的 tar.gz（ustar）：服务器上打包的能被本机 tar 解开，本机 tar 打的包这里也能解开（命令行上传 / 下载目录） */
+function tarPack(root) {
+  const base = sftpParent(root) === '/' ? 1 : sftpParent(root).length + 1;
+  const blocks = [];
+  for (const [path, node] of [...sftpTree.entries()].filter(([p]) => p === root || p.startsWith(`${root}/`))) {
+    const name = path.slice(base) + (node.type === 'dir' ? '/' : '');
+    const data = node.type === 'file' ? (node.data ?? Buffer.alloc(node.size, 0x2e)) : Buffer.alloc(0);
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100, 'utf8');
+    header.write(node.type === 'dir' ? '0000755\0' : '0000644\0', 100, 'ascii');
+    header.write('0000000\0', 108, 'ascii');
+    header.write('0000000\0', 116, 'ascii');
+    header.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii');
+    header.write(`${Math.floor(Date.now() / 1000).toString(8).padStart(11, '0')}\0`, 136, 'ascii');
+    header.write('        ', 148, 'ascii');
+    header.write(node.type === 'dir' ? '5' : '0', 156, 'ascii');
+    header.write('ustar\0', 257, 'ascii');
+    header.write('00', 263, 'ascii');
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii');
+    blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return zlib.gzipSync(Buffer.concat(blocks));
+}
+
+/** 解开 tar.gz，返回 [相对路径, {type, data}]（认 ustar 前缀与 pax 扩展头里的 path） */
+function tarUnpack(gz) {
+  const tar = zlib.gunzipSync(gz);
+  const entries = [];
+  let paxPath = null;
+  for (let offset = 0; offset + 512 <= tar.length; ) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const field = (start, length) => header.subarray(start, start + length).toString('utf8').replace(/\0.*$/s, '');
+    const size = parseInt(field(124, 12).trim() || '0', 8);
+    const type = field(156, 1) || '0';
+    const data = tar.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+    if (type === 'x') {
+      paxPath = /\d+ path=([^\n]*)\n/.exec(data.toString('utf8'))?.[1] ?? null;
+      continue;
+    }
+    if (type === 'g') continue;
+    const prefix = field(345, 155);
+    const name = (paxPath ?? (prefix ? `${prefix}/${field(0, 100)}` : field(0, 100))).replace(/^\.\//, '').replace(/\/+$/, '');
+    paxPath = null;
+    if (!name || name === '.') continue;
+    if (type === '5') entries.push([name, { type: 'dir', data: null }]);
+    else if (type === '0' || type === '\0') entries.push([name, { type: 'file', data: Buffer.from(data) }]);
+  }
+  return entries;
+}
+
+function tarExtract(archive, dest, strip = 0) {
+  const node = sftpTree.get(archive);
+  if (!node?.data) throw new Error(`no archive ${archive}`);
+  mkdirp(dest);
+  for (const [rel, item] of tarUnpack(node.data)) {
+    const parts = rel.split('/').slice(strip);
+    if (!parts.length || !parts[0]) continue;
+    const path = `${dest.replace(/\/+$/, '')}/${parts.join('/')}`;
+    mkdirp(sftpParent(path));
+    if (item.type === 'dir') {
+      if (!sftpTree.has(path)) sftpPut(path, 'dir');
+    } else {
+      sftpPut(path, 'file', 0, item.data);
+      sftpTree.get(path).size = item.data.length;
+    }
+  }
+}
+
 function mockExec(cmd) {
   const ok = (output = '') => ({ output, rc: 0 });
   const quoted = String.raw`'(?:[^']|'\\'')*'`;
@@ -866,7 +982,7 @@ function mockExec(cmd) {
   if (cmd.startsWith('echo ')) return ok(cmd.slice(5));
   if ((m = /^cat ([^\s]+)$/.exec(cmd)) && sftpTree.get(m[1])?.data) return ok(sftpTree.get(m[1]).data.toString('utf8'));
   if (cmd === 'printf %s "$HOME"') return ok('/root');
-  // 传文件：查源
+  // 传文件：查源（AI 的 copy 与命令行的 download 共用：都输出类型、[大小]、绝对路径）
   if ((m = new RegExp(`^p=(${word}); if \\[ -d`).exec(cmd))) {
     const path = shellWord(m[1]).replace(/\/+$/, '') || '/';
     const node = sftpTree.get(path);
@@ -927,24 +1043,39 @@ function mockExec(cmd) {
   if ((m = new RegExp(`^tar czf (${quoted}) -C (${quoted}) (${quoted})$`).exec(cmd))) {
     const archive = shellWord(m[1]);
     const root = `${shellWord(m[2]).replace(/\/+$/, '')}/${shellWord(m[3])}`;
-    const entries = [...sftpTree.entries()]
-      .filter(([p]) => p === root || p.startsWith(`${root}/`))
-      .map(([p, n]) => [p.slice(sftpParent(root).length + (sftpParent(root) === '/' ? 0 : 1)), { type: n.type, data: n.data?.toString('base64') ?? null, size: n.size }]);
-    sftpPut(archive, 'file', 0, Buffer.from(JSON.stringify(entries)));
+    if (!sftpTree.has(root)) return { output: `tar: ${root}: No such file or directory`, rc: 2 };
+    sftpPut(archive, 'file', 0, tarPack(root));
     sftpTree.get(archive).size = sftpTree.get(archive).data.length;
     return ok();
   }
   if ((m = new RegExp(`^mkdir -p (${quoted}) && tar xzf (${quoted}) -C ${quoted} --strip-components=1`).exec(cmd))) {
-    const dest = shellWord(m[1]);
-    const archive = shellWord(m[2]);
-    const entries = JSON.parse(sftpTree.get(archive)?.data?.toString('utf8') ?? '[]');
-    mkdirp(dest);
-    for (const [rel, node] of entries) {
-      const stripped = rel.split('/').slice(1).join('/');
-      if (!stripped) continue;
-      sftpTree.set(`${dest}/${stripped}`, { type: node.type, size: node.size, data: node.data ? Buffer.from(node.data, 'base64') : null, mtime: Math.floor(Date.now() / 1000) });
+    tarExtract(shellWord(m[2]), shellWord(m[1]), 1);
+    sftpTree.delete(shellWord(m[2]));
+    return ok();
+  }
+  // 命令行上传目录：临时目录解包，目标已是目录就合并，否则改名过去
+  if ((m = new RegExp(`^t=\\$\\(mktemp -d\\) && tar xzf (${quoted}) -C "\\$t";.*? f=(${quoted}); if`).exec(cmd))) {
+    const archive = shellWord(m[1]);
+    const dest = shellWord(m[2]);
+    const name = shellWord(new RegExp(`"\\$t"/(${quoted})/\\. "\\$f"/`).exec(cmd)?.[1] ?? "''");
+    const temp = `/tmp/mock-unpack-${Date.now()}`;
+    try {
+      tarExtract(archive, temp);
+    } catch (error) {
+      return { output: String(error), rc: 2 };
     }
     sftpTree.delete(archive);
+    copyTree(`${temp}/${name}`, dest);
+    removeTree(temp);
+    return ok();
+  }
+  // 命令行上传文件：.cs-part 改名
+  if ((m = new RegExp(`^mv -f (${quoted}) (${quoted})$`).exec(cmd))) {
+    const from = shellWord(m[1]);
+    const to = shellWord(m[2]);
+    if (!sftpTree.has(from)) return { output: `mv: cannot stat '${from}'`, rc: 1 };
+    copyTree(from, to);
+    removeTree(from);
     return ok();
   }
   // 同机复制

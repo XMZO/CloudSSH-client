@@ -9,8 +9,12 @@
  * 客户端看不到工具输出和这些观察，只能用 run_end 带回的用量（这一轮各次调用的输入 / 输出 token 合计）推算：
  * 只调用一次时那次的输入就是合计；调用多次时按“每次增长差不多”估最后一次。再乘“每 token 多少字节”换成 Worker 的口径；
  * 这个比例按模型记在本机，Worker 实际压缩了 / 只调用一次而没压缩时自动修正。
+ *
+ * 长上下文（AI 增强代理版本 4 起）：代理接管 Worker 的整理、把完整前文放回给模型，Worker 的那条线就不再丢内容，
+ * 真正的限制变成模型自己的上下文窗口。代理回给 Worker 的输入 token 改成了 Worker 自己那份的量（不然它每一步都整理），
+ * 实际输入编进缓存 token（缓存 + 输入 × 2^26）。这里解开后按实际输入对比模型窗口（state.long）。
  */
-import { currentAiConfig } from './ai-model';
+import { currentAiConfig, modelWindow, webSearchAvailable, webSearchEnabled } from './ai-model';
 
 /** Worker 开始整理时的字节数 */
 export const WORKER_LIMIT = 37_760;
@@ -26,6 +30,8 @@ const DEFAULT_BASE = 4200;
 /** 新会话第一条消息自带的附加内容（服务器信息、提问格式、回复风格）大约多少字节 */
 const DECORATION_BYTES = 2600;
 const RATIO_KEY = 'cloudssh_ai_byte_ratio';
+/** 代理把实际输入编进缓存 token 的倍数（tools/reasoning-proxy/worker.js USAGE_PACK） */
+const USAGE_PACK = 2 ** 26;
 
 export interface Usage {
   calls: number;
@@ -35,6 +41,8 @@ export interface Usage {
   output: number;
   reasoning: number;
   checkpointCalls: number;
+  /** 经长上下文代理：input / cached 是解开后的实际值 */
+  packed?: boolean;
 }
 
 export interface MeterState {
@@ -66,6 +74,8 @@ export interface MeterState {
   /** 这个面板累计的输入 token 与其中缓存命中的部分（接口回报的） */
   totalInput: number;
   totalCached: number;
+  /** 经长上下文代理：tokens 是模型实际看到的量，按模型窗口算占用 */
+  long: boolean;
 }
 
 const meters = new WeakMap<object, MeterState>();
@@ -93,6 +103,7 @@ export function meterOf(panel: object): MeterState {
       workerCompactions: 0,
       totalInput: 0,
       totalCached: 0,
+      long: false,
     };
     meters.set(panel, state);
   }
@@ -138,15 +149,16 @@ function setRatio(value: number): void {
   }
 }
 
-/** 估算能放多少 token 才整理 */
-export function capacity(): number {
-  return WORKER_LIMIT / ratio();
+/** 能放多少 token：长上下文时是模型窗口，否则估算到 Worker 整理线的量 */
+export function capacity(state?: MeterState): number {
+  return state?.long ? modelWindow().tokens : WORKER_LIMIT / ratio();
 }
 
-/** 占 Worker 整理线的比例（0~1+）；没有数据时为 0 */
+/** 占用比例（0~1+）：长上下文时占模型窗口，否则占 Worker 整理线；没有数据时为 0 */
 export function percentOf(state: MeterState): number {
   const tokens = state.tokens || state.projected;
-  return tokens ? (tokens * ratio()) / WORKER_LIMIT : 0;
+  if (!tokens) return 0;
+  return state.long ? tokens / modelWindow().tokens : (tokens * ratio()) / WORKER_LIMIT;
 }
 
 // ---------- 帧 ----------
@@ -155,7 +167,7 @@ function usageOf(value: unknown): Usage | null {
   const u = value as Partial<Usage> | null;
   if (!u || typeof u !== 'object') return null;
   const num = (key: keyof Usage) => (typeof u[key] === 'number' && Number.isFinite(u[key]) && (u[key] as number) >= 0 ? (u[key] as number) : 0);
-  return {
+  const usage: Usage = {
     calls: num('calls'),
     reportedCalls: num('reportedCalls'),
     input: num('input'),
@@ -164,6 +176,25 @@ function usageOf(value: unknown): Usage | null {
     reasoning: num('reasoning'),
     checkpointCalls: num('checkpointCalls'),
   };
+  // 长上下文代理：缓存 token = 实际缓存 + 实际输入 × 2^26（普通的缓存量到不了这么大）
+  if (usage.cached >= USAGE_PACK) {
+    const input = Math.floor(usage.cached / USAGE_PACK);
+    usage.cached = usage.cached - input * USAGE_PACK;
+    usage.input = input;
+    usage.packed = true;
+  }
+  return usage;
+}
+
+/** 调用多次时按每次增长差不多估最后一次的输入（加上平均输出） */
+function lastCall(state: MeterState, usage: Usage, main: number, prev: number, r: number): number {
+  const average = usage.input / main;
+  const outPer = usage.output / main;
+  // 第一次调用的输入：接着上一轮（加上这次发的和新的观察），或新会话从底算起（底里已含观察）
+  const first = prev ? prev + (state.runSent + OBS_BYTES) / r : state.base + state.runSent / r;
+  const step = Math.max(0, (2 * (usage.input - main * first)) / (main * (main - 1)));
+  const last = first + (main - 1) * step;
+  return Math.min(2 * average, Math.max(average, last)) + outPer;
 }
 
 function settle(state: MeterState, usage: Usage | null): void {
@@ -172,7 +203,18 @@ function settle(state: MeterState, usage: Usage | null): void {
   const main = usage ? usage.calls - usage.checkpointCalls : 0;
   const fresh = state.turns === 0;
   state.turns++;
-  if (!usage || !usage.reportedCalls || main <= 0) {
+  if (usage?.packed && usage.reportedCalls && main > 0) {
+    // 长上下文：实际输入，Worker 整理不丢内容，不用换算比例
+    state.long = true;
+    if (main === 1) {
+      state.tokens = usage.input + usage.output;
+      state.estimated = usage.reportedCalls < usage.calls;
+      if (fresh && !(webSearchAvailable() && webSearchEnabled())) state.base = Math.max(1500, usage.input - state.runSent / r);
+    } else {
+      state.tokens = lastCall(state, usage, main, prev, r);
+      state.estimated = true;
+    }
+  } else if (!usage || !usage.reportedCalls || main <= 0) {
     // 服务商没回用量：按发出的、回复的字节估（新会话从底算起）
     state.tokens = (prev || state.base) + (state.runSent + bytesOf(state.reply) + OBS_BYTES) / r;
     state.estimated = true;
@@ -181,21 +223,19 @@ function settle(state: MeterState, usage: Usage | null): void {
     state.tokens = state.base + 2500 + usage.output / main;
     state.estimated = true;
   } else if (main === 1) {
+    state.long = false;
     state.tokens = usage.input + usage.output;
     state.estimated = usage.reportedCalls < usage.calls;
+    // 联网搜索的结果也算进接口回报的输入（Worker 那份对话里没有），这时不拿它修正比例和底
+    const searched = webSearchAvailable() && webSearchEnabled();
     // 只调用一次而没整理：那次检查时的字节数在整理线以下，比例不会超过 线 / token 数
-    if (usage.input > 0 && r > WORKER_LIMIT / usage.input) setRatio((WORKER_LIMIT / usage.input) * 0.98);
+    if (!searched && usage.input > 0 && r > WORKER_LIMIT / usage.input) setRatio((WORKER_LIMIT / usage.input) * 0.98);
     // 新会话第一轮：输入减去这条消息就是底
-    if (fresh) state.base = Math.max(1500, usage.input - state.runSent / ratio());
+    if (fresh && !searched) state.base = Math.max(1500, usage.input - state.runSent / ratio());
   } else {
     // 调用多次：只知道合计，按每次增长差不多估最后一次的输入
-    const average = usage.input / main;
-    const outPer = usage.output / main;
-    // 第一次调用的输入：接着上一轮（加上这次发的和新的观察），或新会话从底算起（底里已含观察）
-    const first = prev ? prev + (state.runSent + OBS_BYTES) / r : state.base + state.runSent / r;
-    const step = Math.max(0, (2 * (usage.input - main * first)) / (main * (main - 1)));
-    const last = first + (main - 1) * step;
-    state.tokens = Math.min(2 * average, Math.max(average, last)) + outPer;
+    state.long = false;
+    state.tokens = lastCall(state, usage, main, prev, r);
     state.estimated = true;
   }
   state.projected = 0;
@@ -228,7 +268,8 @@ export function meterFrame(panel: object, frame: Record<string, unknown>): void 
       state.runExecuted = true;
       break;
     case 'context_status':
-      if (frame.compacted !== true) break;
+      // 长上下文：Worker 的整理由代理接管、不丢内容，不算压缩
+      if (frame.compacted !== true || state.long) break;
       // 这一轮第一次调用前就整理了：上一轮的量加上这次发的内容已经到线，比例至少是这么多
       if (!state.runExecuted && state.tokens > 0) {
         const atLeast = (WORKER_LIMIT - state.runSent - OBS_MAX_BYTES) / state.tokens;

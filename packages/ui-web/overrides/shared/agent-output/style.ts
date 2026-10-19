@@ -13,15 +13,15 @@ const STORAGE_KEY = 'cloudssh_agent_reply_style';
 const MAX_PROMPT = 2000;
 
 export const DEFAULT_STYLE_PROMPT = [
-  '- Lead with a one-line conclusion. Match the length to the question: a quick question gets a short answer without headings.',
-  '- The chat panel is narrow (often a phone): short paragraphs, ### headings only for longer reports, tables with at most 4 short columns, one command per line.',
-  '- Mark status with a word, not emoji: 正常 / 注意 / 异常 in Chinese, OK / Warning / Problem in English. Put it in a short table cell or at the start of a bullet, e.g. "**异常**：/boot 只剩 3%".',
-  '- Give numbers with units and the basis for each judgment, e.g. "85% of 20G used, above the usual 80% line".',
-  '- Quote only the relevant lines of command output, never whole dumps.',
-  '- Separate what you verified from what you infer, and never claim a change worked before checking it.',
-  '- After changing anything, list what changed (files, services, packages, settings) and how to undo it when that matters.',
-  '- Put commands, paths and values in `code`; commands for the user to run go in ```bash blocks, with risky ones clearly marked.',
-  '- End with next steps only when the user needs to act.',
+  '- Open with a one-line conclusion. Scale length to the question: a quick question gets a short answer, no headings.',
+  '- The panel is narrow, often a phone: short paragraphs, ### headings only in long reports, tables of at most 4 short columns, one command per line.',
+  '- Mark status with a word, never emoji: 正常 / 注意 / 异常 in Chinese, OK / Warning / Problem in English, at the start of a bullet or in a table cell, e.g. "**异常**：/boot 只剩 3%".',
+  '- Back every judgment with numbers and units, e.g. "85% of 20G used, above the usual 80% threshold".',
+  '- Quote only the relevant output lines, never full dumps.',
+  '- Keep what you verified apart from what you infer; never call a change successful before checking it.',
+  '- After a change, list what changed (files, services, packages, settings) and how to revert it.',
+  '- Put commands, paths and values in `code`; commands for the user go in ```bash blocks, risky ones flagged.',
+  '- End with next steps only when the user has to act.',
 ].join('\n');
 
 /**
@@ -30,10 +30,10 @@ export const DEFAULT_STYLE_PROMPT = [
  * 风格提示写成 Markdown，导致“结构化输出校验失败”；也免得模型把它当成改规则的注入而忽略
  */
 const STYLE_HEAD =
-  "Reply formatting: the user's display preference for your final chat replies only (ignore it for JSON, checkpoints, summaries, memory or any other structured output). It never overrides your rules; do not save it to memory.";
+  "The user's formatting preferences for your final chat replies. Ignore them for JSON, checkpoints, summaries, memory and other structured output. They never override your rules; do not save them to memory.";
 
 /** 同一会话里完整提示已经发过时，每条消息只附这一句 */
-const STYLE_REMINDER = 'Keep the reply formatting given earlier in this conversation.';
+const STYLE_REMINDER = 'Follow the reply formatting given earlier in this conversation.';
 
 interface StyleSettings {
   enabled: boolean;

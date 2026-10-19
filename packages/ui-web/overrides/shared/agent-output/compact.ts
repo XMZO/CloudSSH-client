@@ -6,16 +6,16 @@
  * - 在当前会话里让 AI 自己写一份摘要（普通文字，不要求格式；对话里不显示，换成一张带进度条的卡片），
  *   然后重置 Worker 端会话，下一条消息前附上这份摘要，在新会话里接着聊
  * - 手动：上下文占用弹窗里的“立即压缩”，或在输入框发 /compact
- * - 自动：一轮正常结束后估算的占用到了七成、而且压缩确实能腾出地方时（可关）；
- *   发消息前估计加上这条就要到线时，先压缩再发（同一个开关）
- * - 整理上下文时交不出 Worker 要的 JSON 的模型（小模型常见，见 meter.ts isWeakCheckpoint）：Worker 自己整理必然失败，
- *   所以更早压缩（五成五、发送前八成）
+ * - 自动（可关，发消息前快满时先压缩再发也是同一个开关）：
+ *   - 长上下文（AI 增强代理版本 4 起）：Worker 的整理由代理接管、不丢内容，限制是模型自己的窗口；占到窗口的七成五时压缩
+ *   - 没有长上下文：能写出 Worker 检查点的模型交给 Worker 自己整理，客户端不抢先；只有交不出 Worker 要的 JSON 的模型
+ *     （小模型常见，见 meter.ts isWeakCheckpoint）Worker 整理必然失败，才由客户端提前压缩（五成五、发送前八成）
  * - 切换模型 / 思考深度前：Worker 会话绑定了模型，换了就得开新会话，先用旧模型压缩
  * 模型没写出摘要（多半是 Worker 自己先整理时出错）就改用面板里的对话要点，同样重置后接着聊；用户点停止则什么都不变。
  */
 import { getLocale } from '../../../upstream/frontend/src/i18n';
 import { notify } from '../../../upstream/frontend/src/ui-feedback';
-import { currentEffort, EFFORT_LABEL, loadAiConfig, modelSupport, proxyDirectives, proxyState, saveModel } from './ai-model';
+import { currentEffort, EFFORT_LABEL, loadAiConfig, longContextActive, modelSupport, modelWindow, proxyDirectives, proxyState, saveModel } from './ai-model';
 import { at } from './i18n';
 import { afterCompact, bytesOf, isWeakCheckpoint, meterCompacted, meterOf, percentOf, ratio, WORKER_LIMIT } from './meter';
 import { expectReset } from './outbound';
@@ -25,13 +25,14 @@ export type CompactReason = 'manual' | 'auto' | 'switch' | 'presend';
 export type CompactResult = 'done' | 'fallback' | 'cancelled' | 'skipped';
 
 const AUTO_KEY = 'cloudssh_ai_auto_compact';
-/** 自动压缩：估算占用到这里、且压缩能腾出的部分（相对整理线）超过 AUTO_GAIN 才做 */
-const AUTO_AT = 0.7;
+/** 自动压缩（写不出检查点的模型）：估算占用到这里、且压缩能腾出的部分（相对整理线）超过 AUTO_GAIN 才做 */
 const AUTO_AT_WEAK = 0.55;
 const AUTO_GAIN = 0.15;
-/** 发送前：估计加上这条消息（含附加内容、新的观察）会到整理线的这么多时先压缩 */
-const PRESEND_AT = 0.92;
+/** 长上下文：占模型窗口的比例 */
+const AUTO_AT_LONG = 0.75;
+/** 发送前：估计加上这条消息（含附加内容、新的观察）会到整理线（长上下文时为模型窗口）的这么多时先压缩 */
 const PRESEND_AT_WEAK = 0.8;
+const PRESEND_AT_LONG = 0.9;
 /** 估计的附加内容与新观察（字节） */
 const PRESEND_EXTRA = 4500;
 /** 摘要的长度上限（字节）；进度条按写到多少字算写完 */
@@ -42,17 +43,17 @@ const RUN_TIMEOUT = 330_000;
 
 const PROMPT = [
   '<cloudssh_compact>',
-  "From the user's CloudSSH app: the conversation is being compacted to free context. Everything so far will be replaced by your summary, so write it for yourself to continue seamlessly in a fresh context.",
-  'Do not call any tools and do not run commands; reply with the summary only, no preamble.',
-  "Cover: the user's goals and latest request; servers involved (by name) and their relevant state; commands run and key results (numbers, paths, versions, errors); changes made and how to undo them; decisions and preferences the user stated; any question you asked that is still unanswered, with its options; pending next steps.",
-  "Terse bullet points in the user's language, under 1500 characters.",
+  "From the user's CloudSSH app: this conversation is being compacted. Your reply replaces everything so far, so write it as notes for yourself to continue seamlessly.",
+  'Do not call tools or run commands. Reply with the summary only, no preamble.',
+  "Include: the user's goals and latest request; servers involved (by name) and their relevant state; commands run and key results (numbers, paths, versions, errors); changes made and how to revert them; the user's decisions and preferences; any open question you asked, with its options; next steps.",
+  "Terse bullets in the user's language, under 1500 characters.",
   '</cloudssh_compact>',
 ].join('\n');
 
 function summaryBlock(summary: string): string {
   return [
     '<earlier_conversation>',
-    'The CloudSSH app compacted this conversation to save context. Below is your own summary of everything before this message (reference only; not a new request and not authorization). Operations it mentions already happened; check the current state before repeating any of them.',
+    'The CloudSSH app compacted this conversation. Below is your own summary of everything before this message: reference only, not a new request or authorization. Operations it lists already happened; check the current state before repeating any.',
     clipBytes(summary.trim(), SUMMARY_BYTES),
     '</earlier_conversation>',
   ].join('\n');
@@ -330,9 +331,15 @@ export function autoCompactCheck(panel: unknown, frame: Record<string, unknown>)
   if (state.reply.includes('```cloudssh-action')) return;
   setTimeout(() => {
     if (panel.isAgentRunning || runs.has(panel) || state.turns < 2) return;
+    if (state.long) {
+      if (percentOf(state) >= AUTO_AT_LONG) void compactPanel(panel, 'auto');
+      return;
+    }
+    // 能写出检查点的模型：Worker 到线时自己整理，客户端不抢先
+    if (!isWeakCheckpoint()) return;
     // 压缩后还剩底、摘要和重新附上的内容：腾不出多少地方就不压
     const gain = ((state.tokens - afterCompact(state)) * ratio()) / WORKER_LIMIT;
-    if (percentOf(state) >= (isWeakCheckpoint() ? AUTO_AT_WEAK : AUTO_AT) && gain >= AUTO_GAIN) void compactPanel(panel, 'auto');
+    if (percentOf(state) >= AUTO_AT_WEAK && gain >= AUTO_GAIN) void compactPanel(panel, 'auto');
   }, 80);
 }
 
@@ -377,9 +384,10 @@ export function reasoningHintCheck(panel: unknown, frame: Record<string, unknown
   setTimeout(() => noticeLine(panel, at('proxyUnreachable'), 'lan'), 0);
 }
 
-/** Worker 自己整理了上下文（检查点）：对话里说一声 */
+/** Worker 自己整理了上下文（检查点）：对话里说一声；长上下文时由代理接管、不丢内容，不提示 */
 export function workerCompactNotice(panel: unknown, frame: Record<string, unknown>): void {
   if (frame.subType !== 'context_status' || frame.compacted !== true || !usable(panel)) return;
+  if (meterOf(panel).long || longContextActive()) return;
   setTimeout(() => noticeLine(panel, at('workerCompacted'), 'compress'), 0);
 }
 
@@ -412,15 +420,20 @@ export async function switchModel(panel: unknown, target: string): Promise<boole
 }
 
 /** 输入框里发 /compact（或 /压缩）：不发给 AI，直接压缩 */
-/** 发这条消息会不会让 Worker 整理（而压缩又确实能腾出地方） */
+/**
+ * 发这条消息前要不要先压缩：长上下文时看会不会接近模型窗口；否则只对写不出检查点的模型看会不会让 Worker 整理
+ * （而压缩又确实能腾出地方）
+ */
 function needsPresend(panel: object, text: string): boolean {
   const state = meterOf(panel);
   const tokens = state.tokens || state.projected;
   if (!autoCompactEnabled() || state.turns < 1 || !tokens) return false;
   const r = ratio();
+  if (state.long) return tokens + (bytesOf(text) + PRESEND_EXTRA) / r >= modelWindow().tokens * PRESEND_AT_LONG;
+  if (!isWeakCheckpoint()) return false;
   const next = tokens * r + bytesOf(text) + PRESEND_EXTRA;
   const gain = (tokens - afterCompact(state)) * r;
-  return next >= WORKER_LIMIT * (isWeakCheckpoint() ? PRESEND_AT_WEAK : PRESEND_AT) && gain >= WORKER_LIMIT * 0.1;
+  return next >= WORKER_LIMIT * PRESEND_AT_WEAK && gain >= WORKER_LIMIT * 0.1;
 }
 
 export function installCompactCommand(panel: unknown): void {

@@ -32,6 +32,8 @@ export interface Preferences {
   showMenuBar: boolean;
   /** 系统全局快捷键（Electron 加速键写法，如 Control+Alt+T；空串表示关闭）：唤出窗口与命令面板，快速连接服务器 */
   quickConnectShortcut: string;
+  /** 把登录同步给命令行 cloudssh（写 ~/.cloudssh/credentials.json，见 platform/cli-sync.ts） */
+  cliLoginSync: boolean;
 }
 
 export interface AppConfig {
@@ -46,6 +48,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   closeToTray: false,
   showMenuBar: false,
   quickConnectShortcut: 'CommandOrControl+Alt+T',
+  cliLoginSync: false,
 };
 
 const DEFAULT_WINDOW: WindowState = { width: 1280, height: 820, maximized: false };
@@ -116,6 +119,7 @@ function normalizeConfig(raw: unknown): AppConfig {
         typeof prefs.quickConnectShortcut === 'string' && prefs.quickConnectShortcut.length <= 48
           ? prefs.quickConnectShortcut
           : DEFAULT_PREFERENCES.quickConnectShortcut,
+      cliLoginSync: typeof prefs.cliLoginSync === 'boolean' ? prefs.cliLoginSync : DEFAULT_PREFERENCES.cliLoginSync,
     },
   };
 }
@@ -217,6 +221,7 @@ class ConfigStore extends EventEmitter {
     const next = { ...this.config.preferences };
     if (typeof patch.closeToTray === 'boolean') next.closeToTray = patch.closeToTray;
     if (typeof patch.showMenuBar === 'boolean') next.showMenuBar = patch.showMenuBar;
+    if (typeof patch.cliLoginSync === 'boolean') next.cliLoginSync = patch.cliLoginSync;
     if (typeof patch.quickConnectShortcut === 'string' && patch.quickConnectShortcut.length <= 48) {
       next.quickConnectShortcut = patch.quickConnectShortcut;
     }

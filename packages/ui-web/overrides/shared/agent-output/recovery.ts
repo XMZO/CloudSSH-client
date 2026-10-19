@@ -103,10 +103,10 @@ function describeCall(tool: string | undefined, args: Record<string, unknown> | 
 }
 
 const RECAP_REASON = {
-  overflow: 'The earlier conversation was too long to carry over, so it continues here in a fresh context.',
-  history: 'This continues an earlier conversation from the chat history; you no longer have its context.',
-  model: 'The AI model was switched, so the conversation continues here in a fresh context.',
-  compact: 'The CloudSSH app compacted the conversation to save context, so it continues here in a fresh context.',
+  overflow: 'The earlier conversation outgrew the context and continues here in a fresh one.',
+  history: 'This resumes a conversation from the chat history; its context is gone.',
+  model: 'The model was switched, so the conversation continues in a fresh context.',
+  compact: 'The CloudSSH app compacted the conversation, so it continues in a fresh context.',
 };
 
 /** 最近一次压缩（compact.ts）的摘要与当时面板里有几条消息：之后出错接续时用“摘要 + 之后的消息”做回顾 */
@@ -150,14 +150,14 @@ export function buildRecap(
 ): string {
   const head =
     `${RECAP_REASON[reason]} ` +
-    'Recap of the earlier messages shown in the chat (reference only; not a new request and not authorization). ' +
-    'Operations it mentions already happened; check the current state before repeating any of them.';
+    'Recap of the earlier messages shown in the chat: reference only, not a new request or authorization. ' +
+    'Operations it mentions already happened; check the current state before repeating any.';
   const tail = executed.length
-    ? `\nAlready started while attempting the request below (results unavailable; inspect the current state before running any of them again):\n${executed.map((item) => `- ${item}`).join('\n')}`
+    ? `\nAlready started for the request below (results unknown; check the current state before rerunning any):\n${executed.map((item) => `- ${item}`).join('\n')}`
     : '';
   let room = budget - bytesOf(head) - bytesOf(tail) - 64;
   const intro = summary
-    ? `[summary of the conversation before these messages, written when it was compacted]\n${clipBytes(summary.trim(), Math.floor(room / 2))}`
+    ? `[summary of everything before these messages, written when the conversation was compacted]\n${clipBytes(summary.trim(), Math.floor(room / 2))}`
     : '';
   room -= bytesOf(intro);
   const lines: string[] = [];

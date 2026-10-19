@@ -26,6 +26,11 @@ extraResources:
       - icon.png
       - tray.png
       - tray@2x.png
+  # 命令行 cloudssh 与 Claude Code skill（实例管理里一键安装，用客户端自己当 Node 运行，见 src/main/platform/cli-install.ts）
+  - from: ../../packages/cli/dist
+    to: cli
+    filter:
+      - cloudssh.mjs
   # 许可与上游署名（内置 UI 来自 CloudSSH，Apache-2.0）
   - from: ../../LICENSE
     to: LICENSE.txt

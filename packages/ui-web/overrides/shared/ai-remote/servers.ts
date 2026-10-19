@@ -1,6 +1,9 @@
 /**
  * AI 能操作的服务器：来自服务器列表（sidebar/store，旁听网页版的 /api/servers），电脑和手机共用。
- * 给 AI 的目录只有名称、标签（分类）、系统与线路（直连 / 经跳板 / CF 隧道），不含地址、用户名与任何凭据。
+ * 给 AI 的目录只有主机 ID、名称、标签（分类）、系统与线路（直连 / 经跳板 / CF 隧道），不含地址、用户名与任何凭据。
+ *
+ * 主机 ID（参考 termark 的资产 ID）：srv-<服务器在 CloudSSH 里的编号>。编号存在 CloudSSH 服务端，同一账号在电脑、
+ * 手机上都一样，改名、改标签也不变。AI 用 ID 指定服务器就不用猜名字，也不用再让用户确认是哪台。
  */
 import type { ServerConfig } from '@cloudssh/core';
 import { getServers } from '../../sidebar/store';
@@ -17,6 +20,18 @@ export function serverById(id: number | null | undefined): ServerConfig | null {
   return getServers()?.find((server) => server.id === id) ?? null;
 }
 
+/** 给 AI 用的主机 ID */
+export function hostId(server: Pick<ServerConfig, 'id'>): string {
+  return `srv-${server.id}`;
+}
+
+const HOST_ID = /^srv-(\d+)$/i;
+
+/** 主机 ID 加名称，结果回传里用：srv-12 "DE-03 法兰克福" */
+export function hostLabel(server: Pick<ServerConfig, 'id' | 'name'>): string {
+  return `${hostId(server)} "${plain(server.name, 80)}"`;
+}
+
 function plain(text: string, limit: number): string {
   const value = text.replace(/[\r\n|]+/g, ' ').replace(/[<>]/g, '').trim();
   return value.length > limit ? `${value.slice(0, limit)}…` : value;
@@ -30,12 +45,20 @@ const norm = (text: string) => text.trim().toLowerCase().replace(/\s+/g, ' ');
 export type Resolved = { server: ServerConfig; exact: boolean } | { candidates: ServerConfig[] } | { error: string };
 
 /**
- * 按名字找服务器：完全一致（不分大小写）优先，其次包含；“current / 当前”指 AI 所在的服务器。
- * 只有完全一致且唯一才算确定；部分匹配或匹配到多台时由调用方让用户确认
+ * 找服务器：主机 ID（srv-12，也认 JSON 里的数字 12）直接确定；“current / 当前”指 AI 所在的服务器；
+ * 其余按名字，完全一致（不分大小写）优先，其次包含。只有 ID 或完全一致且唯一才算确定；部分匹配或匹配到多台时
+ * 由调用方让用户确认
  */
 export function resolveServer(name: unknown, currentId: number | null): Resolved {
   const servers = getServers() ?? [];
-  if (typeof name !== 'string' || !name.trim()) return { error: 'missing server name' };
+  const byId = (id: number): Resolved => {
+    const server = servers.find((item) => item.id === id);
+    return server ? { server, exact: true } : { error: `no saved server with id srv-${id}` };
+  };
+  if (typeof name === 'number' && Number.isSafeInteger(name)) return byId(name);
+  if (typeof name !== 'string' || !name.trim()) return { error: 'missing server id or name' };
+  const id = HOST_ID.exec(name.trim());
+  if (id) return byId(Number(id[1]));
   const key = norm(name);
   if (['current', 'this', 'local', '当前', '当前服务器', '本机'].includes(key)) {
     const current = servers.find((server) => server.id === currentId);
@@ -57,9 +80,10 @@ export function serverDirectory(currentId: number | null, maxChars = 4000): stri
   let used = 0;
   for (const server of servers) {
     const route = routeOf(server);
-    const via = route === 'jump' ? `via jump host "${plain(byId.get(server.jump_server_id!)?.name ?? '?', 40)}"` : route === 'tunnel' ? 'via Cloudflare tunnel' : 'direct';
+    const jump = route === 'jump' ? byId.get(server.jump_server_id!) : undefined;
+    const via = route === 'jump' ? `via jump host ${jump ? hostId(jump) : '?'}` : route === 'tunnel' ? 'via Cloudflare tunnel' : 'direct';
     const tags = (server.tags ?? []).map((tag) => plain(tag, 30)).filter(Boolean).slice(0, 6).join(', ');
-    const line = `- ${plain(server.name, 80)}${server.id === currentId ? ' (current)' : ''} | tags: ${tags || '-'} | os: ${server.os ?? '?'} | ${via}`;
+    const line = `- ${hostId(server)} | ${plain(server.name, 80)}${server.id === currentId ? ' (current)' : ''} | tags: ${tags || '-'} | os: ${server.os ?? '?'} | ${via}`;
     if (used + line.length > maxChars) {
       lines.push(`- … ${servers.length - lines.length} more (ask with {"action":"list"})`);
       break;
@@ -90,6 +114,8 @@ const squash = (text: string) => norm(text).replace(/[^a-z0-9一-鿿]+/g, '');
 export function mentionsOtherServers(message: string, currentId: number | null): boolean {
   const text = norm(message);
   if (CROSS_WORDS.some((word) => text.includes(word))) return true;
+  // 用户直接写了主机 ID
+  for (const match of text.matchAll(/\bsrv-(\d+)\b/g)) if (Number(match[1]) !== currentId) return true;
   const squashed = squash(message);
   const servers = getServers() ?? [];
   const own = new Set(nameParts(servers.find((server) => server.id === currentId)?.name ?? ''));

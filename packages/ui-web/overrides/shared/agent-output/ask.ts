@@ -247,12 +247,12 @@ export function installAsk(): void {
 export function askContext(): string {
   return [
     '<cloudssh_ask>',
-    "From the user's CloudSSH app: when the user should choose or confirm something (which item first, which server, which option), end your reply with one short sentence and a fenced block in language " +
-      `${ASK_LANGUAGE}, then stop; it shows as clickable choices:`,
+    "From the user's CloudSSH app: when the user needs to choose or confirm something (what first, which server, which option), end your reply with one short sentence and a " +
+      `${ASK_LANGUAGE} block, then stop. The app shows it as clickable choices:`,
     '```' + ASK_LANGUAGE,
     '{"question":"Which one first?","options":["Disk usage","Swap"],"multiple":false}',
     '```',
-    'Up to 4 questions as a JSON array, 2-6 short options each, in the user\'s language. The app adds an "Other" choice with a text box and sends the answer as the user\'s next message. Never combine it with a cloudssh-action block; for risky commands keep using your confirmation tool.',
+    'For several questions use a JSON array (up to 4), 2-6 short options each, in the user\'s language. The app adds an "Other" option with a text box and sends the answer as the user\'s next message. Never combine it with a cloudssh-action block; for risky commands keep using your confirmation tool.',
     '</cloudssh_ask>',
   ].join('\n');
 }

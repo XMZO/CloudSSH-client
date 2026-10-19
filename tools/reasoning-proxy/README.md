@@ -1,12 +1,24 @@
-# CloudSSH AI 增强代理（思考深度、联网搜索）
+# CloudSSH AI 增强代理（思考深度、联网搜索、长上下文）
 
-CloudSSH 的 Worker 调模型时只带 `model / input / tools` 等固定字段，不会带 `reasoning.effort`，也不会开模型自己的联网搜索。这个代理是一个独立的 Cloudflare Worker（不需要改 CloudSSH），放在 CloudSSH 和模型接口之间：
+CloudSSH 的 Worker 调模型时只带 `model / input / tools` 等固定字段，不会带 `reasoning.effort`，也不会开模型自己的联网搜索；而且不论什么模型，每段对话都只留约 37KB（一万出头 token）就整理成摘要。这个代理是一个独立的 Cloudflare Worker（不需要改 CloudSSH），放在 CloudSSH 和模型接口之间：
 
 1. 客户端在每条发给 AI 的消息末尾附指令标签，例如 `<cloudssh_reasoning effort="high"/> <cloudssh_web_search mode="on"/>`（AI 面板输入框下方的“思考深度”和“联网”）
 2. 代理转发前删掉请求里所有这类标签（包括 Worker 整理上下文时嵌进 JSON 文本、引号被转义的），按最后一个改写请求：加上 `reasoning.effort`（`auto` 表示不加），开了联网时加上模型的原生搜索工具。0.3.23 客户端的旧写法 `[cloudssh-reasoning:high]` 同样识别
 3. 其他请求（模型列表等）原样转发到 `UPSTREAM`，流式输出原样回传
 
-每条消息各自带标签，所以切换思考深度、开关联网都不用开新会话。客户端只在检测到代理（`GET <接口地址>/cloudssh-reasoning`，返回版本与功能）时才附标签；版本 1 的旧代理用旧写法，版本 3 起才有联网搜索（已部署旧版的，重新复制代码部署即可）。
+每条消息各自带标签，所以切换思考深度、开关联网都不用开新会话。客户端只在检测到代理（`GET <接口地址>/cloudssh-reasoning?model=<模型>`，返回版本、功能与模型窗口）时才附标签；版本 1 的旧代理用旧写法，版本 3 起有联网搜索，版本 4 起有长上下文（已部署旧版的，重新复制代码部署即可）。
+
+## 长上下文（版本 4 起）
+
+CloudSSH 的 Worker 按 UTF-8 字节给每段对话留约 37760 字节（系统提示和工具定义就占约 11KB），到了就让模型把前文写成一份严格格式的 JSON 检查点，之后只带这份检查点。不论模型窗口多大都一样，小模型还常常写不出这份 JSON（“结构化输出校验失败”）。代理接管这一步：
+
+- **整理请求**（`text.format.name` 为 `agent_checkpoint`）不发给模型。Worker 随请求带来了这一段的完整记录（用户消息、回复、工具调用和结果，单条工具输出最多 4000 字），代理把它接在之前保存的记录后面存起来，当场交回一份合格的检查点（目标、最近的操作和回复、一个记录编号 `cloudssh-history:<id>`）。不花钱、不等待，也不会再校验失败
+- **之后的请求**里出现这份检查点时，按编号把完整前文放在检查点前面再发给模型（仍是一条“不可信观察”，与 Worker 的安全约定一致）。最多放到模型窗口的约 85% 扣掉输出（按每 token 3 字节估），放不下时去掉最早的部分；接口报超出上下文（400 / 413 且错误里提到 context / too long 等）时缩小一半重发，并记住这个模型的上限 30 分钟
+- **模型窗口**：变量 `CONTEXT_TOKENS`（一个数，或按模型名分开：`{"gpt-5":272000,"default":128000}`）→ 接口的 `/models` 列表里的 `context_length` 等字段（OpenRouter 有，缓存 6 小时）→ 内置的常见模型表（GPT-5 系列 272K、Claude 200K、Gemini 1M、GPT-4.1 1M、DeepSeek / GLM / 通义 / Kimi 约 128K 等）→ 认不出按 128K
+- **放回多少**：变量 `MAX_CONTEXT_BYTES` 限制放回的前文最多多少字节（默认 1200000，约三四十万 token；填 0 相当于不放回）。前文越长每次请求越贵，接口的提示缓存（上下文弹窗里的“缓存命中”）能省掉大部分
+- **存在哪**：代理的内存（同一个实例里最快）→ Cloudflare 缓存（绑定了自定义域名时可用）→ KV。内存会被 Cloudflare 回收，长对话建议绑定 KV（见下面的部署）。找不到前文时模型只看到那份检查点，相当于普通的整理，不会出错
+- **回给 Worker 的用量**：放回前文后实际输入远超 Worker 的预算，Worker 会以为满了、每一步都整理。所以代理把回给 Worker 的输入 token 改成不超过 Worker 那份请求体字节数 / 4，实际输入编进缓存 token（`缓存 + 输入 × 2^26`），客户端解开后按实际输入对比模型窗口显示占用。输出与推理 token 不改；Worker 只把这些数用于判断整理和统计，网页版界面不显示
+- 关闭：变量 `LONG_CONTEXT=off`（整理请求照常发给模型，用量不改）
 
 ## 联网搜索
 
@@ -27,9 +39,10 @@ CloudSSH 的 Worker 调模型时只带 `model / input / tools` 等固定字段�
 
 1. Workers 和 Pages → 创建 Worker（从 Hello World 开始），部署后点“编辑代码”，把代码换成 [`worker.js`](worker.js) 的内容再部署
 2. 设置 → 变量和机密：添加 `UPSTREAM`，值为原来在 CloudSSH 的 AI 设置里填的接口地址（如 `https://api.openai.com/v1`）
-3. 在 CloudSSH 的 AI 设置里把接口地址改成这个 Worker 的地址（如 `https://cloudssh-reasoning.xxx.workers.dev`），重新填一次 API 密钥并保存
+3. （长上下文，建议）存储和数据库 → KV → 创建命名空间（名字随意，如 `reasoning-history`）；回到这个 Worker 的 设置 → 绑定 → 添加 → KV 命名空间，变量名填 `HISTORY`。前文保存 3 天；每次 Worker 整理写一次，免费额度够用
+4. 在 CloudSSH 的 AI 设置里把接口地址改成这个 Worker 的地址（如 `https://cloudssh-reasoning.xxx.workers.dev`），重新填一次 API 密钥并保存
 
-**wrangler**：把 `wrangler.toml` 里的 `UPSTREAM` 改成你的接口地址，然后在本目录运行 `npx wrangler deploy`。
+**wrangler**：把 `wrangler.toml` 里的 `UPSTREAM` 改成你的接口地址，按里面的注释填上 KV 命名空间 ID（`npx wrangler kv namespace create reasoning-history` 创建），然后在本目录运行 `npx wrangler deploy`。注意 `[vars]` 会覆盖控制台里同名的变量。
 
 ## 部署位置
 
@@ -41,12 +54,14 @@ Cloudflare 不允许同一区域（zone）内的 Worker 互相请求（错误 10
 
 ## 确认是否生效
 
-- **代理日志**：Cloudflare 控制台 → 这个 Worker → 日志（实时日志或 Workers Logs；用 wrangler 部署时 `wrangler.toml` 已开启 observability）。每个 `/responses` 请求一行，例如 `{"cloudsshReasoning":"high","applied":true,"webSearch":"on","searches":2,"model":"gpt-5","status":200,"reasoningTokens":812,"inputTokens":9120,"cachedTokens":7680,"cacheHit":"84%"}`：`applied` 为 true 表示已给请求加上 `reasoning.effort`，`webSearch` 是联网搜索（`on` 已加搜索工具、`off` 没开、`unsupported` 接口不支持已去掉重发、`skipped` 结构化请求不加），`searches` 是这次去掉的搜索条目数（大于 0 说明模型真的搜索了），`reasoningTokens` 是接口回报的推理 token 数，`cachedTokens` / `cacheHit` 是输入里缓存命中的部分（代理删掉标签的方式是固定的，不影响缓存）
+- **代理日志**：Cloudflare 控制台 → 这个 Worker → 日志（实时日志或 Workers Logs；用 wrangler 部署时 `wrangler.toml` 已开启 observability）。每个 `/responses` 请求一行，例如 `{"cloudsshReasoning":"high","applied":true,"webSearch":"on","searches":2,"model":"gpt-5","context":"expanded","historyBytes":182340,"window":272000,"status":200,"reasoningTokens":812,"inputTokens":61120,"cachedTokens":57680,"cacheHit":"94%"}`：`context` 是长上下文（`none` 还没整理过、`expanded` 已放回完整前文、`trimmed` 放回时去掉了最早的部分、`missing` 前文找不到了、`skipped` 没放回），`historyBytes` 是放回了多少字节，`inputTokens` / `cachedTokens` 是接口回报的实际值；`applied` 为 true 表示已给请求加上 `reasoning.effort`，`webSearch` 是联网搜索（`on` 已加搜索工具、`off` 没开、`unsupported` 接口不支持已去掉重发、`skipped` 结构化请求不加），`searches` 是这次去掉的搜索条目数（大于 0 说明模型真的搜索了），`reasoningTokens` 是接口回报的推理 token 数，`cachedTokens` / `cacheHit` 是输入里缓存命中的部分（代理删掉标签的方式是固定的，不影响缓存）
+- **长上下文**：Worker 整理时记一行 `{"cloudsshCheckpoint":"kept","records":38,"continued":true,"historyBytes":182340,"storage":"kv"}`（`continued` 表示接上了之前保存的记录）；之后的请求 `context` 应为 `expanded`
 - **对比推理用量**：用不同档位问同一个问题，`reasoningTokens`（客户端思考深度菜单里也显示上一轮的推理用量）应明显变化；一直为 0 或不变，说明模型或中转没有应用这个参数
 - 只有 `status` 不是 200：看状态码排查（400 多半是模型不支持这一档；5xx 可能是 `UPSTREAM` 不通）。如果 CloudSSH 报错而这里一行日志都没有，说明请求根本没到代理，多半是上面说的同区域限制
 
 ## 说明
 
-- API 密钥只是经过代理转给 `UPSTREAM`，代理不保存、不记录；日志只有档位、模型、状态码和 token 用量，不含密钥与对话内容；代理只会转发到 `UPSTREAM`（必须是 https）
+- API 密钥只是经过代理转给 `UPSTREAM`，代理不保存、不记录；日志只有档位、模型、状态码、上下文大小和 token 用量，不含密钥与对话内容；代理只会转发到 `UPSTREAM`（必须是 https）。查模型窗口时代理会用同一个密钥请求 `UPSTREAM` 的 `/models`
+- 长上下文的对话记录只存在代理的内存、Cloudflare 缓存和你绑定的 KV 里（3 天后过期），记录编号是随机的
 - 代理地址后面的路径接到 `UPSTREAM` 后面，两边都带 `/v1` 时只保留一个
 - 模型不支持 `reasoning.effort`（或不支持选的那一档）时接口会报 400，客户端会提示把思考深度改回“自动”

@@ -3,7 +3,9 @@
  * - 模型：当前模型，点开可搜索、切换（ai-model.ts，切换前先压缩，见 compact.ts）
  * - 思考深度：自动（不附带）/ 最低 / 低 / 中 / 高 / 超高，经 AI 增强代理加进请求（见 ai-model.ts），没部署代理时可看部署方法
  * - 联网：开关模型自己的原生联网搜索（同样经 AI 增强代理，版本 3 起），代理不支持时点按看部署方法
- * - 上下文：圆环显示估算的占用（meter.ts）；电脑悬停、手机点按弹出详情，可立即压缩、开关自动压缩
+ * - 上下文：圆环显示估算的占用（meter.ts）；电脑悬停、手机点按弹出详情，可立即压缩、开关自动压缩。
+ *   详情里说明上限是什么：有长上下文代理时是模型自己的窗口（代理查到的或常见模型表）；没有时是 CloudSSH 服务端
+ *   每段对话的上限，并给出模型自己的窗口和怎么用满
  */
 import { onLocaleChange } from '../../../upstream/frontend/src/i18n';
 import { copyTextToClipboard } from '../../../upstream/frontend/src/clipboard';
@@ -16,9 +18,12 @@ import {
   EFFORTS,
   listModels,
   loadAiConfig,
+  longContextActive,
   modelSupport,
+  modelWindow,
   onAiConfig,
   proxyState,
+  proxyStorage,
   setEffort,
   setWebSearch,
   webSearchAvailable,
@@ -27,7 +32,7 @@ import {
 import proxySource from '../../../../../tools/reasoning-proxy/worker.js?raw';
 import { autoCompactEnabled, compactPanel, isCompacting, onCompactChange, setAutoCompact, switchModel } from './compact';
 import { at } from './i18n';
-import { capacity, meterOf, onMeter, percentOf } from './meter';
+import { capacity, meterOf, onMeter, percentOf, type MeterState } from './meter';
 import type { PanelInternals } from './recovery';
 
 interface BarPanel extends PanelInternals {
@@ -64,6 +69,7 @@ function button(className: string): HTMLButtonElement {
 
 export function formatTokens(value: number): string {
   if (value < 1000) return String(Math.round(value));
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
   return `${(value / 1000).toFixed(value < 100_000 ? 1 : 0).replace(/\.0$/, '')}K`;
 }
 
@@ -145,6 +151,39 @@ function openPopover(anchor: HTMLElement, className: string, fill: (root: HTMLEl
 
 // ---------- 上下文 ----------
 
+const SOURCE_KEY = {
+  upstream: 'ctxSourceUpstream',
+  setting: 'ctxSourceSetting',
+  table: 'ctxSourceTable',
+  default: 'ctxSourceDefault',
+} as const;
+
+/** 上限是什么：长上下文时是模型自己的窗口；否则是 CloudSSH 服务端每段对话的上限，附模型自己的窗口与怎么用满 */
+function limitLines(root: HTMLElement, state: MeterState): void {
+  const window = modelWindow();
+  const source = at(SOURCE_KEY[window.source]);
+  if (state.long || longContextActive()) {
+    root.append(el('p', 'cs-pop-line', at('ctxWindowLong', { window: formatTokens(window.tokens), source })));
+    if (proxyStorage() === 'memory') root.append(el('p', 'cs-pop-note', at('ctxWindowMemory')));
+    return;
+  }
+  const model = currentAiConfig()?.model;
+  root.append(
+    el('p', 'cs-pop-line', model ? at('ctxWindowWorker', { model, window: formatTokens(window.tokens), source }) : at('ctxWindowWorkerOnly'))
+  );
+  const line = el('div', 'cs-pop-status');
+  line.dataset.state = 'absent';
+  line.append(icon('info'), el('span', '', at(proxyState() === 'ok' ? 'ctxUnlockUpdate' : 'ctxUnlock')));
+  const how = button('cs-pop-inline');
+  how.textContent = at('effortDeploy');
+  how.addEventListener('click', () => {
+    closePopover();
+    openDeployGuide();
+  });
+  line.append(how);
+  root.append(line);
+}
+
 function fillContext(root: HTMLElement, panel: BarPanel): void {
   const state = meterOf(panel);
   const pct = percentOf(state);
@@ -160,7 +199,7 @@ function fillContext(root: HTMLElement, panel: BarPanel): void {
   root.append(meter);
   if (!has) root.append(el('p', 'cs-pop-line', at('ctxEmpty')));
   else if (state.tokens) {
-    const usage = at('ctxUsage', { used: formatTokens(state.tokens), total: formatTokens(capacity()) });
+    const usage = at('ctxUsage', { used: formatTokens(state.tokens), total: formatTokens(capacity(state)) });
     root.append(el('p', 'cs-pop-line', state.estimated ? `${usage}（${at('ctxEstimated')}）` : usage));
   } else root.append(el('p', 'cs-pop-line', at('ctxProjected', { used: formatTokens(state.projected) })));
   const last = state.last;
@@ -176,7 +215,9 @@ function fillContext(root: HTMLElement, panel: BarPanel): void {
   if (state.totalInput > 0 && state.totalInput !== last?.input) root.append(cacheLine('ctxCacheTotal', state.totalCached, state.totalInput));
   const compactions = state.compactions + state.workerCompactions;
   if (compactions) root.append(el('p', 'cs-pop-line is-muted', at('ctxCompactions', { n: compactions })));
-  root.append(el('p', 'cs-pop-note', at('ctxExplain', { total: formatTokens(capacity()) })));
+  limitLines(root, state);
+  const long = state.long || longContextActive();
+  root.append(el('p', 'cs-pop-note', long ? at('ctxExplainLong') : at('ctxExplain', { total: formatTokens(capacity()) })));
 
   const foot = el('div', 'cs-pop-foot');
   const auto = el('label', 'cs-pop-check');
@@ -485,7 +526,7 @@ function openDeployGuide(): void {
   status.textContent = at(state === 'ok' ? 'effortActive' : state === 'no-upstream' ? 'effortNoUpstream' : 'effortInactive');
   status.dataset.state = state;
   step(at('deployStep4'), recheck, status);
-  body.append(steps, el('p', 'cs-pop-note', at('deploySearch')), el('p', 'cs-pop-note', at('deployNote')));
+  body.append(steps, el('p', 'cs-pop-note', at('deployLong')), el('p', 'cs-pop-note', at('deploySearch')), el('p', 'cs-pop-note', at('deployNote')));
   dialog.append(head, body);
   root.append(dialog);
   document.body.append(root);

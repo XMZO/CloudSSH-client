@@ -1,0 +1,463 @@
+/**
+ * cloudssh：CloudSSH 命令行。不开客户端，直接经 CloudSSH 服务端（Worker）操作已保存的服务器。
+ * 入口：解析子命令，登录与配置之外的命令都先装好网络（net.ts）、取一次服务器列表。
+ */
+import type { ServerConfig } from '@cloudssh/core';
+import { CLIENT_CODENAME, CLIENT_VERSION } from '@cloudssh/core';
+import { closeAllRemoteSessions } from '../../ui-web/overrides/shared/ai-remote/session';
+import { bool, COMMON, int, parseArgs, str, type FlagSpec, type Parsed } from './args';
+import {
+  expiresAt,
+  loadConfig,
+  loadCredentials,
+  MAX_SKILL_NOTES,
+  normalizeOrigin,
+  resolveInstance,
+  saveConfig,
+  saveCredential,
+  UsageError,
+  type CliConfig,
+} from './config';
+import { checkCommand, printOutcomes, runExec } from './exec';
+import { copyBetween, DEFAULT_MAX_BYTES, download, localPath, splitRemote, upload, type Progress, type TransferResult } from './files';
+import { install, installStatus, skillTargets, syncSkills, uninstall } from './install';
+import { login } from './login';
+import { api, ApiError, installNetwork } from './net';
+import { confirm, interactive, readStdin } from './prompt';
+import { hostId, loadServers, resolveSingle, resolveTargets, routeOf } from './targets';
+
+const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENAME.en}）— CloudSSH 命令行，不开客户端直接操作已保存的服务器
+
+用法：cloudssh <命令> [参数]（别名 cssh）
+
+登录
+  login [https://域名]          登录（GitHub 授权或管理员密码）；--start / --callback "<网址>" 分两步完成
+  logout                        退出登录
+  status                        当前实例、用户、登录到期时间
+
+服务器
+  servers [-q 关键字] [--tag 标签]   列出服务器（主机 ID、名称、标签、系统、线路）
+  exec <目标> "<命令>"          执行命令；--stdin 从标准输入读命令，--timeout 秒，--yes 确认危险命令
+  upload <目标> <本机路径> <远程路径>      上传文件或目录
+  download <目标> <远程路径> <本机路径>    下载文件或目录（--max-size MB，默认 2048）
+  copy <目标:路径> <目标:路径>  服务器之间传文件或目录（能直连就直连）；覆盖已有的要 --yes
+
+设置
+  alias [set <名字> <目标> | rm <名字>]   目标的别名
+  config [get | set <项> <值>]            confirm（ask / never 完全权限）、concurrency、timeout、notes（给 AI 的补充说明）、default
+  skill [status | sync | enable <agent> | disable <agent>]   各 agent（claude、codex、agents）的 skill 开关
+  install [--bin-dir 目录] [--no-skill]  装成命令并安装 Claude Code skill（--status 查看安装状态）
+  uninstall [--keep-skill] [--purge]     卸载命令与 skill（--purge 连配置与登录一起删）
+  version
+
+目标：srv-12（主机 ID，各设备一样）、名称、别名、tag:标签、all，多个用逗号隔开
+通用选项：--instance/-i <名称或地址> 选实例，--json 输出 JSON，--help
+配置在 ~/.cloudssh/（config.json、credentials.json）`;
+
+function log(text: string): void {
+  process.stderr.write(`${text}\n`);
+}
+
+function out(value: unknown, json: boolean, text: () => string): void {
+  process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${text()}\n`);
+}
+
+function flagsWith(extra: FlagSpec): FlagSpec {
+  return { ...COMMON, ...extra };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+/** 传输进度：只在终端里、非 JSON 时显示在 stderr */
+function progressPrinter(json: boolean): Progress & { end(): void } {
+  const show = !json && !!process.stderr.isTTY;
+  let last = '';
+  const names: Record<string, string> = {
+    pack: '打包',
+    unpack: '解包',
+    upload: '上传',
+    download: '下载',
+    'direct-prepare': '准备直连',
+    'direct-copy': '服务器直连传输',
+    'relay-pack': '打包',
+    'relay-download': '中转：下载',
+    'relay-upload': '中转：上传',
+  };
+  const print = ((step: string, loaded?: number, total?: number) => {
+    if (!show) return;
+    const pct = total && loaded !== undefined ? ` ${Math.round((loaded / total) * 100)}%` : '';
+    const size = total && total !== 100 && loaded !== undefined ? `（${formatBytes(loaded)} / ${formatBytes(total)}）` : '';
+    const line = `${names[step] ?? step}${pct}${size}`;
+    if (line === last) return;
+    last = line;
+    process.stderr.write(`\r\x1b[K${line}`);
+  }) as Progress & { end(): void };
+  print.end = () => {
+    if (show && last) process.stderr.write('\r\x1b[K');
+  };
+  return print;
+}
+
+function describeTransfer(result: TransferResult): string {
+  const how =
+    result.method === 'direct'
+      ? `，服务器之间直连${result.hops ? `（经 ${result.hops} 个跳板）` : ''}`
+      : result.method === 'relay'
+        ? '，经本机中转'
+        : result.method === 'local'
+          ? '，同一台服务器'
+          : '';
+  return `${result.kind === 'dir' ? '目录' : '文件'} → ${result.dest}（${formatBytes(result.bytes)}${how}）${result.note ? `\n说明：${result.note}` : ''}`;
+}
+
+/** 装好网络、取服务器列表 */
+async function connect(parsed: Parsed): Promise<{ config: CliConfig; servers: ServerConfig[]; origin: string }> {
+  const config = loadConfig();
+  const instance = resolveInstance(config, str(parsed, 'instance'));
+  if (!instance.credential) {
+    throw new UsageError(`还没有登录 ${instance.origin}：运行 cloudssh login ${instance.origin}（或在桌面客户端里打开“同步登录给命令行”）`);
+  }
+  installNetwork(instance.origin, instance.credential.session);
+  const servers = await loadServers();
+  return { config, servers, origin: instance.origin };
+}
+
+async function cmdServers(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, flagsWith({ query: { type: 'string', short: 'q' }, tag: { type: 'string', short: 't' } }));
+  const { servers } = await connect(parsed);
+  const query = str(parsed, 'query')?.toLowerCase();
+  const tag = str(parsed, 'tag')?.toLowerCase();
+  const list = servers.filter((server) => {
+    const tags = (server.tags ?? []).map((item) => item.toLowerCase());
+    if (tag && !tags.some((item) => item.includes(tag))) return false;
+    if (!query) return true;
+    return [server.name, hostId(server), ...(server.tags ?? []), server.os ?? ''].some((item) => item.toLowerCase().includes(query));
+  });
+  const rows = list.map((server) => ({
+    id: hostId(server),
+    name: server.name,
+    tags: server.tags ?? [],
+    os: server.os ?? null,
+    route: routeOf(server, servers),
+  }));
+  out(rows, bool(parsed, 'json'), () =>
+    rows.length
+      ? rows.map((row) => `${row.id.padEnd(9)} ${row.name}  [${row.tags.join(', ') || '-'}]  ${row.os ?? '?'}  ${row.route}`).join('\n')
+      : '（没有匹配的服务器）'
+  );
+  return 0;
+}
+
+async function cmdExec(argv: string[]): Promise<number> {
+  const parsed = parseArgs(
+    argv,
+    flagsWith({ stdin: { type: 'boolean' }, timeout: { type: 'string', short: 't' }, yes: { type: 'boolean', short: 'y' } }),
+    1
+  );
+  const [spec] = parsed.positionals;
+  if (!spec) throw new UsageError('用法：cloudssh exec <目标> "<命令>"（或 --stdin）');
+  let command = parsed.rest.join(' ');
+  if (bool(parsed, 'stdin')) {
+    if (command) throw new UsageError('用了 --stdin 就不要再在参数里写命令');
+    command = (await readStdin()).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  }
+  if (!command.trim()) throw new UsageError('没有要执行的命令');
+  const { config, servers } = await connect(parsed);
+  const timeout = int(parsed, 'timeout', 1, 3600) ?? config.timeout;
+  const targets = resolveTargets(spec, servers, config);
+  await checkCommand(command, bool(parsed, 'yes'), config.confirm, targets.map((server) => `${hostId(server)} ${server.name}`).join('、'));
+  const results = await runExec(targets, command, timeout, config.concurrency);
+  return printOutcomes(results, bool(parsed, 'json'));
+}
+
+async function cmdUpload(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const [spec, local, remote] = parsed.positionals;
+  if (!spec || !local || !remote) throw new UsageError('用法：cloudssh upload <目标> <本机路径> <远程路径>');
+  const { config, servers } = await connect(parsed);
+  const server = resolveSingle(spec, servers, config);
+  const progress = progressPrinter(bool(parsed, 'json'));
+  const result = await upload(server, localPath(local), remote, progress).finally(() => progress.end());
+  out({ server: hostId(server), ...result }, bool(parsed, 'json'), () => `已上传到 ${hostId(server)} ${server.name}：${describeTransfer(result)}`);
+  return 0;
+}
+
+async function cmdDownload(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, flagsWith({ 'max-size': { type: 'string' } }));
+  const [spec, remote, local] = parsed.positionals;
+  if (!spec || !remote || !local) throw new UsageError('用法：cloudssh download <目标> <远程路径> <本机路径>');
+  const maxMb = int(parsed, 'max-size', 1, 1024 * 1024);
+  const { config, servers } = await connect(parsed);
+  const server = resolveSingle(spec, servers, config);
+  const progress = progressPrinter(bool(parsed, 'json'));
+  const result = await download(server, remote, localPath(local), maxMb ? maxMb * 1024 * 1024 : DEFAULT_MAX_BYTES, progress).finally(() => progress.end());
+  out({ server: hostId(server), ...result }, bool(parsed, 'json'), () => `已从 ${hostId(server)} ${server.name} 下载：${describeTransfer(result)}`);
+  return 0;
+}
+
+async function cmdCopy(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, flagsWith({ yes: { type: 'boolean', short: 'y' } }));
+  const [fromSpec, toSpec] = parsed.positionals;
+  const from = fromSpec ? splitRemote(fromSpec) : null;
+  const to = toSpec ? splitRemote(toSpec) : null;
+  if (!from || !to) throw new UsageError('用法：cloudssh copy <目标:路径> <目标:路径>（例如 srv-12:/root/a.tgz srv-34:/tmp/）');
+  const { config, servers } = await connect(parsed);
+  const source = resolveSingle(from.target, servers, config);
+  const target = resolveSingle(to.target, servers, config);
+  const yes = bool(parsed, 'yes') || config.confirm === 'never';
+  const overwrite = async (dest: string) => yes || (interactive() && (await confirm(`${target.name} 上已有 ${dest}，覆盖？`)));
+  const progress = progressPrinter(bool(parsed, 'json'));
+  const result = await copyBetween(source, from.path, target, to.path, overwrite, progress).finally(() => progress.end());
+  out({ from: hostId(source), to: hostId(target), ...result }, bool(parsed, 'json'), () =>
+    `已从 ${hostId(source)} ${source.name} 传到 ${hostId(target)} ${target.name}：${describeTransfer(result)}`
+  );
+  return 0;
+}
+
+async function cmdLogin(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, flagsWith({ start: { type: 'boolean' }, callback: { type: 'string' }, 'no-browser': { type: 'boolean' } }));
+  await login(
+    { url: parsed.positionals[0] ?? str(parsed, 'instance'), start: bool(parsed, 'start'), callback: str(parsed, 'callback'), noBrowser: bool(parsed, 'no-browser') },
+    log
+  );
+  return 0;
+}
+
+async function cmdLogout(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const instance = resolveInstance(loadConfig(), str(parsed, 'instance'));
+  if (instance.credential) {
+    installNetwork(instance.origin, instance.credential.session);
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+  }
+  saveCredential(instance.origin, null);
+  log(`已退出 ${instance.origin}`);
+  return 0;
+}
+
+async function cmdStatus(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const config = loadConfig();
+  const instance = resolveInstance(config, str(parsed, 'instance'));
+  const credential = instance.credential;
+  let user: string | null = null;
+  let valid = false;
+  if (credential) {
+    installNetwork(instance.origin, credential.session);
+    try {
+      const me = await api<{ username?: string }>('/api/auth/me');
+      user = me?.username ?? null;
+      valid = true;
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401)) throw error;
+    }
+  }
+  const info = {
+    instance: instance.origin,
+    name: instance.name,
+    signedIn: valid,
+    user,
+    source: credential?.source ?? null,
+    expiresAt: credential ? expiresAt(credential).toISOString() : null,
+    instances: config.instances.map((item) => ({ ...item, default: item.url === config.defaultInstance, signedIn: !!loadCredentials()[item.url] })),
+  };
+  out(info, bool(parsed, 'json'), () =>
+    [
+      `实例：${instance.name}（${instance.origin}）`,
+      valid
+        ? `已登录：${user ?? '?'}（来自${credential!.source === 'desktop' ? '桌面客户端同步' : ' cloudssh login'}，约 ${expiresAt(credential!).toLocaleString()} 过期）`
+        : credential
+          ? '登录已失效：运行 cloudssh login'
+          : '未登录：运行 cloudssh login',
+    ].join('\n')
+  );
+  return valid ? 0 : 1;
+}
+
+async function cmdAlias(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const [action, name, ...rest] = parsed.positionals;
+  const config = loadConfig();
+  if (action === 'set') {
+    if (!name || !rest.length) throw new UsageError('用法：cloudssh alias set <名字> <目标>');
+    if (/^(all|srv-\d+|\d+|tag:.*)$/i.test(name) || name.includes(',')) throw new UsageError('别名不能是 all、主机 ID、tag: 开头或带逗号');
+    config.aliases[name] = rest.join(' ');
+    saveConfig(config);
+    syncSkills(config);
+    log(`${name} → ${config.aliases[name]}`);
+    return 0;
+  }
+  if (action === 'rm' || action === 'remove') {
+    if (!name || !(name in config.aliases)) throw new UsageError(`没有别名 ${name ?? ''}`);
+    delete config.aliases[name];
+    saveConfig(config);
+    syncSkills(config);
+    return 0;
+  }
+  if (action) throw new UsageError('用法：cloudssh alias [set <名字> <目标> | rm <名字>]');
+  out(config.aliases, bool(parsed, 'json'), () =>
+    Object.entries(config.aliases)
+      .map(([key, value]) => `${key} → ${value}`)
+      .join('\n') || '（还没有别名）'
+  );
+  return 0;
+}
+
+/** skill：status（默认）/ sync / enable <agent> / disable <agent>；agent 是 claude、codex、agents */
+async function cmdSkill(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const [action = 'status', agent] = parsed.positionals;
+  const config = loadConfig();
+  if (action === 'enable' || action === 'disable') {
+    const target = skillTargets(config).find((item) => item.id === agent);
+    if (!agent || !target) {
+      throw new UsageError(`用法：cloudssh skill ${action} <${skillTargets(config).map((item) => item.id).join('|')}>`);
+    }
+    config.skills[agent] = action === 'enable';
+    saveConfig(config);
+  } else if (action !== 'sync' && action !== 'status') {
+    throw new UsageError('用法：cloudssh skill [status | sync | enable <agent> | disable <agent>]');
+  }
+  const lines = action === 'status' ? [] : syncSkills(config);
+  const targets = skillTargets(config);
+  out(targets, bool(parsed, 'json'), () =>
+    [
+      ...lines,
+      ...targets.map(
+        (item) =>
+          `${item.id.padEnd(7)} ${item.name}：${item.enabled ? (item.installed ? (item.current ? '已装' : '已装（不是最新，cloudssh skill sync 更新）') : '开着但没装（cloudssh skill sync）') : item.installed ? '关着但还装着（cloudssh skill sync）' : '关'}`
+      ),
+    ].join('\n')
+  );
+  return 0;
+}
+
+async function cmdConfig(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const [action, key, value] = parsed.positionals;
+  const config = loadConfig();
+  if (action === 'set') {
+    if (key === 'confirm' && (value === 'ask' || value === 'never')) config.confirm = value;
+    else if (key === 'concurrency' && /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 32) config.concurrency = Number(value);
+    else if (key === 'timeout' && /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 3600) config.timeout = Number(value);
+    else if (key === 'notes' && value !== undefined) config.skillNotes = value.slice(0, MAX_SKILL_NOTES);
+    else if (key === 'default' && value) {
+      const hit = config.instances.find((item) => item.name === value);
+      config.defaultInstance = hit?.url ?? normalizeOrigin(value);
+    } else throw new UsageError('可设置：confirm ask|never、concurrency 1-32、timeout 1-3600、notes "<给 AI 的补充说明>"、default <实例名或地址>');
+    saveConfig(config);
+    // 完全权限、超时、并发、补充说明都写在 skill 里：跟着更新已装的
+    for (const line of syncSkills(config)) log(line);
+    return 0;
+  }
+  if (action && action !== 'get') throw new UsageError('用法：cloudssh config [get | set <项> <值>]');
+  out(config, true, () => '');
+  return 0;
+}
+
+async function main(argv: string[]): Promise<number> {
+  const [command, ...rest] = argv;
+  if (!command || command === 'help' || command === '--help' || command === '-h') {
+    process.stdout.write(`${HELP}\n`);
+    return command ? 0 : 2;
+  }
+  if (command === 'version' || command === '--version' || command === '-v') {
+    process.stdout.write(`${CLIENT_VERSION}\n`);
+    return 0;
+  }
+  // exec 的命令里可能有 --help / -h（ls --help、df -h）：只看紧跟在子命令后面的
+  const execLike = command === 'exec' || command === 'run';
+  if (rest[0] === '--help' || rest[0] === '-h' || (!execLike && rest.includes('--help'))) {
+    process.stdout.write(`${HELP}\n`);
+    return 0;
+  }
+  switch (command) {
+    case 'login':
+      return cmdLogin(rest);
+    case 'logout':
+      return cmdLogout(rest);
+    case 'status':
+    case 'whoami':
+      return cmdStatus(rest);
+    case 'servers':
+    case 'ls':
+      return cmdServers(rest);
+    case 'exec':
+    case 'run':
+      return cmdExec(rest);
+    case 'upload':
+    case 'put':
+      return cmdUpload(rest);
+    case 'download':
+    case 'get':
+      return cmdDownload(rest);
+    case 'copy':
+    case 'cp':
+      return cmdCopy(rest);
+    case 'alias':
+      return cmdAlias(rest);
+    case 'skill':
+    case 'skills':
+      return cmdSkill(rest);
+    case 'config':
+      return cmdConfig(rest);
+    case 'install': {
+      const parsed = parseArgs(
+        rest,
+        flagsWith({ 'bin-dir': { type: 'string' }, 'no-skill': { type: 'boolean' }, 'in-place': { type: 'boolean' }, status: { type: 'boolean' } })
+      );
+      if (bool(parsed, 'status')) {
+        const status = installStatus(str(parsed, 'bin-dir'));
+        out(status, bool(parsed, 'json'), () =>
+          [
+            status.installed ? `命令：${status.binDir}（${status.exists ? '正常' : '指向的程序不在了，请重新安装'}${status.onPath ? '' : '，不在 PATH 里'}）` : '命令：未安装',
+            status.installed ? `程序：${status.program}，运行时：${status.appRuntime ? 'CloudSSH 客户端' : status.runtime}` : '',
+            ...status.skills.map(
+              (item) => `${item.name} skill：${item.installed ? (item.current ? '已装' : '已装（不是这个版本的，重新安装可更新）') : '未装'}`
+            ),
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+        return 0;
+      }
+      const lines = install({ binDir: str(parsed, 'bin-dir'), skill: !bool(parsed, 'no-skill'), inPlace: bool(parsed, 'in-place') });
+      if (bool(parsed, 'json')) out(installStatus(str(parsed, 'bin-dir')), true, () => '');
+      else for (const line of lines) log(line);
+      return 0;
+    }
+    case 'uninstall': {
+      const parsed = parseArgs(rest, flagsWith({ 'bin-dir': { type: 'string' }, 'keep-skill': { type: 'boolean' }, purge: { type: 'boolean' } }));
+      const lines = uninstall({ binDir: str(parsed, 'bin-dir'), keepSkill: bool(parsed, 'keep-skill'), purge: bool(parsed, 'purge') });
+      if (bool(parsed, 'json')) out(installStatus(str(parsed, 'bin-dir')), true, () => '');
+      else for (const line of lines) log(line);
+      return 0;
+    }
+    default:
+      throw new UsageError(`不认识的命令 ${command}（cloudssh --help 查看）`);
+  }
+}
+
+main(process.argv.slice(2))
+  .catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`cloudssh: ${message}\n`);
+    return error instanceof UsageError ? 2 : 1;
+  })
+  .then((code) => {
+    closeAllRemoteSessions();
+    // 让事件循环自然结束（Windows 上有句柄未关时直接 process.exit 会触发 libuv 断言、退出码变成 127）；
+    // 还有东西挂着（连接保活等）就 3 秒后强制退出
+    process.exitCode = code;
+    setTimeout(() => process.exit(code), 3000).unref();
+  });

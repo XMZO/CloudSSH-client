@@ -319,6 +319,127 @@ html[data-platform="darwin"] .titlebar {
   color: var(--danger, #e5534b);
 }
 
+/* 命令行与 Claude Code：安装状态与按钮 */
+.cli-status {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.cli-status.is-warning {
+  color: var(--danger, #e5534b);
+}
+
+.cli-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+/* hidden 属性要压过 display:flex 等样式（设置页与实例表单、底部按钮栏互相切换） */
+[hidden] {
+  display: none !important;
+}
+
+/* 命令行与 AI 设置页 */
+.view-title {
+  font-size: 19px;
+}
+
+.view-subtitle {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+}
+
+.card .hint {
+  display: block;
+  margin: -4px 0 10px;
+}
+
+.switch-list .switch + .switch {
+  margin-top: 2px;
+}
+
+.field-gap {
+  margin-top: 12px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+input[type='number'],
+textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+input[type='number'] {
+  height: 34px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 96px;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+input[type='number']:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.alias-list {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.alias-list:empty {
+  display: none;
+}
+
+.alias-list li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.alias-list code {
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+}
+
+.alias-list .alias-target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alias-add > input:first-child {
+  flex: 0 0 160px;
+}
+
 /* 全局快捷键：点按钮后按下新组合键录制 */
 .shortcut-pref {
   display: grid;
