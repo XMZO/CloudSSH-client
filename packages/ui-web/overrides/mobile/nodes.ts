@@ -1,7 +1,7 @@
 /**
  * 移动端节点首页：替代网页版每页 3 张卡片的分页网格。
  * - 按标签分组、可折叠，“最近连接”置顶，搜索
- * - 点按：已有会话就切过去，没有就新建连接；长按：操作面板（新建连接/切换会话/编辑/克隆/复制名称/复制地址）
+ * - 点按：已有会话就切过去，没有就新建连接；长按：操作面板（新建连接/切换会话/编辑/克隆/复制名称/复制 ID/复制地址）
  * - 有会话时顶部显示“N 个会话进行中”，一键回到终端
  * - 分组与组内服务器的顺序在“调整排序”面板里拖动（reorder-sheet.ts），这里只按保存的顺序显示
  * 数据与动作复用桌面侧栏：旁听 /api/servers（store.ts），调用网页版自身逻辑（hooks.ts）。
@@ -22,6 +22,7 @@ import {
   tabCount,
 } from '../sidebar/hooks';
 import { getServers, subscribe } from '../sidebar/store';
+import { hostId } from '../shared/ai-remote/servers';
 import { mt, onLocaleChange } from './i18n';
 import { osIcon } from '../shared/os-icon';
 import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
@@ -257,6 +258,12 @@ function showServerActions(server: ServerConfig, groupKey: string | null): void 
       label: mt('copyName'),
       icon: 'label',
       action: () => void copyTextToClipboard(server.name).then((ok) => ok && notify(mt('copied'), { variant: 'success', duration: 1500 })),
+    },
+    {
+      // 主机 ID（srv-12）：给命令行、skill、AI 用的，各设备一样、改名不变
+      label: mt('copyId', { id: hostId(server) }),
+      icon: 'tag',
+      action: () => void copyTextToClipboard(hostId(server)).then((ok) => ok && notify(mt('copied'), { variant: 'success', duration: 1500 })),
     },
     {
       label: mt('copyHost'),

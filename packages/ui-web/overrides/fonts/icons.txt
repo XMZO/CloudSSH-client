@@ -104,6 +104,7 @@ login
 logout
 manage_search
 markdown
+memory
 menu
 message
 mobile
@@ -177,6 +178,7 @@ sync
 tab
 table
 tabs
+tag
 target
 terminal
 text_decrease

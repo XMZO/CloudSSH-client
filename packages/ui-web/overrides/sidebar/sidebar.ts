@@ -29,6 +29,7 @@ import {
 import { osIcon } from '../shared/os-icon';
 import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
 import { onLocaleChange, st } from './i18n';
+import { hostId } from '../shared/ai-remote/servers';
 import { getServers, installFetchObserver, reloadServers, subscribe } from './store';
 import { NodeOrder } from '../shared/order';
 import { openHighlightEditor } from '../shared/terminal';
@@ -489,6 +490,12 @@ function showItemMenu(event: MouseEvent, server: ServerConfig): void {
       label: st('copyName'),
       icon: 'label',
       action: () => void copyTextToClipboard(server.name).then((ok) => ok && notify(st('copied'), { variant: 'success', duration: 1500 })),
+    },
+    {
+      // 主机 ID（srv-12）：给命令行、skill、AI 用的，各设备一样、改名不变
+      label: st('copyId', { id: hostId(server) }),
+      icon: 'tag',
+      action: () => void copyTextToClipboard(hostId(server)).then((ok) => ok && notify(st('copied'), { variant: 'success', duration: 1500 })),
     },
     {
       label: st('copyHost'),

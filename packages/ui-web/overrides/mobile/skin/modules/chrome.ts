@@ -5,7 +5,7 @@
  *        root@203.0.*.* · 18 ms · 2/3
  *
  * - ←：回到服务器列表（网页版的“+”）；点标题：会话列表；左右滑动标题：切换上一个/下一个会话
- * - 📁：SFTP；⋮：更多操作（常用命令、AI 助手、搜索、导出、横屏、快捷键、字号、复制名称、复制地址、界面设置、断开）
+ * - 📁：SFTP；⋮：更多操作（常用命令、AI 助手、搜索、导出、横屏、快捷键、字号、复制名称、复制 ID、复制地址、界面设置、断开）
  * 所有动作都转给网页版自己的按钮（即使被隐藏也能点），行为与网页版完全一致。
  * 网页版每次状态变化都会重绘标签栏与状态栏，这里据此同步刷新。
  */
@@ -14,6 +14,7 @@ import { maskIPAddress } from '../../../../upstream/frontend/src/host-display';
 import { notify } from '../../../../upstream/frontend/src/ui-feedback';
 import { activeTab, activeTabId, listTabs, switchToTab, type TabInfo } from '../../../sidebar/hooks';
 import { getServers } from '../../../sidebar/store';
+import { hostId } from '../../../shared/ai-remote/servers';
 import { shouldConfirmClose } from '../../close-confirm';
 import { mt } from '../../i18n';
 import { openSettings } from '../../settings';
@@ -32,6 +33,12 @@ import './chrome.css';
 function serverName(tab: TabInfo | null | undefined): string | undefined {
   const id = tab?.hostInfo?.serverId;
   return typeof id === 'number' ? getServers()?.find((server) => server.id === id)?.name : undefined;
+}
+
+/** 标签对应的已保存服务器的主机 ID（srv-12）；匿名连接没有 */
+function serverHostId(tab: TabInfo | null | undefined): string | undefined {
+  const id = tab?.hostInfo?.serverId;
+  return typeof id === 'number' ? hostId({ id }) : undefined;
 }
 
 const SWIPE_SLOP = 10;
@@ -109,6 +116,16 @@ function openMoreSheet(): void {
       run: () => {
         const name = serverName(activeTab());
         if (name) void copyTextToClipboard(name).then((ok) => ok && notify(mt('copied'), { variant: 'success', duration: 1500 }));
+      },
+    },
+    {
+      // 主机 ID（srv-12）：给命令行、skill、AI 用的，只有已保存的服务器有
+      icon: 'tag',
+      label: mt('copyId', { id: serverHostId(tab) ?? '' }),
+      visible: !!serverHostId(tab),
+      run: () => {
+        const id = serverHostId(activeTab());
+        if (id) void copyTextToClipboard(id).then((ok) => ok && notify(mt('copied'), { variant: 'success', duration: 1500 }));
       },
     },
     {

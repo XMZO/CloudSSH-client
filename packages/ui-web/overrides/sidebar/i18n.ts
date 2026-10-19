@@ -26,6 +26,7 @@ const zhCN = {
   clone: '克隆',
   copyHost: '复制主机地址',
   copyName: '复制名称',
+  copyId: '复制 ID（{id}）',
   share: '分享',
   delete: '删除',
   copied: '已复制',
@@ -63,6 +64,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     clone: '複製',
     copyHost: '複製主機位址',
     copyName: '複製名稱',
+    copyId: '複製 ID（{id}）',
     share: '分享',
     delete: '刪除',
     copied: '已複製',
@@ -95,6 +97,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     clone: 'Clone',
     copyHost: 'Copy host address',
     copyName: 'Copy name',
+    copyId: 'Copy ID ({id})',
     share: 'Share',
     delete: 'Delete',
     copied: 'Copied',
@@ -104,8 +107,9 @@ const dictionaries: Record<string, Record<Key, string>> = {
   },
 };
 
-export function st(key: Key): string {
-  return (dictionaries[getLocale()] ?? zhCN)[key] ?? zhCN[key];
+export function st(key: Key, params: Record<string, string | number> = {}): string {
+  const text = (dictionaries[getLocale()] ?? zhCN)[key] ?? zhCN[key];
+  return text.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? ''));
 }
 
 export { onLocaleChange };
