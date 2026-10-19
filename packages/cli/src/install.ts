@@ -12,6 +12,8 @@
  *   ~/.agents/skills/cloudssh（多个工具共用的目录，有这个目录才装）。其他 agent 只要能执行命令，cloudssh 一样能用。
  *   config.json 的 skills 可以单独关掉某个 agent（关掉的会删掉）；完全权限、默认超时与给 AI 的补充说明会写进 skill，
  *   改了设置后 cloudssh skill sync 重写一遍（桌面客户端改设置时自动做）
+ * - MCP（--mcp claude-desktop,codex 之类，用户明确要求才登记）：把 cloudssh mcp 写进这些应用的 MCP 配置（mcp-clients.ts），
+ *   指向与命令相同的程序与运行时；重新安装时更新已登记的，卸载时移除
  */
 import { CLIENT_VERSION } from '@cloudssh/core';
 import { spawn } from 'node:child_process';
@@ -21,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import skillText from '../skill/SKILL.md';
 import { homeDir, loadConfig, type CliConfig } from './config';
+import { launchFor, mcpTargets, parseMcpClients, refreshMcp, registerMcp, unregisterMcp, type McpClientTarget, type McpLaunch } from './mcp-clients';
 
 const MARK = 'cloudssh-shim';
 const NAMES = ['cloudssh', 'cssh'];
@@ -31,6 +34,8 @@ export interface InstallOptions {
   skill: boolean;
   /** 不复制程序，命令直接指向正在运行的这个文件 */
   inPlace?: boolean;
+  /** 同时把 MCP 服务器登记给这些应用（claude-desktop,codex,… 或 all）；不给就只更新已经登记过的 */
+  mcp?: string;
 }
 
 export interface InstallStatus {
@@ -51,6 +56,8 @@ export interface InstallStatus {
   skillPath: string;
   /** 各个 agent 的 skill（这台电脑上有的） */
   skills: SkillTarget[];
+  /** 各个 MCP 客户端的登记状态 */
+  mcp: McpClientTarget[];
   version: string;
 }
 
@@ -65,23 +72,31 @@ export interface SkillTarget {
   current: boolean;
 }
 
-/** 按设置生成的 skill：内置说明 + 用户的设置（完全权限、默认超时）+ 给 AI 的补充说明 */
-export function skillContent(config: CliConfig = loadConfig()): string {
+/**
+ * 写给 AI 的用户设置与补充说明（skill 与 MCP 的 instructions 共用）；yes 是“确认危险操作”在那边的写法
+ * （skill 是 `--yes`，MCP 是 `confirm: true`）
+ */
+export function userGuidance(config: CliConfig, yes = '`--yes`'): string {
   const settings: string[] = [];
   if (config.confirm === 'never') {
     settings.push(
-      '- Full access is on: risky commands run without `--yes` and `copy` overwrites without asking. Still tell the user before deleting data, stopping services or rebooting. Catastrophic commands are still refused.'
+      `- Full access is on: risky commands run without ${yes} and \`copy\` overwrites without asking. Still tell the user before deleting data, stopping services or rebooting. Catastrophic commands are still refused.`
     );
   }
   if (config.timeout !== 60) settings.push(`- The default timeout is ${config.timeout} s.`);
   if (config.concurrency !== 6) settings.push(`- Batch commands run on up to ${config.concurrency} servers at a time.`);
   const aliases = Object.entries(config.aliases);
   if (aliases.length) settings.push(`- Aliases: ${aliases.map(([name, target]) => `\`${name}\` → \`${target}\``).join(', ')}.`);
-  let text = skillText;
+  let text = '';
   if (settings.length) text += `\n## The user's settings\n\n${settings.join('\n')}\n`;
   const notes = config.skillNotes.trim();
   if (notes) text += `\n## Notes from the user\n\nFollow these unless they conflict with the rules above:\n\n${notes}\n`;
   return text;
+}
+
+/** 按设置生成的 skill：内置说明 + 用户的设置（完全权限、默认超时）+ 给 AI 的补充说明 */
+export function skillContent(config: CliConfig = loadConfig()): string {
+  return skillText + userGuidance(config);
 }
 
 /** 支持 Agent Skills 的工具：Claude Code 总装，其他的要这台电脑上有它的目录 */
@@ -169,6 +184,8 @@ export function installSkills(): string[] {
 
 export function install(options: InstallOptions): string[] {
   const lines: string[] = [];
+  // 先认客户端名字：写错了什么都不装
+  const mcpClients = options.mcp ? parseMcpClients(options.mcp) : [];
   const self = fileURLToPath(import.meta.url);
   let program = self;
   if (!options.inPlace) {
@@ -205,6 +222,9 @@ export function install(options: InstallOptions): string[] {
   lines.push(`命令：${path.join(binDir, windows ? 'cloudssh.cmd' : 'cloudssh')}（以及 cssh）${electron ? '，用 CloudSSH 客户端运行' : ''}`);
   if (!onPath(binDir)) lines.push(`注意：${binDir} 不在 PATH 里，请把它加进 PATH，或用 --bin-dir 指定一个在 PATH 里的目录`);
   if (options.skill) lines.push(...installSkills());
+  const launch = launchFor(runtime, program, electron);
+  lines.push(...refreshMcp(launch));
+  if (mcpClients.length) lines.push(...registerMcp(mcpClients, launch));
   return lines;
 }
 
@@ -216,20 +236,30 @@ function isOurs(file: string): boolean {
   }
 }
 
+/** 读命令脚本：装了没有、指向的运行时与程序 */
+function readShim(binDir: string): { installed: boolean; runtime: string | null; program: string | null; appRuntime: boolean } {
+  const script = path.join(binDir, windows ? 'cloudssh.cmd' : 'cloudssh');
+  if (!isOurs(script)) return { installed: false, runtime: null, program: null, appRuntime: false };
+  const text = fs.readFileSync(script, 'utf8');
+  const match = /"([^"\r\n]+)" "([^"\r\n]+)" (?:%\*|"\$@")/.exec(text);
+  return { installed: true, runtime: match?.[1] ?? null, program: match?.[2] ?? null, appRuntime: /ELECTRON_RUN_AS_NODE/.test(text) };
+}
+
+/**
+ * MCP 客户端该怎么启动 cloudssh mcp：装了命令就跟命令指向同一个程序与运行时（重新安装时一起更新），
+ * 没装就用正在运行的这个（桌面客户端里是安装包带的程序，用客户端当 Node 运行）
+ */
+export function mcpLaunch(binDirOption?: string): McpLaunch {
+  const shim = readShim(defaultBinDir(binDirOption));
+  if (shim.runtime && shim.program && fs.existsSync(shim.runtime) && fs.existsSync(shim.program)) {
+    return launchFor(shim.runtime, shim.program, shim.appRuntime);
+  }
+  return launchFor(process.execPath, fileURLToPath(import.meta.url), !!process.versions.electron);
+}
+
 export function installStatus(binDirOption?: string): InstallStatus {
   const binDir = defaultBinDir(binDirOption);
-  const script = path.join(binDir, windows ? 'cloudssh.cmd' : 'cloudssh');
-  let program: string | null = null;
-  let runtime: string | null = null;
-  let appRuntime = false;
-  const installed = isOurs(script);
-  if (installed) {
-    const text = fs.readFileSync(script, 'utf8');
-    const match = /"([^"\r\n]+)" "([^"\r\n]+)" (?:%\*|"\$@")/.exec(text);
-    runtime = match?.[1] ?? null;
-    program = match?.[2] ?? null;
-    appRuntime = /ELECTRON_RUN_AS_NODE/.test(text);
-  }
+  const { installed, runtime, program, appRuntime } = readShim(binDir);
   const skills = skillTargets();
   const file = skillPath();
   const skill = skills.some((item) => item.id === 'claude' && item.installed);
@@ -247,6 +277,7 @@ export function installStatus(binDirOption?: string): InstallStatus {
     skillCurrent,
     skillPath: file,
     skills,
+    mcp: mcpTargets(mcpLaunch(binDirOption)),
     version: CLIENT_VERSION,
   };
 }
@@ -257,6 +288,7 @@ export function uninstall(options: { binDir?: string; keepSkill?: boolean; purge
   const binDir = defaultBinDir(options.binDir);
   // 这些命令指向的程序：是复制过去的那份才一起删（别的目录里装的命令可能还指着它）
   const program = installStatus(options.binDir).program;
+  lines.push(...unregisterMcp());
   const deferred: string[] = [];
   for (const name of NAMES) {
     for (const file of [path.join(binDir, name), path.join(binDir, `${name}.cmd`)]) {

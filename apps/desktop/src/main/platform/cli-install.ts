@@ -8,6 +8,8 @@
  *
  * 设置（实例管理 → 命令行与 AI）：直接读写命令行的 ~/.cloudssh/config.json（与命令行共用 packages/cli/src/config.ts），
  * 改了写进 skill 的项（完全权限、超时、并发、别名、补充说明、各 agent 的开关）后让命令行 cloudssh skill sync 重写 skill。
+ * MCP 开关（Claude Desktop、Cursor 等不支持 skill 的应用）交给命令行 cloudssh mcp add / remove：只在用户打开开关时
+ * 写那个应用的配置（先备份），关掉即移除；重新安装命令时命令行会顺带更新已登记的。
  */
 import { app } from 'electron';
 import { spawn } from 'node:child_process';
@@ -23,6 +25,7 @@ import {
   rememberInstance,
   saveConfig,
 } from '../../../../../packages/cli/src/config';
+import { MCP_CLIENTS } from '../../../../../packages/cli/src/mcp-clients';
 import { configStore } from '../config/store';
 import { createLogger } from '../logger';
 
@@ -42,6 +45,8 @@ export interface CliStatus {
   skillCurrent: boolean;
   skillPath: string;
   skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean }[];
+  /** 各 MCP 客户端的登记（旧版命令行没有） */
+  mcp?: { id: string; name: string; path: string; present: boolean; registered: boolean; current: boolean; error?: string }[];
   version: string;
   error?: string;
 }
@@ -120,6 +125,12 @@ export function uninstallCli(): Promise<CliStatus> {
   return runJson(['uninstall']);
 }
 
+/** 把 MCP 服务器登记给某个应用（或移除） */
+export function setCliMcp(id: string, on: boolean): Promise<CliStatus> {
+  if (!MCP_CLIENTS.some((client) => client.id === id)) return Promise.reject(new Error(`不认识的 MCP 客户端 ${id}`));
+  return runJson(['mcp', on ? 'add' : 'remove', id]);
+}
+
 export async function cliSettings(): Promise<CliSettings> {
   const status = await cliStatus();
   const config = loadConfig();
@@ -194,13 +205,14 @@ export async function updateCliSettings(patch: CliSettingsPatch): Promise<CliSet
   return cliSettings();
 }
 
-/** 启动时：命令是这个客户端装的（或指向的程序已经不在了）就重装一次，跟上客户端的位置与 skill 版本 */
+/** 启动时：命令是这个客户端装的（或指向的程序已经不在了）就重装一次，跟上客户端的位置、skill 版本与 MCP 登记 */
 export async function refreshCliInstall(): Promise<void> {
   try {
     const status = await cliStatus();
     if (!status.available || !status.installed) return;
     const ours = status.managed || (status.appRuntime && !status.exists);
-    if (!ours || (status.exists && status.skillCurrent && status.managed)) return;
+    const mcpCurrent = (status.mcp ?? []).every((item) => !item.registered || item.current);
+    if (!ours || (status.exists && status.skillCurrent && mcpCurrent && status.managed)) return;
     await installCli();
     log.info('已更新命令行 cloudssh 的安装');
   } catch (error) {

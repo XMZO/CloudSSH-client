@@ -17,7 +17,7 @@ import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
 import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
 import { refreshMenus } from './menus';
-import { cliSettings, cliStatus, type CliSettingsPatch, installCli, uninstallCli, updateCliSettings } from './cli-install';
+import { cliSettings, cliStatus, type CliSettingsPatch, installCli, setCliMcp, uninstallCli, updateCliSettings } from './cli-install';
 import { applyCliSync } from './cli-sync';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
@@ -333,6 +333,10 @@ export function registerIpc(): void {
   ipcMain.handle('manager:cli-settings-set', (event, patch: CliSettingsPatch) => {
     assertManager(event);
     return updateCliSettings(patch && typeof patch === 'object' ? patch : {});
+  });
+  ipcMain.handle('manager:cli-mcp-set', (event, id: unknown, on: unknown) => {
+    assertManager(event);
+    return setCliMcp(String(id), on === true);
   });
 }
 

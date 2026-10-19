@@ -429,7 +429,31 @@ cloudssh alias set web srv-12         # 别名；cloudssh config set confirm nev
 - **配置**：`~/.cloudssh/config.json`（实例、默认实例、别名、`confirm`、`concurrency`、`timeout`、`skills` 各 AI 开关、`skillNotes` 补充说明）；命令行里用 `cloudssh config set confirm|concurrency|timeout|notes|default <值>`、`cloudssh skill enable|disable claude|codex|agents`、`cloudssh skill sync`；`--instance` / 环境变量 `CLOUDSSH_INSTANCE` 选实例，`CLOUDSSH_HOME` 换配置目录
 - **skill**：`packages/cli/skill/SKILL.md`，打进程序里，是通用的 Agent Skills 格式。`cloudssh install` 时写到 `~/.claude/skills/cloudssh/`（Claude Code），这台电脑上有 Codex 就写到 `~/.codex/skills/cloudssh/`，有 `~/.agents` 就写到 `~/.agents/skills/cloudssh/`（多个工具共用的目录）；其他 agent 只要能执行命令，`cloudssh` 一样能用。skill 里告诉 AI 用主机 ID、复杂命令走 `--stdin`、危险命令先问用户再加 `--yes`、不要索要密码
 - **在桌面客户端里安装与设置**（实例管理 → 命令行与 AI → 安装 / 设置…）：设置页里可以开关每个 AI 的 skill（Claude Code、Codex、通用目录，关掉即删除）、完全权限（危险命令不再要 `--yes`、`copy` 覆盖不再确认，拦截级命令仍拒绝）、同步登录、默认实例、默认超时、批量并发、别名、给 AI 的补充说明；完全权限、超时、并发、别名与补充说明都会写进 skill，改了就同步到各个 AI。安装：安装包带着打好的命令行（`resources/cli/cloudssh.mjs`，`apps/desktop/build.mjs` 构建时一起打），用客户端自己当 Node 运行（`ELECTRON_RUN_AS_NODE=1`），不需要另装 Node；命令直接指向安装包里的程序，客户端更新时跟着更新，启动时发现客户端换了位置或 skill 不是新版就悄悄重装。同一处还有“同步登录给命令行”开关、卸载按钮与安装状态（命令目录不在 PATH 里会提示）
-- **安装与卸载**：`cloudssh install`（`--in-place` 不复制程序、`--status` 看状态、`--bin-dir` 换命令目录、`--no-skill`），`cloudssh uninstall`（`--keep-skill`、`--purge` 连 `~/.cloudssh` 一起删）；命令脚本带 `cloudssh-shim` 标记，卸载只删带标记的
+- **安装与卸载**：`cloudssh install`（`--in-place` 不复制程序、`--status` 看状态、`--bin-dir` 换命令目录、`--no-skill`、`--mcp <应用>` 同时登记 MCP，见下），`cloudssh uninstall`（`--keep-skill`、`--purge` 连 `~/.cloudssh` 一起删；MCP 登记一并移除）；命令脚本带 `cloudssh-shim` 标记，卸载只删带标记的
+
+### MCP 服务器（给不支持 skill 的应用）
+
+Claude Desktop、Cursor、VS Code、Windsurf 等不认 skill 的应用用 MCP 接入同一套能力：`cloudssh mcp` 是 stdio 上的 MCP 服务器（JSON-RPC 2.0，一行一条消息，协议手写、不引入新依赖），提供 5 个工具，直接调命令行的 `targets` / `exec` / `files` 实现：
+
+| 工具 | 参数 | 说明 |
+| ---- | ---- | ---- |
+| `list_servers` | `query`、`tag` | 主机 ID、名称、标签、系统、线路 |
+| `exec` | `target`、`command`、`timeout`、`confirm` | 目标写法与命令行一样（`srv-12`、名称、别名、`tag:`、`all`、逗号隔开）；`confirm: true` 相当于 `--yes` |
+| `upload` / `download` | `target`、`local_path`、`remote_path`（download 另有 `max_size_mb`） | 文件或目录，落点规则同 scp；本机相对路径按 MCP 服务器的工作目录，`~` 是家目录 |
+| `copy` | `from_target`、`from_path`、`to_target`、`to_path`、`confirm` | 服务器之间，能直连就直连；覆盖已有目标要 `confirm` |
+
+```bash
+cloudssh install --mcp claude-desktop,codex   # 安装命令与 skill，并把 MCP 服务器登记给这些应用（all = 这台电脑上有的全部）
+cloudssh mcp status                           # 各应用的登记状态
+cloudssh mcp add cursor / cloudssh mcp remove codex
+```
+
+- **规则与命令行一致**：每次调用重新读 `config.json` 与登录（桌面端同步来的新会话、改了的完全权限与默认超时即时生效）；拦截级命令一律拒绝，危险命令不带 `confirm` 时返回“没有执行，先问用户”，完全权限（`confirm never`）时不用确认；initialize 返回的说明里带上用户设置与“给 AI 的补充说明”
+- **结果有界**：每次结果不超过 64KB（与远端输出上限一致），多台批量时按份额各留输出末尾；工具出错（没登录、找不到服务器、命令失败、参数不对）以 `isError` 结果返回给模型，工具名不对等协议错误返回 JSON-RPC 错误，进程不会因单次调用退出
+- **取消与进度**：收到 `notifications/cancelled` 不再回复，并关掉这次用到的服务器的后台会话（远端命令随之结束）；带 `progressToken` 的调用发 `notifications/progress`（传文件进度，命令执行中每 5 秒报一次）
+- **登记**：只在明确要求时写应用的配置（`install --mcp`、`mcp add`、桌面端开关），写前把原文件备份成 `<文件>.cloudssh-backup-<时间>`，只动名为 `cloudssh` 的一项。配置位置：Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`、Cursor `~/.cursor/mcp.json`、VS Code `%APPDATA%\Code\User\mcp.json`（允许注释，写回时注释保留在备份里）、Windsurf `~/.codeium/windsurf/mcp_config.json`、Codex `~/.codex/config.toml`（`[mcp_servers.cloudssh]`）；macOS / Linux 换成对应的应用配置目录。登记的是“运行时 + 程序 + `mcp`”（不经 `.cmd`，Windows 上很多应用起不了批处理），与命令指向同一个程序；在登记项里自己加的参数（如 `--instance 名称`）与环境变量更新时保留。重新安装时更新已登记的，`uninstall` 移除。改完重启那个应用生效
+- **桌面客户端**：实例管理 → 命令行与 Skill → 设置… 的“MCP”卡片，这台电脑上有的应用每个一个开关（打开即登记、关掉即移除）；客户端换了位置时启动后随命令一起更新
+- **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、5 个工具、危险命令、64KB 上限、取消与进度）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
 
 ## 快捷键
 
@@ -559,7 +583,7 @@ Rust 侧的压缩手段：`opt-level="z"`、LTO、`codegen-units=1`、`panic=abo
 - Windows 调试构建可设 `CLOUDSSH_WEBVIEW_DEBUG_PORT=9555` 打开 WebView2 远程调试端口，便于自动化测试
 - 模拟器联网需要代理时，在应用“设置 → 连接 → 网络代理”填 `http://10.0.2.2:7890`（`10.0.2.2` 是模拟器访问宿主机的固定地址）
 - 调试版 APK 可用 `chrome://inspect` 或 `adb forward tcp:9556 localabstract:webview_devtools_remote_<pid>` 连接 WebView 调试
-- `node scripts/mock-worker.mjs [端口] [--anon] [--servers N]`（默认 8788；`--anon` 模拟未登录，显示匿名连接页；`--servers 90` 补足到 90 台，看节点很多时的流畅度）：本地假 Worker，提供 26 台假服务器（含分组和系统类型；其中“Slow-1 卡在认证”连接会一直停在认证，用来测“正在连接”状态）、可以交互的假 shell（输入 `help` 查看命令，`logs` 输出一屏各种常见日志，用来看关键词高亮；`menu` 输出一键脚本式的 60 列框线菜单，`size` 显示客户端报给服务器的行列数，用来看窄屏排版）、SFTP 目录列表和命令片段接口，不需要真实服务器就能调界面。在手机或模拟器上先运行 `adb reverse tcp:8788 tcp:8788`，再在“设置 → 实例”里添加 `http://127.0.0.1:8788`。调电脑端界面（侧栏、拖动排序等）时先 `pnpm build:ui`，再运行 `node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist`，用浏览器打开 `http://127.0.0.1:8788` 即可。调手机端界面也可以直接用浏览器：`pnpm --filter @cloudssh/ui-web build:mobile` 后加 `--mobile-shim` 托管 `packages/ui-web/dist`（`scripts/mock-tauri.js` 在浏览器里模拟 Tauri 的接口，网络请求和 WebSocket 直接发给假 Worker），浏览器切到手机尺寸打开；假 shell 的 `stream 秒数` 像 `tail -f` 那样持续刷彩色日志，用来看刷屏时卡不卡
+- `node scripts/mock-worker.mjs [端口] [--anon] [--servers N]`（默认 8788，写 0 由系统分配并打印实际端口；`--anon` 模拟未登录，显示匿名连接页；`--servers 90` 补足到 90 台，看节点很多时的流畅度）：本地假 Worker，提供 26 台假服务器（含分组和系统类型；其中“Slow-1 卡在认证”连接会一直停在认证，用来测“正在连接”状态）、可以交互的假 shell（输入 `help` 查看命令，`logs` 输出一屏各种常见日志，用来看关键词高亮；`menu` 输出一键脚本式的 60 列框线菜单，`size` 显示客户端报给服务器的行列数，用来看窄屏排版）、SFTP 目录列表和命令片段接口，不需要真实服务器就能调界面。在手机或模拟器上先运行 `adb reverse tcp:8788 tcp:8788`，再在“设置 → 实例”里添加 `http://127.0.0.1:8788`。调电脑端界面（侧栏、拖动排序等）时先 `pnpm build:ui`，再运行 `node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist`，用浏览器打开 `http://127.0.0.1:8788` 即可。调手机端界面也可以直接用浏览器：`pnpm --filter @cloudssh/ui-web build:mobile` 后加 `--mobile-shim` 托管 `packages/ui-web/dist`（`scripts/mock-tauri.js` 在浏览器里模拟 Tauri 的接口，网络请求和 WebSocket 直接发给假 Worker），浏览器切到手机尺寸打开；假 shell 的 `stream 秒数` 像 `tail -f` 那样持续刷彩色日志，用来看刷屏时卡不卡
 - 模拟器的两个假象，真机上不会出现：一是 WebGL 由软件渲染（SwiftShader），终端字形可能显示残缺，截图检查文字时可以在 WebView 调试里对当前终端执行 `webglAddon.dispose()` 改用 DOM 渲染；二是模拟器报告 `pointer: fine`，横屏宽度超过 767px 时网页版的移动端媒体查询不生效，按键栏会消失
 
 **正式签名**：在 `apps/mobile/src-tauri/gen/android/` 下新建 `keystore.properties`（已加入 .gitignore）：
@@ -632,7 +656,7 @@ Android 的 `versionCode` 由 Tauri 按 主×1000000 + 次×1000 + 修订 推导
 | `pnpm android:dev` | 在手机/模拟器上热更新运行 |
 | `pnpm mobile:dev` | 在电脑窗口里运行移动端（界面迭代） |
 | `pnpm typecheck` | 类型检查（core / ui-web / desktop） |
-| `pnpm test` | 检查版本号是否一致，然后运行单元测试（core） |
+| `pnpm test` | 检查版本号是否一致，然后运行单元测试（core）与命令行测试（cli：MCP 对假 Worker 的端到端测试、MCP 登记） |
 | `pnpm version:check` | 查看版本号与代号，检查各处是否一致 |
 | `pnpm version:set <版本> [中文代号 英文代号]` | 修改版本号和代号，并同步到各处 |
 | `node scripts/mock-worker.mjs` | 启动本地假 Worker，不连真实服务器调界面 |

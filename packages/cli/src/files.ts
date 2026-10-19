@@ -79,6 +79,49 @@ export interface TransferResult {
   note?: string;
 }
 
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+const STEP_NAMES: Record<string, string> = {
+  pack: '打包',
+  unpack: '解包',
+  upload: '上传',
+  download: '下载',
+  'direct-prepare': '准备直连',
+  'direct-copy': '服务器直连传输',
+  'relay-pack': '打包',
+  'relay-download': '中转：下载',
+  'relay-upload': '中转：上传',
+};
+
+/** 进度一行：“上传 45%（1.2 MB / 2.7 MB）”；copy 的进度只有百分比（total 为 100） */
+export function progressText(step: string, loaded?: number, total?: number): string {
+  const pct = total && loaded !== undefined ? ` ${Math.round((loaded / total) * 100)}%` : '';
+  const size = total && total !== 100 && loaded !== undefined ? `（${formatBytes(loaded)} / ${formatBytes(total)}）` : '';
+  return `${STEP_NAMES[step] ?? step}${pct}${size}`;
+}
+
+export function describeTransfer(result: TransferResult): string {
+  const how =
+    result.method === 'direct'
+      ? `，服务器之间直连${result.hops ? `（经 ${result.hops} 个跳板）` : ''}`
+      : result.method === 'relay'
+        ? '，经本机中转'
+        : result.method === 'local'
+          ? '，同一台服务器'
+          : '';
+  return `${result.kind === 'dir' ? '目录' : '文件'} → ${result.dest}（${formatBytes(result.bytes)}${how}）${result.note ? `\n说明：${result.note}` : ''}`;
+}
+
 /** 本机 → 服务器 */
 export async function upload(server: ServerConfig, localPath: string, remotePath: string, progress: Progress): Promise<TransferResult> {
   const source = path.resolve(localPath);

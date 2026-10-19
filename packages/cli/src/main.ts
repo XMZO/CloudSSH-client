@@ -19,12 +19,14 @@ import {
   type CliConfig,
 } from './config';
 import { checkCommand, printOutcomes, runExec } from './exec';
-import { copyBetween, DEFAULT_MAX_BYTES, download, localPath, splitRemote, upload, type Progress, type TransferResult } from './files';
-import { install, installStatus, skillTargets, syncSkills, uninstall } from './install';
+import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, localPath, progressText, splitRemote, upload, type Progress } from './files';
+import { install, installStatus, mcpLaunch, skillTargets, syncSkills, uninstall } from './install';
 import { login } from './login';
+import { serveStdio } from './mcp';
+import { MCP_CLIENTS, mcpTargets, parseMcpClients, registerMcp, unregisterMcp, type McpClientTarget } from './mcp-clients';
 import { api, ApiError, installNetwork } from './net';
 import { confirm, interactive, readStdin } from './prompt';
-import { hostId, loadServers, resolveSingle, resolveTargets, routeOf } from './targets';
+import { connect as connectInstance, filterServers, formatServerRow, hostId, resolveSingle, resolveTargets } from './targets';
 
 const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENAME.en}）— CloudSSH 命令行，不开客户端直接操作已保存的服务器
 
@@ -46,9 +48,14 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
   alias [set <名字> <目标> | rm <名字>]   目标的别名
   config [get | set <项> <值>]            confirm（ask / never 完全权限）、concurrency、timeout、notes（给 AI 的补充说明）、default
   skill [status | sync | enable <agent> | disable <agent>]   各 agent（claude、codex、agents）的 skill 开关
-  install [--bin-dir 目录] [--no-skill]  装成命令并安装 Claude Code skill（--status 查看安装状态）
-  uninstall [--keep-skill] [--purge]     卸载命令与 skill（--purge 连配置与登录一起删）
+  install [--bin-dir 目录] [--no-skill] [--mcp 应用,…]   装成命令并安装 Claude Code skill（--status 查看安装状态）；
+                                        --mcp 同时把 MCP 服务器登记给 claude-desktop、cursor、vscode、windsurf、codex（或 all）
+  uninstall [--keep-skill] [--purge]     卸载命令、skill 与 MCP 登记（--purge 连配置与登录一起删）
   version
+
+MCP（给 Claude Desktop、Cursor、VS Code 等不支持 skill 的应用）
+  mcp                           MCP 服务器（stdio）：list_servers、exec、upload、download、copy，规则与命令行一致
+  mcp status | add <应用> | remove <应用>   查看、登记、移除各应用里的 MCP 服务器（改配置前先备份）
 
 目标：srv-12（主机 ID，各设备一样）、名称、别名、tag:标签、all，多个用逗号隔开
 通用选项：--instance/-i <名称或地址> 选实例，--json 输出 JSON，--help
@@ -66,38 +73,13 @@ function flagsWith(extra: FlagSpec): FlagSpec {
   return { ...COMMON, ...extra };
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-}
-
 /** 传输进度：只在终端里、非 JSON 时显示在 stderr */
 function progressPrinter(json: boolean): Progress & { end(): void } {
   const show = !json && !!process.stderr.isTTY;
   let last = '';
-  const names: Record<string, string> = {
-    pack: '打包',
-    unpack: '解包',
-    upload: '上传',
-    download: '下载',
-    'direct-prepare': '准备直连',
-    'direct-copy': '服务器直连传输',
-    'relay-pack': '打包',
-    'relay-download': '中转：下载',
-    'relay-upload': '中转：上传',
-  };
   const print = ((step: string, loaded?: number, total?: number) => {
     if (!show) return;
-    const pct = total && loaded !== undefined ? ` ${Math.round((loaded / total) * 100)}%` : '';
-    const size = total && total !== 100 && loaded !== undefined ? `（${formatBytes(loaded)} / ${formatBytes(total)}）` : '';
-    const line = `${names[step] ?? step}${pct}${size}`;
+    const line = progressText(step, loaded, total);
     if (line === last) return;
     last = line;
     process.stderr.write(`\r\x1b[K${line}`);
@@ -108,53 +90,16 @@ function progressPrinter(json: boolean): Progress & { end(): void } {
   return print;
 }
 
-function describeTransfer(result: TransferResult): string {
-  const how =
-    result.method === 'direct'
-      ? `，服务器之间直连${result.hops ? `（经 ${result.hops} 个跳板）` : ''}`
-      : result.method === 'relay'
-        ? '，经本机中转'
-        : result.method === 'local'
-          ? '，同一台服务器'
-          : '';
-  return `${result.kind === 'dir' ? '目录' : '文件'} → ${result.dest}（${formatBytes(result.bytes)}${how}）${result.note ? `\n说明：${result.note}` : ''}`;
-}
-
-/** 装好网络、取服务器列表 */
-async function connect(parsed: Parsed): Promise<{ config: CliConfig; servers: ServerConfig[]; origin: string }> {
-  const config = loadConfig();
-  const instance = resolveInstance(config, str(parsed, 'instance'));
-  if (!instance.credential) {
-    throw new UsageError(`还没有登录 ${instance.origin}：运行 cloudssh login ${instance.origin}（或在桌面客户端里打开“同步登录给命令行”）`);
-  }
-  installNetwork(instance.origin, instance.credential.session);
-  const servers = await loadServers();
-  return { config, servers, origin: instance.origin };
+/** 装好网络、取服务器列表（--instance 选实例） */
+function connect(parsed: Parsed): Promise<{ config: CliConfig; servers: ServerConfig[]; origin: string }> {
+  return connectInstance(str(parsed, 'instance'));
 }
 
 async function cmdServers(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv, flagsWith({ query: { type: 'string', short: 'q' }, tag: { type: 'string', short: 't' } }));
   const { servers } = await connect(parsed);
-  const query = str(parsed, 'query')?.toLowerCase();
-  const tag = str(parsed, 'tag')?.toLowerCase();
-  const list = servers.filter((server) => {
-    const tags = (server.tags ?? []).map((item) => item.toLowerCase());
-    if (tag && !tags.some((item) => item.includes(tag))) return false;
-    if (!query) return true;
-    return [server.name, hostId(server), ...(server.tags ?? []), server.os ?? ''].some((item) => item.toLowerCase().includes(query));
-  });
-  const rows = list.map((server) => ({
-    id: hostId(server),
-    name: server.name,
-    tags: server.tags ?? [],
-    os: server.os ?? null,
-    route: routeOf(server, servers),
-  }));
-  out(rows, bool(parsed, 'json'), () =>
-    rows.length
-      ? rows.map((row) => `${row.id.padEnd(9)} ${row.name}  [${row.tags.join(', ') || '-'}]  ${row.os ?? '?'}  ${row.route}`).join('\n')
-      : '（没有匹配的服务器）'
-  );
+  const rows = filterServers(servers, str(parsed, 'query'), str(parsed, 'tag'));
+  out(rows, bool(parsed, 'json'), () => (rows.length ? rows.map(formatServerRow).join('\n') : '（没有匹配的服务器）'));
   return 0;
 }
 
@@ -365,6 +310,47 @@ async function cmdConfig(argv: string[]): Promise<number> {
   return 0;
 }
 
+function mcpState(item: McpClientTarget): string {
+  if (item.error) return `读不了配置：${item.error}`;
+  if (item.registered) return item.current ? '已登记' : `已登记（指向的不是现在这个程序，cloudssh mcp add ${item.id} 更新）`;
+  return item.present ? '未登记' : '没装这个应用';
+}
+
+/** mcp：不带参数（或 serve）是 stdio 服务器；status / add <应用> / remove <应用> 管各应用里的登记 */
+async function cmdMcp(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, flagsWith({ 'bin-dir': { type: 'string' } }));
+  const [action = 'serve', spec] = parsed.positionals;
+  if (action === 'serve') {
+    await serveStdio(str(parsed, 'instance'));
+    return 0;
+  }
+  const binDir = str(parsed, 'bin-dir');
+  let lines: string[] = [];
+  if (action === 'add' || action === 'remove') {
+    if (!spec) throw new UsageError(`用法：cloudssh mcp ${action} <${MCP_CLIENTS.map((item) => item.id).join('|')}|all>，多个用逗号隔开`);
+    if (action === 'add') lines = registerMcp(parseMcpClients(spec), mcpLaunch(binDir));
+    else lines = unregisterMcp(spec.trim().toLowerCase() === 'all' ? undefined : parseMcpClients(spec));
+    if (!lines.length) lines = ['没有要移除的 MCP 登记'];
+  } else if (action !== 'status') {
+    throw new UsageError('用法：cloudssh mcp [serve | status | add <应用> | remove <应用>]');
+  }
+  if (bool(parsed, 'json')) {
+    // add / remove 与 install 一样输出安装状态（桌面客户端用），status 输出各应用的登记
+    out(action === 'status' ? mcpTargets(mcpLaunch(binDir)) : installStatus(binDir), true, () => '');
+    return 0;
+  }
+  for (const line of lines) log(line);
+  if (action === 'status') {
+    const targets = mcpTargets(mcpLaunch(binDir)).filter((item) => item.present || item.registered);
+    out(targets, false, () =>
+      targets.length
+        ? targets.map((item) => `${item.id.padEnd(15)} ${item.name}：${mcpState(item)}（${item.path}）`).join('\n')
+        : '这台电脑上没有找到支持的 MCP 客户端（claude-desktop、cursor、vscode、windsurf、codex）'
+    );
+  }
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   if (!command || command === 'help' || command === '--help' || command === '-h') {
@@ -411,10 +397,18 @@ async function main(argv: string[]): Promise<number> {
       return cmdSkill(rest);
     case 'config':
       return cmdConfig(rest);
+    case 'mcp':
+      return cmdMcp(rest);
     case 'install': {
       const parsed = parseArgs(
         rest,
-        flagsWith({ 'bin-dir': { type: 'string' }, 'no-skill': { type: 'boolean' }, 'in-place': { type: 'boolean' }, status: { type: 'boolean' } })
+        flagsWith({
+          'bin-dir': { type: 'string' },
+          'no-skill': { type: 'boolean' },
+          'in-place': { type: 'boolean' },
+          status: { type: 'boolean' },
+          mcp: { type: 'string' },
+        })
       );
       if (bool(parsed, 'status')) {
         const status = installStatus(str(parsed, 'bin-dir'));
@@ -425,13 +419,19 @@ async function main(argv: string[]): Promise<number> {
             ...status.skills.map(
               (item) => `${item.name} skill：${item.installed ? (item.current ? '已装' : '已装（不是这个版本的，重新安装可更新）') : '未装'}`
             ),
+            ...status.mcp.filter((item) => item.registered).map((item) => `${item.name} MCP：${mcpState(item)}`),
           ]
             .filter(Boolean)
             .join('\n')
         );
         return 0;
       }
-      const lines = install({ binDir: str(parsed, 'bin-dir'), skill: !bool(parsed, 'no-skill'), inPlace: bool(parsed, 'in-place') });
+      const lines = install({
+        binDir: str(parsed, 'bin-dir'),
+        skill: !bool(parsed, 'no-skill'),
+        inPlace: bool(parsed, 'in-place'),
+        mcp: str(parsed, 'mcp'),
+      });
       if (bool(parsed, 'json')) out(installStatus(str(parsed, 'bin-dir')), true, () => '');
       else for (const line of lines) log(line);
       return 0;

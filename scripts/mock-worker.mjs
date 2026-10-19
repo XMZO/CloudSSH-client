@@ -1317,4 +1317,7 @@ http
     else if (url.pathname === '/api/ssh') handler = attachShell(ws, url);
     else ws.close(1008);
   })
-  .listen(port, '127.0.0.1', () => console.log(`mock worker on http://127.0.0.1:${port}`));
+  // 端口写 0 时由系统分配，打印实际端口（命令行的测试这样起）
+  .listen(port, '127.0.0.1', function () {
+    console.log(`mock worker on http://127.0.0.1:${this.address().port}`);
+  });

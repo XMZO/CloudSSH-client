@@ -43,6 +43,7 @@ interface CliStatus {
   skillCurrent: boolean;
   skillPath: string;
   skills?: { id: string; name: string; path: string; enabled?: boolean; installed: boolean; current: boolean }[];
+  mcp?: { id: string; name: string; path: string; present: boolean; registered: boolean; current: boolean; error?: string }[];
   version: string;
   error?: string;
 }
@@ -82,6 +83,7 @@ interface ManagerApi {
   cliUninstall(): Promise<CliStatus>;
   cliSettings(): Promise<CliSettings>;
   setCliSettings(patch: Partial<CliConfigView>): Promise<CliSettings>;
+  setCliMcp(id: string, on: boolean): Promise<CliStatus>;
   /** 应用里点了“命令行与 Skill”（旧版 preload 没有） */
   onShowView?(listener: (view: string) => void): void;
 }
@@ -382,6 +384,10 @@ function renderCli(status: CliStatus): void {
     if (old.length) lines.push(`skill 不是最新的（点“重新安装”更新）：${old.join('、')}`);
     if (missing.length) lines.push(`skill 未装：${missing.join('、')}`);
     if (off.length) lines.push(`skill 已关：${off.join('、')}`);
+    const mcp = (status.mcp ?? []).filter((item) => item.registered);
+    const mcpOld = mcp.filter((item) => !item.current).map((item) => item.name);
+    if (mcp.length) lines.push(`MCP 已登记：${mcp.map((item) => item.name).join('、')}`);
+    if (mcpOld.length) lines.push(`MCP 登记指向的不是这个程序（点“重新安装”更新）：${mcpOld.join('、')}`);
   }
   for (const el of [cliStatusEl, cliViewStatus]) {
     el.textContent = lines.join('\n');
@@ -391,7 +397,8 @@ function renderCli(status: CliStatus): void {
     button.disabled = !status.available;
     button.textContent = status.installed ? '重新安装' : '安装';
   }
-  cliViewUninstall.disabled = !status.installed && !(status.skills ?? []).some((item) => item.installed);
+  cliViewUninstall.disabled =
+    !status.installed && !(status.skills ?? []).some((item) => item.installed) && !(status.mcp ?? []).some((item) => item.registered);
 }
 
 const remoteMessage = (error: unknown) => (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -413,13 +420,14 @@ async function cliAction(action: () => Promise<CliStatus>): Promise<void> {
 cliInstallBtn.addEventListener('click', () => void cliAction(() => api.cliInstall()));
 cliViewInstall.addEventListener('click', () => void cliAction(() => api.cliInstall()));
 cliViewUninstall.addEventListener('click', () => {
-  if (confirm('卸载命令行 cloudssh 与所有 AI 的 skill？（~/.cloudssh 里的配置与登录保留）')) void cliAction(() => api.cliUninstall());
+  if (confirm('卸载命令行 cloudssh、所有 AI 的 skill 与 MCP 登记？（~/.cloudssh 里的配置与登录保留）')) void cliAction(() => api.cliUninstall());
 });
 void cliAction(() => api.cliStatus());
 
 // ---------- 命令行与 AI 设置页 ----------
 
 const cliSkills = $('cli-skills');
+const cliMcp = $('cli-mcp');
 const cliFullAccess = $<HTMLInputElement>('cli-full-access');
 const cliDefaultInstance = $<HTMLSelectElement>('cli-default-instance');
 const cliTimeout = $<HTMLInputElement>('cli-timeout');
@@ -486,6 +494,20 @@ function renderCliSettings(settings: CliSettings): void {
       )
     );
   }
+  // MCP：这台电脑上有的应用（以及已经登记过的）每个一个开关
+  cliMcp.replaceChildren();
+  const clients = (settings.status.mcp ?? []).filter((item) => item.present || item.registered);
+  if (!clients.length) cliMcp.textContent = '这台电脑上没有找到支持 MCP 的应用（Claude Desktop、Cursor、VS Code、Windsurf、Codex）';
+  for (const item of clients) {
+    const state = item.error
+      ? `读不了配置：${item.error}`
+      : item.registered
+        ? item.current
+          ? '已登记'
+          : '已登记，指向的不是这个程序（点“重新安装”更新）'
+        : '未登记';
+    cliMcp.append(switchRow(`cli-mcp-${item.id}`, item.name, `${state} · ${item.path}`, item.registered, (on) => void saveMcp(item.id, on)));
+  }
   cliFullAccess.checked = config.confirm === 'never';
   // 默认实例
   cliDefaultInstance.replaceChildren();
@@ -548,6 +570,19 @@ async function saveCli(patch: Partial<CliConfigView>): Promise<boolean> {
     cliError.textContent = remoteMessage(error);
     if (cliSettingsState) renderCliSettings(cliSettingsState);
     return false;
+  }
+}
+
+/** MCP 开关：写进（或移出）那个应用的配置，再整页刷新 */
+async function saveMcp(id: string, on: boolean): Promise<void> {
+  cliError.textContent = '';
+  for (const input of cliMcp.querySelectorAll('input')) input.disabled = true;
+  try {
+    const status = await api.setCliMcp(id, on);
+    if (cliSettingsState) renderCliSettings({ ...cliSettingsState, status });
+  } catch (error) {
+    cliError.textContent = remoteMessage(error);
+    if (cliSettingsState) renderCliSettings(cliSettingsState);
   }
 }
 

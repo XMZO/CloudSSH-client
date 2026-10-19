@@ -6,10 +6,25 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **MCP 服务器 `cloudssh mcp`**：让 Claude Desktop、Cursor、VS Code、Windsurf 等不支持 skill 的应用也能用命令行的能力。stdio 上的 JSON-RPC 2.0，按 MCP 规范手写 initialize（版本协商）/ tools/list / tools/call / ping / 取消，不引入新依赖：
+  - 工具 `list_servers`（关键字、标签筛选）、`exec`（目标写法与命令行相同，`timeout`、`confirm` 相当于 `--yes`）、`upload`、`download`、`copy`，直接复用命令行的目标解析、执行与传文件实现
+  - 危险命令规则、完全权限与默认超时与命令行一致，每次调用重新读设置与登录；拦截级命令一律拒绝，危险命令不带 `confirm` 时提示先问用户
+  - 结果不超过 64KB，多台批量时按份额各留输出末尾；出错以 `isError` 结果返回给模型，进程不会因单次调用退出
+  - 取消时关掉用到的后台会话（远端命令随之结束）；带 `progressToken` 的调用发进度通知
+- **MCP 登记**：`cloudssh install --mcp claude-desktop,codex`（或 `all`）、`cloudssh mcp status | add | remove`，只在明确要求时写对应应用的配置，写前备份原文件、只动 `cloudssh` 一项、保留用户加的参数与环境变量；重新安装时更新已登记的，`cloudssh uninstall` 一并移除。支持 Claude Desktop、Cursor、VS Code、Windsurf、Codex
+- **桌面端“命令行与 Skill”设置页的 MCP 开关**：这台电脑上有的应用每个一个开关，打开即登记、关掉即移除；安装状态里显示已登记的应用，客户端换位置后启动时随命令一起更新
+
 ### 变更
 
 - **电脑端设置面板变矮**（不折叠、不分页）：用户与退出登录合成一行；界面、配色、语言放左栏，后台通知、会话放右栏，标题与选项同一行；功能按钮排成网格。高度从约 640px 降到约 310px，窗口窄时两栏自动叠成一栏
 - **命令行与 Skill 更好找**：设置面板、应用菜单、托盘菜单都有“命令行与 Skill”，点了直接打开实例管理里的设置页（原来要先进实例管理、再点侧栏的“设置…”）；实例管理里这一块也改叫“命令行与 Skill”
+
+### 开发
+
+- 命令行有了测试（`pnpm --filter @cloudssh/cli test`，已接入 `pnpm test`）：对假 Worker 的 MCP 端到端测试与各应用配置的登记测试，全部在临时目录里跑
+- 假 Worker 端口写 0 时由系统分配，并打印实际端口
 
 ## [0.3.25] - 2026-10-19 · 牛郎 Altair
 

@@ -9,11 +9,29 @@
  */
 import type { ServerConfig } from '@cloudssh/core';
 import { hostId } from '../../ui-web/overrides/shared/ai-remote/servers';
-import { UsageError, type CliConfig } from './config';
-import { api } from './net';
+import { loadConfig, resolveInstance, UsageError, type CliConfig } from './config';
+import { api, installNetwork } from './net';
 import { setServers } from './store-shim';
 
 export { hostId };
+
+/** 选好实例（--instance → CLOUDSSH_INSTANCE → 默认 → 唯一已登录的）并装好网络；没登录时报用法错误 */
+export function activeInstance(requested?: string): { config: CliConfig; origin: string; session: string } {
+  const config = loadConfig();
+  const instance = resolveInstance(config, requested);
+  if (!instance.credential) {
+    throw new UsageError(`还没有登录 ${instance.origin}：运行 cloudssh login ${instance.origin}（或在桌面客户端里打开“同步登录给命令行”）`);
+  }
+  installNetwork(instance.origin, instance.credential.session);
+  return { config, origin: instance.origin, session: instance.credential.session };
+}
+
+/** 装好网络、取服务器列表 */
+export async function connect(requested?: string): Promise<{ config: CliConfig; servers: ServerConfig[]; origin: string }> {
+  const { config, origin } = activeInstance(requested);
+  const servers = await loadServers();
+  return { config, servers, origin };
+}
 
 export async function loadServers(): Promise<ServerConfig[]> {
   const list = await api<ServerConfig[]>('/api/servers');
@@ -23,6 +41,32 @@ export async function loadServers(): Promise<ServerConfig[]> {
 }
 
 const norm = (text: string) => text.trim().toLowerCase().replace(/\s+/g, ' ');
+
+export interface ServerRow {
+  id: string;
+  name: string;
+  tags: string[];
+  os: string | null;
+  route: string;
+}
+
+/** servers 的筛选：tag 匹配标签（包含即可），query 匹配名称、主机 ID、标签、系统（都不分大小写） */
+export function filterServers(servers: ServerConfig[], query?: string, tag?: string): ServerRow[] {
+  const q = query?.trim().toLowerCase();
+  const t = tag?.trim().toLowerCase();
+  return servers
+    .filter((server) => {
+      const tags = (server.tags ?? []).map((item) => item.toLowerCase());
+      if (t && !tags.some((item) => item.includes(t))) return false;
+      if (!q) return true;
+      return [server.name, hostId(server), ...(server.tags ?? []), server.os ?? ''].some((item) => item.toLowerCase().includes(q));
+    })
+    .map((server) => ({ id: hostId(server), name: server.name, tags: server.tags ?? [], os: server.os ?? null, route: routeOf(server, servers) }));
+}
+
+export function formatServerRow(row: ServerRow): string {
+  return `${row.id.padEnd(9)} ${row.name}  [${row.tags.join(', ') || '-'}]  ${row.os ?? '?'}  ${row.route}`;
+}
 
 export function routeOf(server: ServerConfig, servers: ServerConfig[]): string {
   if (server.transport_type === 'cf_tunnel') return 'cf-tunnel';

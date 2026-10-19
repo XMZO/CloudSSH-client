@@ -22,14 +22,24 @@ export interface ExecOutcome {
   error?: string;
 }
 
-/** 危险命令的确认：返回 null 表示可以执行，否则是拒绝的原因 */
-export async function checkCommand(command: string, yes: boolean, mode: ConfirmMode, what: string): Promise<void> {
+export type CommandVerdict = { action: 'run' } | { action: 'refuse'; reason: string } | { action: 'confirm'; reason: string };
+
+/** 危险命令规则（命令行与 MCP 共用）：拦截级一律拒绝；危险命令在 yes 或完全权限（confirm never）时放行，否则要确认 */
+export function commandVerdict(command: string, yes: boolean, mode: ConfirmMode): CommandVerdict {
   const blocked = isBlockedCommand(command);
-  if (blocked.blocked) throw new UsageError(`拒绝执行（${blocked.reason ?? '拦截级命令'}）：${command}`);
+  if (blocked.blocked) return { action: 'refuse', reason: blocked.reason ?? '拦截级命令' };
   const risky = needsConfirmation(command);
-  if (!risky.required || yes || mode === 'never') return;
-  if (interactive() && (await confirm(`危险命令（${risky.reason ?? ''}）将在 ${what} 上执行：\n  ${command}\n确定执行？`))) return;
-  throw new UsageError(`危险命令（${risky.reason ?? '需要确认'}）：确认后加 --yes 再执行`);
+  if (!risky.required || yes || mode === 'never') return { action: 'run' };
+  return { action: 'confirm', reason: risky.reason ?? '需要确认' };
+}
+
+/** 危险命令的确认：可以执行就返回，否则抛出拒绝的原因（终端里会直接问） */
+export async function checkCommand(command: string, yes: boolean, mode: ConfirmMode, what: string): Promise<void> {
+  const verdict = commandVerdict(command, yes, mode);
+  if (verdict.action === 'run') return;
+  if (verdict.action === 'refuse') throw new UsageError(`拒绝执行（${verdict.reason}）：${command}`);
+  if (interactive() && (await confirm(`危险命令（${verdict.reason}）将在 ${what} 上执行：\n  ${command}\n确定执行？`))) return;
+  throw new UsageError(`危险命令（${verdict.reason}）：确认后加 --yes 再执行`);
 }
 
 async function runOne(server: ServerConfig, command: string, timeout: number): Promise<ExecOutcome> {
@@ -48,6 +58,14 @@ export function runExec(servers: ServerConfig[], command: string, timeout: numbe
   return eachLimited(servers, concurrency, (server) => runOne(server, command, timeout));
 }
 
+/** 一台的结果：错误 / 超时 / 退出码 */
+export function outcomeStatus(item: ExecOutcome): string {
+  return item.error ? `错误：${item.error}` : item.timedOut ? '超时' : `退出码 ${item.exitCode ?? '?'}`;
+}
+
+/** 远端正常跑完且退出码为 0 */
+export const outcomeOk = (item: ExecOutcome): boolean => !item.error && !item.timedOut && item.exitCode === 0;
+
 /** 单台：输出原样写到 stdout，退出码跟远端一致（超时 124、出错 255）；多台：每台一段，有失败时退出码 1 */
 export function printOutcomes(results: ExecOutcome[], json: boolean): number {
   if (json) {
@@ -60,8 +78,7 @@ export function printOutcomes(results: ExecOutcome[], json: boolean): number {
     if (only.truncated) process.stderr.write('cloudssh: 输出超过 64KB，只保留了最后一段\n');
   } else {
     for (const item of results) {
-      const status = item.error ? `错误：${item.error}` : item.timedOut ? '超时' : `退出码 ${item.exitCode ?? '?'}`;
-      process.stdout.write(`===== ${item.server.id} ${item.server.name} · ${status}${item.truncated ? ' · 输出已截断' : ''} =====\n`);
+      process.stdout.write(`===== ${item.server.id} ${item.server.name} · ${outcomeStatus(item)}${item.truncated ? ' · 输出已截断' : ''} =====\n`);
       if (item.output) process.stdout.write(item.output.endsWith('\n') ? item.output : `${item.output}\n`);
     }
   }
@@ -71,5 +88,5 @@ export function printOutcomes(results: ExecOutcome[], json: boolean): number {
     if (only.timedOut) return 124;
     return only.exitCode ?? 255;
   }
-  return results.every((item) => !item.error && !item.timedOut && item.exitCode === 0) ? 0 : 1;
+  return results.every(outcomeOk) ? 0 : 1;
 }
