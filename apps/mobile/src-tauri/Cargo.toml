@@ -1,6 +1,6 @@
 [package]
 name = "cloudssh-mobile"
-version = "0.3.26"
+version = "0.3.27"
 description = "CloudSSH 移动客户端（Tauri 2）"
 authors = ["XMZO"]
 license = "Apache-2.0"

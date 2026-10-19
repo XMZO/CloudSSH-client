@@ -100,6 +100,10 @@ const formTitle = $('form-title');
 const formSubtitle = $('form-subtitle');
 // macOS 的红绿灯在标题栏左侧
 document.documentElement.dataset.platform = navigator.userAgent.includes('Mac OS') ? 'darwin' : 'other';
+// 窗口布局是固定的（各栏自己滚动），整个页面不该滚：聚焦某个元素等引起的整页滚动立即还原，免得标题栏被顶出去
+window.addEventListener('scroll', () => {
+  if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+});
 const fieldName = $<HTMLInputElement>('field-name');
 const fieldUrl = $<HTMLInputElement>('field-url');
 const fieldBundledId = $<HTMLSelectElement>('field-bundled-id');

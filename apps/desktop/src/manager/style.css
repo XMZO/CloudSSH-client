@@ -254,6 +254,9 @@ html[data-platform="darwin"] .titlebar {
 }
 
 .switch {
+  /* 隐藏的 input 以开关自己为定位基准：否则它停在窗口里某个固定位置、不随内容滚动，
+     点开关聚焦它时浏览器会把整个窗口滚开去“露出”它，标题栏被顶出去、下面留白 */
+  position: relative;
   display: grid;
   grid-template-columns: 34px 1fr;
   gap: 10px;
@@ -264,6 +267,11 @@ html[data-platform="darwin"] .titlebar {
 
 .switch input {
   position: absolute;
+  top: 7px;
+  left: 0;
+  width: 34px;
+  height: 20px;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }
