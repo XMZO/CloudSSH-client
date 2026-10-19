@@ -4,7 +4,7 @@
  */
 import type { ServerConfig } from '@cloudssh/core';
 import { CLIENT_CODENAME, CLIENT_VERSION } from '@cloudssh/core';
-import { closeAllRemoteSessions } from '../../ui-web/overrides/shared/ai-remote/session';
+import { closeAllRemoteSessions, remoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
 import { bool, COMMON, int, parseArgs, str, type FlagSpec, type Parsed } from './args';
 import {
   expiresAt,
@@ -18,15 +18,16 @@ import {
   UsageError,
   type CliConfig,
 } from './config';
-import { checkCommand, printOutcomes, runExec } from './exec';
+import { checkCommand, commandVerdict, oneShot, printOutcomes, runExec } from './exec';
 import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, localPath, progressText, splitRemote, upload, type Progress } from './files';
+import { agentStatus, execViaAgent, runAgent, stopAgent } from './agent';
 import { install, installStatus, mcpLaunch, refresh, skillTargets, syncSkills, uninstall } from './install';
 import { login } from './login';
 import { serveStdio } from './mcp';
 import { MCP_CLIENTS, mcpTargets, parseMcpClients, registerMcp, unregisterMcp, type McpClientTarget } from './mcp-clients';
-import { api, ApiError, installNetwork } from './net';
+import { api, ApiError, installNetwork, instanceOrigin, networkMessage } from './net';
 import { confirm, interactive, readCommandFile, readStdin } from './prompt';
-import { connect as connectInstance, filterServers, formatServerRow, hostId, resolveSingle, resolveTargets } from './targets';
+import { activeInstance, connect as connectInstance, filterServers, formatServerRow, hostId, hostIdsOf, loadServers, resolveSingle, resolveTargets } from './targets';
 
 const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENAME.en}）— CloudSSH 命令行，不开客户端直接操作已保存的服务器
 
@@ -40,7 +41,9 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
 服务器
   servers [-q 关键字] [--tag 标签]   列出服务器（主机 ID、名称、标签、系统、线路）
   exec <目标> "<命令>"          执行命令；--stdin 从标准输入读命令，--file <文件> 从 UTF-8 文件读命令，
-                                --timeout 秒，--yes 确认危险命令
+                                --timeout 秒，--yes 确认危险命令；到同一台服务器的会话由后台进程复用
+                                （空闲 3 分钟退出；CLOUDSSH_AGENT=0 不用，CLOUDSSH_AGENT_IDLE 改空闲秒数）
+  agent [status | stop]         后台会话进程的状态、让它退出（关闭所有会话）
   upload <目标> <本机路径> <远程路径>      上传文件或目录
   download <目标> <远程路径> <本机路径>    下载文件或目录（--max-size MB，默认 2048）
   copy <目标:路径> <目标:路径>  服务器之间传文件或目录（能直连就直连）；覆盖已有的要 --yes
@@ -126,11 +129,21 @@ async function cmdExec(argv: string[]): Promise<number> {
     command = (file ? readCommandFile(localPath(file)) : await readStdin()).replace(/\r\n/g, '\n').replace(/\n+$/, '');
   }
   if (!command.trim()) throw new UsageError('没有要执行的命令');
-  const { config, servers } = await connect(parsed);
+  const { config, origin } = activeInstance(str(parsed, 'instance'));
   const timeout = int(parsed, 'timeout', 1, 3600) ?? config.timeout;
+  const yes = bool(parsed, 'yes');
+  const runnable = commandVerdict(command, yes, config.confirm).action === 'run';
+  if (runnable) {
+    // 交给后台会话进程（复用到服务器的会话）；用不了时往下在本进程执行
+    const results = await execViaAgent(origin, { spec, command, timeout });
+    if (results) return printOutcomes(results, bool(parsed, 'json'));
+    // 目标都是主机 ID 时，先开始连服务器，同时取服务器列表（省掉“先取列表、再连接”的那一段）
+    for (const id of hostIdsOf(spec, config)?.slice(0, config.concurrency) ?? []) remoteSession(id);
+  }
+  const servers = await loadServers();
   const targets = resolveTargets(spec, servers, config);
-  await checkCommand(command, bool(parsed, 'yes'), config.confirm, targets.map((server) => `${hostId(server)} ${server.name}`).join('、'));
-  const results = await runExec(targets, command, timeout, config.concurrency);
+  await checkCommand(command, yes, config.confirm, targets.map((server) => `${hostId(server)} ${server.name}`).join('、'));
+  const results = await runExec(targets, command, timeout, config.concurrency, oneShot);
   return printOutcomes(results, bool(parsed, 'json'));
 }
 
@@ -187,9 +200,34 @@ async function cmdLogin(argv: string[]): Promise<number> {
   return 0;
 }
 
+/** cloudssh agent [status | stop]：后台会话进程的状态、让它退出 */
+async function cmdAgent(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, COMMON);
+  const [action = 'status'] = parsed.positionals;
+  const { origin } = resolveInstance(loadConfig(), str(parsed, 'instance'));
+  if (action === 'stop') {
+    const stopped = await stopAgent(origin);
+    out({ stopped }, bool(parsed, 'json'), () => (stopped ? '后台会话进程已退出，会话都已关闭' : '后台会话进程没有在运行'));
+    return 0;
+  }
+  if (action !== 'status') throw new UsageError('用法：cloudssh agent [status | stop]');
+  const status = await agentStatus(origin);
+  out(status ?? { running: false }, bool(parsed, 'json'), () => {
+    if (!status) return '后台会话进程没有在运行（下次 exec 时自动启动）';
+    const sessions = status.sessions.length
+      ? status.sessions.map((item) => `${item.server} ${item.open} 条${item.busy ? `（${item.busy} 条在执行）` : ''}`).join('，')
+      : '没有';
+    const idle = status.idleExitMs === null ? '有命令在执行' : `空闲 ${Math.ceil(status.idleExitMs / 1000)} 秒后自动退出`;
+    return `后台会话进程在运行（进程 ${status.pid}，${idle}）\n会话：${sessions}`;
+  });
+  return 0;
+}
+
 async function cmdLogout(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv, COMMON);
   const instance = resolveInstance(loadConfig(), str(parsed, 'instance'));
+  // 退出登录时也关掉后台进程里用这个登录开的会话
+  await stopAgent(instance.origin).catch(() => false);
   if (instance.credential) {
     installNetwork(instance.origin, instance.credential.session);
     await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
@@ -377,6 +415,13 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   switch (command) {
+    case '__agent':
+      // 后台会话进程本体（由 exec 在后台启动，不在帮助里列出）
+      if (!rest[0]) throw new UsageError('用法：cloudssh __agent <实例地址>');
+      await runAgent(rest[0]);
+      return 0;
+    case 'agent':
+      return cmdAgent(rest);
     case 'login':
       return cmdLogin(rest);
     case 'logout':
@@ -468,7 +513,9 @@ async function main(argv: string[]): Promise<number> {
 
 main(process.argv.slice(2))
   .catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
+    // 漏网的网络错误（Node 只说 “fetch failed”）也说清楚原因
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = raw === 'fetch failed' ? networkMessage(instanceOrigin() || '服务器', error) : raw;
     process.stderr.write(`cloudssh: ${message}\n`);
     return error instanceof UsageError ? 2 : 1;
   })

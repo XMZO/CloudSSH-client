@@ -17,9 +17,9 @@ export function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-/** 起假 Worker，返回地址与关闭函数 */
-export async function startMock() {
-  const child = spawn(process.execPath, [MOCK, '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+/** 起假 Worker，返回地址与关闭函数；args 透传（例如 --anon：未登录，可走模拟的 GitHub 登录） */
+export async function startMock(args = []) {
+  const child = spawn(process.execPath, [MOCK, '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   child.stderr.resume();
   const url = await new Promise((resolve, reject) => {
     const rl = readline.createInterface({ input: child.stdout });
@@ -60,6 +60,9 @@ export function isolatedEnv(url) {
   };
   delete env.CLOUDSSH_INSTANCE;
   delete env.CLOUDSSH_SHIM;
+  // 默认不用后台会话进程（免得每个用例留下一个）；测它的用例自己打开
+  env.CLOUDSSH_AGENT = '0';
+  delete env.CLOUDSSH_AGENT_IDLE;
   return { root, home, env };
 }
 

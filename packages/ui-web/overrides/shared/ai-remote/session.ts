@@ -9,6 +9,10 @@
  * 执行命令：初始化时关掉回显与提示符、禁用分页器，探测 bash 与 timeout；每条命令用 sh -c 跑在 stdin 为空的子进程里，
  * 前后打印标记、末尾打印退出码，只保留最后 64KB 输出。标记在命令行里写成八进制转义，回显出来的命令不会被误认成标记。
  * 超时由服务器上的 timeout 结束命令；没有 timeout 或仍不返回时客户端放弃这条会话（下次重新连接）。
+ *
+ * 省往返：Shell 就绪后初始化行发出去就算就绪，不等它的回应；第一条命令紧跟着发，等结果时一并确认初始化完成
+ * （先看到初始化的标记、再看到命令的标记）。初始化在限定时间内没完成就判定不是 POSIX Shell。
+ * 只跑一条命令就走的调用方（命令行）可以让远端在命令后直接 exit：服务器那头主动断开，不用再等一次关闭的来回。
  */
 
 export interface ExecResult {
@@ -19,6 +23,11 @@ export interface ExecResult {
   /** 输出超过上限，只保留了末尾 */
   truncated: boolean;
   durationMs: number;
+}
+
+export interface ExecOptions {
+  /** 这是这条会话的最后一条命令：跑完让远端 Shell 退出，服务器主动断开（不再复用这条会话） */
+  last?: boolean;
 }
 
 export class RemoteError extends Error {
@@ -81,6 +90,10 @@ export class RemoteSession {
   private outputListener: (() => void) | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private closedReason: string | null = null;
+  /** 已发出、还没在输出里确认的初始化（它的标记 id）；第一条命令等结果时一并确认 */
+  private pendingInit: string | null = null;
+  private initTimer: ReturnType<typeof setTimeout> | null = null;
+  private initFailed = false;
   /** SFTP 数据通道地址（Worker 在会话建立后发来） */
   sftpUrl: string | null = null;
   readonly ready: Promise<void>;
@@ -161,7 +174,7 @@ export class RemoteSession {
         }
       };
     });
-    await this.init();
+    this.init();
   }
 
   private sendJson(value: unknown): void {
@@ -180,9 +193,19 @@ export class RemoteSession {
 
   private append(chunk: string): void {
     this.text += chunk;
+    // 看到初始化的标记就确认完成、停掉计时；只留最近的内容之前先看，免得标记被裁掉
+    if (this.pendingInit && this.cleanText().includes(`__CSRDY${this.pendingInit}\n`)) {
+      this.pendingInit = null;
+      if (this.initTimer) clearTimeout(this.initTimer);
+      this.initTimer = null;
+    }
     // 只留最近的内容：等待中的命令只关心标记之后
     if (this.text.length > OUTPUT_LIMIT * 4) this.text = this.text.slice(-OUTPUT_LIMIT * 2);
     this.outputListener?.();
+  }
+
+  private cleanText(): string {
+    return this.text.replace(/\r/g, '').replace(ANSI, '');
   }
 
   private input(text: string): void {
@@ -194,8 +217,7 @@ export class RemoteSession {
   private waitFor(pattern: RegExp, timeoutMs: number): Promise<RegExpExecArray> {
     return new Promise((resolve, reject) => {
       const check = () => {
-        const clean = this.text.replace(/\r/g, '').replace(ANSI, '');
-        const match = pattern.exec(clean);
+        const match = pattern.exec(this.cleanText());
         if (match) {
           done();
           resolve(match);
@@ -217,7 +239,8 @@ export class RemoteSession {
     });
   }
 
-  private async init(): Promise<void> {
+  /** 发出初始化行，不等回应（第一条命令等结果时一并确认）；限定时间内没完成就判定不是 POSIX Shell，关掉会话 */
+  private init(): void {
     const id = randomId();
     this.text = '';
     this.input(
@@ -229,23 +252,26 @@ export class RemoteSession {
         `printf ${marker('RDY', id)}`,
       ].join('; ') + '\n'
     );
-    try {
-      await this.waitFor(new RegExp(`__CSRDY${id}\\n`), INIT_TIMEOUT_MS);
-    } catch {
-      throw new RemoteError('无法初始化远程 Shell（可能不是 POSIX Shell）', 'shell');
-    }
+    this.pendingInit = id;
+    this.initTimer = setTimeout(() => {
+      this.initTimer = null;
+      this.initFailed = true;
+      this.closedReason ??= '无法初始化远程 Shell（可能不是 POSIX Shell）';
+      this.close();
+    }, INIT_TIMEOUT_MS);
   }
 
   /** 在这台服务器上执行一条命令（同一会话内排队执行） */
-  exec(command: string, timeoutSec = 60): Promise<ExecResult> {
-    const run = this.queue.then(() => this.execNow(command, timeoutSec));
+  exec(command: string, timeoutSec = 60, options: ExecOptions = {}): Promise<ExecResult> {
+    const run = this.queue.then(() => this.execNow(command, timeoutSec, options));
     this.queue = run.catch(() => undefined);
     return run;
   }
 
-  private async execNow(command: string, timeoutSec: number): Promise<ExecResult> {
+  private async execNow(command: string, timeoutSec: number, options: ExecOptions): Promise<ExecResult> {
     if (command.length > 20_000) throw new RemoteError('命令太长，请拆分或改用文件', 'too_long');
     await this.ready;
+    if (this.initFailed) throw new RemoteError('无法初始化远程 Shell（可能不是 POSIX Shell）', 'shell');
     this.touch();
     const id = randomId();
     // AI 的 exec 在协议解析时已限制在 600 秒内；传大文件时内部用到 3600 秒
@@ -256,19 +282,24 @@ export class RemoteSession {
       : quote(command);
     const line =
       ` printf ${marker('BEG', id)}; { cs_run ${seconds} ${literal} </dev/null 2>&1; printf '\\n\\137\\137CSRC%s\\n' "$?"; }` +
-      ` | tail -c ${OUTPUT_LIMIT}; printf ${marker('END', id)}\n`;
+      ` | tail -c ${OUTPUT_LIMIT}; printf ${marker('END', id)}${options.last ? '; exit' : ''}\n`;
     if (line.split('\n').some((part) => encoder.encode(part).length > MAX_LINE_BYTES)) {
       throw new RemoteError('命令单行太长（超过约 3500 字节），请拆分或改用文件', 'too_long');
     }
+    // 初始化还没确认时（第一条命令）不清输出，先认初始化的标记、再认命令的；确认由 append 在看到标记时做
+    const init = this.pendingInit;
+    const result = `__CSBEG${id}\\n([\\s\\S]*?)__CSEND${id}\\n`;
+    const pattern = new RegExp(init ? `__CSRDY${init}\\n[\\s\\S]*?${result}` : result);
     const started = Date.now();
-    this.text = '';
+    if (!init) this.text = '';
     this.input(line);
     let match: RegExpExecArray;
     try {
-      match = await this.waitFor(new RegExp(`__CSBEG${id}\\n([\\s\\S]*?)__CSEND${id}\\n`), (seconds + 15) * 1000);
+      match = await this.waitFor(pattern, (seconds + 15) * 1000);
     } catch (error) {
       // 超时或断线：这条会话的状态不再可信，丢弃
       this.close();
+      if (this.initFailed) throw new RemoteError('无法初始化远程 Shell（可能不是 POSIX Shell）', 'shell');
       if (error instanceof RemoteError && error.code === 'timeout') {
         return { output: '', exitCode: null, timedOut: true, truncated: false, durationMs: Date.now() - started };
       }
@@ -298,7 +329,8 @@ export class RemoteSession {
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.ackTimer) clearTimeout(this.ackTimer);
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.pingTimer = this.ackTimer = this.idleTimer = null;
+    if (this.initTimer) clearTimeout(this.initTimer);
+    this.pingTimer = this.ackTimer = this.idleTimer = this.initTimer = null;
     this.onClosed(this);
   }
 
@@ -332,8 +364,8 @@ export function remoteSession(serverId: number): RemoteSession {
 }
 
 /** 执行一条命令（中途断线不自动重试：命令可能已经执行了一部分） */
-export function remoteExec(serverId: number, command: string, timeoutSec = 60): Promise<ExecResult> {
-  return remoteSession(serverId).exec(command, timeoutSec);
+export function remoteExec(serverId: number, command: string, timeoutSec = 60, options: ExecOptions = {}): Promise<ExecResult> {
+  return remoteSession(serverId).exec(command, timeoutSec, options);
 }
 
 /** 关闭到这台服务器的后台会话（没有就什么都不做）：用户取消时用来结束正在跑的远程命令 */

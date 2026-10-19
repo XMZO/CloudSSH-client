@@ -1,13 +1,51 @@
 /** 终端交互：问一行、问密码（不回显）、确认；exec 的命令来源（标准输入、文件） */
 import fs from 'node:fs';
 import readline from 'node:readline';
+import tty from 'node:tty';
 import { UsageError } from './config';
 
-export const interactive = (): boolean => !!process.stdin.isTTY && !!process.stderr.isTTY;
+let keyboard: tty.ReadStream | null | undefined;
+
+/**
+ * 读键盘的流。标准输入是终端就用它；用 CloudSSH 客户端当运行时（Electron 是图形界面程序）时，标准输入接不上
+ * 控制台，但进程挂在调用它的控制台上（标准输出、错误是终端），这时直接打开控制台输入 CONIN$。
+ * 标准错误不是终端（AI 工具、脚本在收集输出）时一律不算交互，免得等一个没人回答的提问
+ */
+function keyboardInput(): tty.ReadStream | null {
+  if (keyboard !== undefined) return keyboard;
+  keyboard = null;
+  if (!process.stderr.isTTY) return keyboard;
+  if (process.stdin.isTTY) return (keyboard = process.stdin as tty.ReadStream);
+  if (process.platform === 'win32') {
+    try {
+      const fd = fs.openSync(String.raw`\\.\CONIN$`, 'r+');
+      if (tty.isatty(fd)) keyboard = new tty.ReadStream(fd);
+      else fs.closeSync(fd);
+    } catch {
+      // 没有控制台
+    }
+  }
+  return keyboard;
+}
+
+export const interactive = (): boolean => !!keyboardInput();
+
+function requireKeyboard(): tty.ReadStream {
+  const input = keyboardInput();
+  if (!input) throw new UsageError('这一步要在终端里输入');
+  return input;
+}
 
 export function ask(question: string): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-  return new Promise((resolve) => {
+  const input = requireKeyboard();
+  const rl = readline.createInterface({ input, output: process.stderr, terminal: true });
+  return new Promise((resolve, reject) => {
+    // Ctrl+C：readline 收到后关掉自己，这里当作取消
+    rl.on('SIGINT', () => {
+      rl.close();
+      process.stderr.write('\n');
+      reject(new Error('已取消'));
+    });
     rl.question(question, (answer) => {
       rl.close();
       resolve(answer.trim());
@@ -16,8 +54,8 @@ export function ask(question: string): Promise<string> {
 }
 
 export function askSecret(question: string): Promise<string> {
+  const stdin = requireKeyboard();
   return new Promise((resolve, reject) => {
-    const stdin = process.stdin;
     process.stderr.write(question);
     let value = '';
     const done = (error?: Error) => {

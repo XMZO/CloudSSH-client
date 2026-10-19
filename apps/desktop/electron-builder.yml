@@ -57,5 +57,11 @@ nsis:
   shortcutName: CloudSSH
   artifactName: ${productName}-Setup-${version}-${arch}.${ext}
 
-# 自动更新预留：接入 electron-updater 时在这里配置发布源（见 src/main/platform/updater.ts）
-publish: null
+# 自动更新的发布源（见 src/main/platform/updater.ts）：公开仓库的 GitHub Releases。
+# 打包时据此生成 resources/app-update.yml；pnpm dist:win 只打包（--publish never），
+# pnpm release:win 打包并上传安装包、blockmap 与 latest.yml（需要环境变量 GH_TOKEN）
+publish:
+  provider: github
+  owner: XMZO
+  repo: CloudSSH-client
+  releaseType: release

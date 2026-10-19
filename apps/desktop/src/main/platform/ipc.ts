@@ -30,6 +30,7 @@ import {
   hasCustomChrome,
   instanceIdOfWebContents,
   instanceWindows,
+  markQuitting,
   openInstance,
   reloadInstance,
   showWindow,
@@ -89,6 +90,35 @@ export function registerIpc(): void {
       customChrome: hasCustomChrome(BrowserWindow.fromWebContents(event.sender)),
       titleBarHeight: TITLEBAR_HEIGHT,
     };
+  });
+  // 自动更新（左下角版本号）：当前状态、手动检查、已下载好时确认后重启安装
+  ipcMain.handle('desktop:update-status', (event) => {
+    senderInstance(event);
+    return getUpdater().status();
+  });
+  ipcMain.handle('desktop:update-check', (event) => {
+    senderInstance(event);
+    return getUpdater().check();
+  });
+  ipcMain.handle('desktop:update-install', async (event) => {
+    senderInstance(event);
+    const status = getUpdater().status();
+    if (status.state !== 'downloaded') return false;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      type: 'question' as const,
+      buttons: ['立即重启更新', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'CloudSSH 更新',
+      message: `重启并更新到 v${status.version}？`,
+      detail: '所有窗口会关闭，打开的终端会话会断开。不着急的话，退出客户端时也会自动更新。',
+    };
+    const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+    if (response !== 0) return false;
+    markQuitting();
+    getUpdater().quitAndInstall();
+    return true;
   });
   // 自绘标题栏：系统窗口按钮的配色跟随页面主题
   ipcMain.handle('desktop:titlebar', (event, colors: unknown) => {
@@ -318,9 +348,18 @@ export function registerIpc(): void {
     assertManager(event);
     return cliStatus();
   });
-  ipcMain.handle('manager:cli-install', (event) => {
+  ipcMain.handle('manager:cli-install', async (event) => {
     assertManager(event);
-    return installCli();
+    const firstInstall = !(await cliStatus()).installed;
+    const status = await installCli();
+    // 第一次装命令行时顺带打开“同步登录给命令行”：客户端里登录过的实例，命令行与 AI 直接能用，不用再登录一次
+    // （重新安装时不动：用户可能是特意关掉的）
+    if (firstInstall && status.installed && !configStore.preferences.cliLoginSync) {
+      configStore.setPreferences({ cliLoginSync: true });
+      applyCliSync(true);
+      broadcastChanged();
+    }
+    return status;
   });
   ipcMain.handle('manager:cli-uninstall', (event) => {
     assertManager(event);

@@ -112,6 +112,29 @@ function resolveOne(spec: string, servers: ServerConfig[], config: CliConfig, de
   throw new UsageError(`“${text}”匹配到 ${partial.length} 台，请用主机 ID 指定：\n${list}`);
 }
 
+/**
+ * 目标全是主机 ID（srv-12，含展开后的别名）时给出编号，不用先取服务器列表就能开始连接；有名称、标签、all 或
+ * 不带 srv- 的数字（也可能是名称）时返回 null
+ */
+export function hostIdsOf(spec: string, config: CliConfig, depth = 0): number[] | null {
+  const ids: number[] = [];
+  for (const part of spec.split(',')) {
+    const text = part.trim();
+    if (!text) continue;
+    const alias = config.aliases[text];
+    if (alias !== undefined) {
+      const nested = depth > 5 ? null : hostIdsOf(alias, config, depth + 1);
+      if (!nested) return null;
+      ids.push(...nested);
+      continue;
+    }
+    const id = /^srv-(\d+)$/i.exec(text);
+    if (!id) return null;
+    ids.push(Number(id[1]));
+  }
+  return ids.length ? [...new Set(ids)] : null;
+}
+
 /** 解析目标，去重保持顺序 */
 export function resolveTargets(spec: string, servers: ServerConfig[], config: CliConfig, depth = 0): ServerConfig[] {
   const result: ServerConfig[] = [];

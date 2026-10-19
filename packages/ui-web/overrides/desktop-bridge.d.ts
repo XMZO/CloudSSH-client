@@ -18,6 +18,13 @@ interface Window {
     command?(command: string, argument?: string): Promise<void>;
     onPalette?(callback: (toggle: boolean) => void): void;
     focusWindow?(): Promise<void>;
+    /** 自动更新（旧版客户端没有） */
+    update?: {
+      status(): Promise<CloudSSHUpdateStatus>;
+      check(): Promise<CloudSSHUpdateStatus>;
+      install(): Promise<boolean>;
+      onStatus(callback: (status: CloudSSHUpdateStatus) => void): void;
+    };
     vault?: {
       available(): Promise<boolean>;
       read(): Promise<string | null>;
@@ -40,3 +47,13 @@ interface CloudSSHDesktopMenuState {
   version: string;
   fullscreen: boolean;
 }
+
+/** 客户端自动更新的状态（apps/desktop/src/main/platform/updater.ts 的 UpdateStatus） */
+type CloudSSHUpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'downloading'; version: string; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'not-available'; checkedAt: number }
+  | { state: 'error'; message: string }
+  | { state: 'disabled'; reason: string };

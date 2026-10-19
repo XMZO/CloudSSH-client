@@ -6,7 +6,7 @@
  * 授权后浏览器跳回 Worker 的回调，因为浏览器里没有这个 oauth_state，Worker 显示 “Invalid state parameter”
  * 并且不会使用授权码（先校验 state 再换 token）。把这时地址栏里的网址交给命令行，命令行带着 oauth_state
  * 请求同一个回调，就拿到 session。授权码 10 分钟内有效、只能用一次。
- *   - 终端里：cloudssh login 打开浏览器后直接等你粘贴
+ *   - 终端里：cloudssh login 打开浏览器后直接在终端里等你粘贴（没给地址时先问实例地址；粘错了可以重贴）
  *   - 非交互（例如 AI 代为执行）：cloudssh login --start 打印授权地址；cloudssh login --callback "<地址>" 完成
  * 单管理员密码模式：在本机做与网页版相同的 PBKDF2 预拉伸，POST /api/auth/password/login（开了 Turnstile 时无法用命令行登录）。
  */
@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stretchAdminPassword } from '../../ui-web/upstream/frontend/src/password-stretch';
 import { homeDir, loadConfig, normalizeOrigin, rememberInstance, saveConfig, saveCredential, UsageError } from './config';
+import { networkMessage } from './net';
 import { ask, askSecret, interactive } from './prompt';
 
 interface Pending {
@@ -34,6 +35,15 @@ function cookieValue(headers: Headers, name: string): string | null {
   return null;
 }
 
+/** fetch，网络错误说清楚原因（连不上哪个实例、为什么） */
+async function request(origin: string, url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw new Error(networkMessage(origin, error));
+  }
+}
+
 export function openBrowser(url: string): void {
   try {
     const child =
@@ -48,7 +58,7 @@ export function openBrowser(url: string): void {
 }
 
 async function finish(origin: string, session: string, source: 'login'): Promise<string> {
-  const me = await fetch(`${origin}/api/auth/me`, { headers: { Cookie: `session=${session}`, Origin: origin } });
+  const me = await request(origin, `${origin}/api/auth/me`, { headers: { Cookie: `session=${session}`, Origin: origin } });
   const user = me.ok ? ((await me.json().catch(() => null)) as { username?: string } | null)?.username : undefined;
   saveCredential(origin, { session, source, savedAt: new Date().toISOString(), user });
   const config = loadConfig();
@@ -58,7 +68,7 @@ async function finish(origin: string, session: string, source: 'login'): Promise
 }
 
 async function startGithub(origin: string): Promise<string> {
-  const response = await fetch(`${origin}/api/auth/github`, { redirect: 'manual', headers: { Origin: origin } });
+  const response = await request(origin, `${origin}/api/auth/github`, { redirect: 'manual', headers: { Origin: origin } });
   const location = response.headers.get('location');
   const state = cookieValue(response.headers, 'oauth_state');
   if (response.status !== 302 || !location || !state) {
@@ -88,7 +98,7 @@ async function completeGithub(callback: string): Promise<{ origin: string; user:
   const state = url.searchParams.get('state');
   if (!code || !state) throw new UsageError('网址里没有 code 或 state：请在 GitHub 授权后、跳回 CloudSSH 的页面上复制地址栏');
   if (state !== pending.state) throw new UsageError('state 对不上：这个网址不是这次登录的，请重新运行 cloudssh login');
-  const response = await fetch(`${pending.origin}/api/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`, {
+  const response = await request(pending.origin, `${pending.origin}/api/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`, {
     redirect: 'manual',
     headers: { Cookie: `oauth_state=${pending.state}`, Origin: pending.origin },
   });
@@ -106,7 +116,7 @@ async function passwordLogin(origin: string, params: { salt: string; iterations:
   if (!interactive()) throw new UsageError('密码登录需要在终端里输入密码：请自己运行 cloudssh login');
   const password = await askSecret('管理员密码：');
   const key = await stretchAdminPassword(password, params.salt, params.iterations);
-  const response = await fetch(`${origin}/api/auth/password/login`, {
+  const response = await request(origin, `${origin}/api/auth/password/login`, {
     method: 'POST',
     redirect: 'manual',
     headers: { 'Content-Type': 'application/json', Origin: origin },
@@ -133,10 +143,11 @@ export async function login(options: LoginOptions, log: (text: string) => void):
     return;
   }
   const config = loadConfig();
-  const target = options.url ?? config.defaultInstance;
+  let target = options.url ?? config.defaultInstance;
+  if (!target && interactive()) target = await ask('CloudSSH 地址（例如 https://ssh.example.com）：');
   if (!target) throw new UsageError('用法：cloudssh login https://你的域名');
   const origin = normalizeOrigin(target);
-  const info = (await (await fetch(`${origin}/api/config`)).json().catch(() => null)) as {
+  const info = (await (await request(origin, `${origin}/api/config`)).json().catch(() => null)) as {
     authMode?: string;
     turnstileEnabled?: boolean;
     passwordAuth?: { salt: string; iterations: number } | null;
@@ -150,19 +161,39 @@ export async function login(options: LoginOptions, log: (text: string) => void):
   }
   if (!info.githubAuthEnabled) throw new Error('这个实例没有开启登录（匿名模式），不需要也无法登录');
   const authorize = await startGithub(origin);
-  const steps = [
-    `1. 在浏览器里打开下面的地址，用 GitHub 授权：`,
-    `   ${authorize}`,
-    `2. 授权后浏览器会跳回 ${origin}，页面显示 “Invalid state parameter” 是正常的；`,
-    `   把这时地址栏里的完整网址复制下来（含 code= 和 state=）。`,
-  ];
   if (!options.noBrowser) openBrowser(authorize);
   if (options.start || !interactive()) {
-    log([...steps, `3. 运行：cloudssh login --callback "<复制的网址>"（10 分钟内有效）`].join('\n'));
+    log(
+      [
+        options.noBrowser ? `1. 在浏览器里打开下面的地址，用 GitHub 授权：` : `1. 已尝试在浏览器打开 GitHub 授权页；没打开的话在浏览器里打开下面的地址：`,
+        `   ${authorize}`,
+        `2. 授权后浏览器会跳回 ${origin}，页面显示 “Invalid state parameter” 是正常的；`,
+        `   把这时地址栏里的完整网址复制下来（含 code= 和 state=）。`,
+        `3. 运行：cloudssh login --callback "<复制的网址>"（10 分钟内有效）`,
+        `   由 AI 代为登录时：把复制的网址发给 AI，由它运行第 3 步。`,
+      ].join('\n')
+    );
     return;
   }
-  log(steps.join('\n'));
-  const pasted = await ask('3. 粘贴网址后回车：');
-  const { user } = await completeGithub(pasted);
-  log(`已登录 ${origin}（${user}）`);
+  log(
+    [
+      options.noBrowser ? '在浏览器里打开下面的地址，用 GitHub 授权：' : '已在浏览器打开 GitHub 授权页；没打开的话把下面的地址复制到浏览器：',
+      `  ${authorize}`,
+      `授权后浏览器会跳回 ${origin}，页面显示 “Invalid state parameter” 是正常的。`,
+      '把这时地址栏里的完整网址粘贴到下面，回车（Ctrl+C 取消）。',
+    ].join('\n')
+  );
+  // 粘错了（不是网址、缺 code / state）可以重贴；state 对不上、超时、授权码失效只能重新登录
+  for (let attempt = 1; ; attempt++) {
+    const pasted = await ask('网址：');
+    try {
+      const { user } = await completeGithub(pasted);
+      log(`已登录 ${origin}（${user}）`);
+      return;
+    } catch (error) {
+      const retry = error instanceof UsageError && /^(请粘贴|网址里没有)/.test(error.message) && attempt < 3;
+      if (!retry) throw error;
+      log(error.message);
+    }
+  }
 }

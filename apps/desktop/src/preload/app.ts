@@ -24,6 +24,15 @@ contextBridge.exposeInMainWorld('cloudsshDesktop', {
   },
   /** 把本窗口叫到前台（点系统通知后） */
   focusWindow: () => ipcRenderer.invoke('desktop:focus'),
+  /** 自动更新（左下角版本号）：状态 { state, version?, percent?, checkedAt?, message?, reason? }、手动检查、确认后重启安装 */
+  update: {
+    status: () => ipcRenderer.invoke('desktop:update-status'),
+    check: () => ipcRenderer.invoke('desktop:update-check'),
+    install: () => ipcRenderer.invoke('desktop:update-install'),
+    onStatus: (callback: (status: unknown) => void) => {
+      ipcRenderer.on('desktop:update-status', (_event, status: unknown) => callback(status));
+    },
+  },
   /** 凭据预设的本地保管（仅内置界面可用）：列表 JSON 的读写与系统加密 */
   vault: {
     available: () => ipcRenderer.invoke('desktop:vault', 'available'),

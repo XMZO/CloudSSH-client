@@ -91,6 +91,8 @@ extern "system" {
     fn Process32NextW(snapshot: *mut c_void, entry: *mut ProcessEntry) -> i32;
     fn CloseHandle(handle: *mut c_void) -> i32;
     fn GetCommandLineW() -> *const u16;
+    fn GetStdHandle(which: u32) -> *mut c_void;
+    fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
     fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
     fn CreateJobObjectW(attributes: *const c_void, name: *const u16) -> *mut c_void;
     fn SetInformationJobObject(job: *mut c_void, class: i32, info: *const c_void, length: u32) -> i32;
@@ -301,6 +303,16 @@ fn main() {
 
     unsafe {
         SetConsoleCtrlHandler(Some(ignore_console_event), 1);
+        // 调用方给的标准输入输出（常是管道）别再被继承：子进程拿到的是 Command 另外复制的一份（Node 启动时会把
+        // 它们设成不再继承），这几份原件若也可继承，就会经 Node 漏给它启动的后台进程，管道关不上，
+        // 捕获输出的调用方要一直等到后台进程退出
+        const HANDLE_FLAG_INHERIT: u32 = 1;
+        for which in [-10i32 as u32, -11i32 as u32, -12i32 as u32] {
+            let handle = GetStdHandle(which);
+            if !handle.is_null() && handle as isize != -1 {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
     }
     let mut child = command
         .spawn()

@@ -18,7 +18,7 @@ import { registerIpc } from './platform/ipc';
 import { openManagerWindow } from './platform/manager-window';
 import { buildAppMenu, buildTray, refreshMenus } from './platform/menus';
 import { installGlobalShortcut } from './platform/shortcut';
-import { getUpdater } from './platform/updater';
+import { startUpdates } from './platform/updater';
 import { registerVaultIpc } from './platform/vault';
 import { versionLabel } from './platform/version';
 import {
@@ -84,7 +84,13 @@ if (!app.requestSingleInstanceLock()) {
     const initial = requested && configStore.getInstance(requested) ? requested : configStore.defaultInstanceId;
     await openInstance(initial, { newWindow: true });
 
-    void getUpdater().check();
+    // 自动更新：状态变化推给所有窗口（左下角版本号）
+    const updater = await startUpdates();
+    updater.onStatus((status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('desktop:update-status', status);
+      }
+    });
   });
 
   app.on('before-quit', () => markQuitting());

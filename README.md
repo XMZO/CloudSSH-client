@@ -98,7 +98,7 @@ CloudSSH-client/
 │           │       ├── menus.ts             应用菜单与托盘
 │           │       ├── manager-window.ts    实例管理窗口
 │           │       ├── ipc.ts               IPC（校验发送方）
-│           │       └── updater.ts           自动更新预留接口
+│           │       └── updater.ts           自动更新（electron-updater + GitHub Releases）
 │           ├── preload/                   app.ts（实例页面）/ manager.ts（实例管理）
 │           └── manager/                   实例管理页面（本地 HTML）
 ├── tools/
@@ -425,6 +425,11 @@ cloudssh alias set web srv-12         # 别名；cloudssh config set confirm nev
   - 桌面客户端“实例管理 → 偏好设置 → 同步登录给命令行”：客户端运行时把各实例的登录写给命令行，登录、退出跟着变；关掉即删除。客户端隔几天开一次，命令行就一直能用
 - **安全**：拦截级命令（`rm -rf /` 等）一律拒绝；危险命令（删除、关机、改权限……，与 AI 跨服务器操作同一套判定）要加 `--yes`，在终端里会直接问；`copy` 覆盖已有目标也要 `--yes`
 - **限制**：命令在非交互 Shell 里跑（没有 TTY、stdin 为空），只保留最后 64KB 输出；需要交互式认证（验证码）的服务器不能用；下载内容先放内存（默认上限 2GB，`--max-size` 可改）
+- **后台会话（`exec` 提速，`src/agent.ts`）**：`exec` 交给本机的后台进程跑，到同一台服务器的会话复用，后续命令不用再重新登录服务器（实测第一条约 2 秒，之后约 0.4–0.5 秒；不用后台进程时每条 2–3 秒）。没有就自动在后台启动，空闲 3 分钟自动退出并关掉会话（`CLOUDSSH_AGENT_IDLE` 改秒数，`CLOUDSSH_AGENT=0` 不用）；`cloudssh agent` 看状态、`cloudssh agent stop` 立即退出，`logout` 时一并退出。用法、输出、退出码与在本进程执行时一样；启动不了、连不上时自动退回本进程执行
+  - 每个系统账户、配置目录、实例、程序各一个：Windows 命名管道，其他系统是配置目录里仅本人可访问的 Unix socket。双方用这个实例的登录对随机数做 HMAC 互相验证，命令行核对了后台进程的应答才把命令发出去：别的程序抢先占了同名管道也拿不到命令；不写任何文件，只读的 AI 沙箱里也能用（沙箱账户有自己的一个）
+  - 每台服务器最多 3 条会话，同一台同时跑多条命令不互相排队；命令行被结束（Ctrl+C、AI 工具超时）时关掉它在用的会话，远端命令随之结束；服务器列表缓存 30 秒，按名称找不到时重取；换了登录就关掉旧会话
+  - 占用：空闲时不占 CPU；用 Node 运行时约 65MB。命令行由 CloudSSH 客户端运行时，本机有 Node 22 起也改用 Node（客户端当运行时约 115MB）
+  - 只有不需要确认的 `exec` 走后台进程；危险命令的终端确认、`upload` / `download` / `copy` 仍在本进程。不经后台进程执行时也省了来回：目标是主机 ID 时连接与取服务器列表同时进行、Shell 初始化与命令一次发出、命令跑完远端直接退出
 - **Git Bash**：启动脚本设了 `MSYS_NO_PATHCONV=1`，`/tmp/x` 这类远程路径不会被改写成 Windows 路径；本机路径 `/c/Users/...` 会自动换成 `C:/Users/...`
 - **PowerShell / cmd**：命令是启动器 `cloudssh.exe`（`packages/cli/shim`，Rust 写的小程序，不依赖任何 crate，静态链接 C 运行时）加同名的 `cloudssh.shim` 配置（运行时、程序、环境变量）。启动器把命令行原样交给 Node，不再经 `.cmd`：PowerShell 调批处理时不转义参数里的双引号，`'echo "a b"'` 会被拆成两个参数，后面的 `--json` 也会算进远程命令。它还会把退出码原样返回，Ctrl+C 交给 Node 处理，并把 Node 放进作业对象，启动器被杀时 Node 跟着结束。shell 推荐 PowerShell 7.3 以上（`pwsh`）或 Git Bash：Windows PowerShell 5.1（以及 7.3 之前的 pwsh、`$PSNativeCommandArgumentPassing = 'Legacy'`）调任何程序都会拆掉参数里的引号；启动器发现由 PowerShell 启动、而命令行里有“词中间的引号”（只有这种拆坏的情况才会出现）时拒绝运行并提示改用 `pwsh`、Git Bash 或 `--file`（退出码 2），免得远端执行拆坏的命令。只有 Windows PowerShell 5.1 或 cmd 时：简单命令照常当参数传；带引号、`%`、`&|<>^` 或中文的，让 AI 用写文件工具把命令写进 UTF-8 文件再 `cloudssh exec --file <文件> <目标>`（5.1 经管道传中文会变成 `?`，所以那里 `--stdin` 也不可靠；cmd 会展开 `%VAR%`、把 `\"` 当作引号结束）。`--stdin`、`--file` 都会去掉开头的 BOM、把 CRLF 换成 LF。启动器编好的 exe 提交在 `packages/cli/shim/cloudssh-shim.exe`，平时构建只是复制，改了 `src/main.rs` 后用 `pnpm cli:shim` 重编（需要 Rust 与 VS 生成工具）
 - **配置**：`~/.cloudssh/config.json`（实例、默认实例、别名、`confirm`、`concurrency`、`timeout`、`skills` 各 AI 开关、`skillNotes` 补充说明）；命令行里用 `cloudssh config set confirm|concurrency|timeout|notes|default <值>`、`cloudssh skill enable|disable claude|codex|agents`、`cloudssh skill sync`；`--instance` / 环境变量 `CLOUDSSH_INSTANCE` 选实例，`CLOUDSSH_HOME` 换配置目录
@@ -607,13 +612,22 @@ keyPassword=******
 
 ---
 
-## 自动更新（预留）
+## 自动更新
 
-`apps/desktop/src/main/platform/updater.ts` 定义了 `UpdateProvider` 接口，当前是空实现。接入步骤：
+桌面客户端用 [electron-updater](https://www.electron.build/auto-update) 从公开仓库 **XMZO/CloudSSH-client** 的 GitHub Releases 更新（`apps/desktop/src/main/platform/updater.ts`，发布源在 `electron-builder.yml` 的 `publish`）：
 
-1. `pnpm --filter @cloudssh/desktop add electron-updater`
-2. 在 `electron-builder.yml` 配置 `publish`，GitHub Releases 或 generic 服务器都可以
-3. 实现 `UpdateProvider`，在 `main/index.ts` 里调用 `setUpdater()` 替换空实现
+- 启动 15 秒后检查一次，之后每 6 小时一次；有新版本就在后台静默下载（有上一版的 blockmap 时只下差异部分），不弹窗
+- **左下角版本号**（侧栏底部实例名旁的淡色小字）显示状态：平时 `v0.3.28`，点一下检查更新（短暂显示“已是最新”/“检查失败”）；下载中 `v0.3.28 → 0.3.29`；下载好变成强调色的“重启更新到 v0.3.29”，点了确认后重启安装（打开的终端会话会断开），不点也会在退出客户端时自动安装。悬停看详细状态与上次检查时间
+- 只有用安装包装的客户端才更新：开发版、免安装版（zip，程序目录没有卸载程序）不检查，左下角悬停说明原因
+- 调试：`CLOUDSSH_UPDATE_URL` 指向一个 generic 发布目录（`latest.yml` + 安装包），不打包也能走一遍检查与下载
+
+### 发布新版本
+
+1. 改版本号：`pnpm version:set <版本>`，写好 CHANGELOG
+2. 打包并上传：在 PowerShell 里设置 `$env:GH_TOKEN`（对 XMZO/CloudSSH-client 有 Contents 写权限的 GitHub token），运行 `pnpm release:win`。它会打包并在仓库里建 `v<版本>` 的 Release，上传安装包、`.blockmap` 与 `latest.yml`（客户端靠 `latest.yml` 判断新版本，三个文件都要在）
+3. 只打包不上传用 `pnpm dist:win`（`--publish never`），之后也可以手动在 GitHub 上新建 Release，把 `apps/desktop/release/` 里的这三个文件传上去
+
+发布仓库要是**公开**的（客户端不带任何 token 去读 Releases），而且至少有一个提交（Release 的标签要指向一个提交）；源码不一定要推上去。第一个带自动更新的版本需要手动安装一次，之后就会自己更新。
 
 ---
 
@@ -647,7 +661,8 @@ Android 的 `versionCode` 由 Tauri 按 主×1000000 + 次×1000 + 修订 推导
 | `pnpm dev` | 构建内置 UI，然后启动客户端 |
 | `pnpm dev:ui` | UI 热更新开发（Vite 与客户端同时启动） |
 | `pnpm build` | 构建内置 UI 和桌面端 |
-| `pnpm dist:win` | 打包 Windows 安装包和 zip |
+| `pnpm dist:win` | 打包 Windows 安装包和 zip（不上传） |
+| `pnpm release:win` | 打包并发布到 GitHub Releases（XMZO/CloudSSH-client，需要环境变量 `GH_TOKEN`），客户端据此自动更新 |
 | `pnpm sync:web-ui` | 从 CloudSSH 主仓库同步网页版前端 |
 | `pnpm update:icon-font` | 重新生成内置图标字体（按源码实际用到的图标裁剪） |
 | `pnpm cli:install` | 构建命令行 `cloudssh` 并安装（命令放进 `~/.local/bin`，skill 装到 `~/.claude/skills/cloudssh`） |

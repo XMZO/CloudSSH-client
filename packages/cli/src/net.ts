@@ -65,13 +65,28 @@ export function installNetwork(instanceOrigin: string, sessionToken: string): vo
   globalThis.WebSocket = InstanceWebSocket as typeof WebSocket;
 }
 
+/** fetch 的网络错误说成人话（Node 只给 “fetch failed”，原因在 cause 里） */
+export function networkMessage(target: string, error: unknown): string {
+  const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
+  const code = cause?.code ?? '';
+  let reason: string;
+  if (code === 'ENOTFOUND') reason = '找不到这个域名，检查一下地址';
+  else if (code === 'EAI_AGAIN') reason = '域名解析失败（没联网，或 DNS 有问题）';
+  else if (code === 'ECONNREFUSED') reason = '连接被拒绝';
+  else if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') reason = '连接超时';
+  else if (code === 'ECONNRESET') reason = '连接被重置';
+  else if (/CERT|SSL|TLS/i.test(code)) reason = `证书有问题（${code}）`;
+  else reason = cause?.message || (error instanceof Error ? error.message : String(error));
+  return `连不上 ${target}：${reason}`;
+}
+
 /** 调 CloudSSH 接口，返回 JSON；401 时提示重新登录 */
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, { redirect: 'manual', ...init });
   } catch (error) {
-    throw new ApiError(`连不上 ${origin}：${(error as Error).message}`, 0);
+    throw new ApiError(networkMessage(origin, error), 0);
   }
   const text = await response.text();
   let body: unknown = null;

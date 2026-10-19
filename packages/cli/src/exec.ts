@@ -42,10 +42,19 @@ export async function checkCommand(command: string, yes: boolean, mode: ConfirmM
   throw new UsageError(`危险命令（${verdict.reason}）：确认后加 --yes 再执行`);
 }
 
-async function runOne(server: ServerConfig, command: string, timeout: number): Promise<ExecOutcome> {
+/** 在一台服务器上执行（用哪条会话由调用方决定） */
+export type Executor = (server: ServerConfig, command: string, timeout: number) => Promise<ExecResult>;
+
+/** 默认：进程内的会话池（ai-remote），会话留着给后面的命令复用（MCP 服务器常驻时用） */
+const pooled: Executor = (server, command, timeout) => remoteExec(server.id, command, timeout);
+
+/** 每台只跑这一条就结束（命令行不经后台进程时）：远端执行完直接退出、服务器主动断开，省掉关闭时的一次来回 */
+export const oneShot: Executor = (server, command, timeout) => remoteExec(server.id, command, timeout, { last: true });
+
+async function runOne(server: ServerConfig, command: string, timeout: number, execute: Executor): Promise<ExecOutcome> {
   const base = { server: { id: hostId(server), name: server.name } };
   try {
-    const result: ExecResult = await remoteExec(server.id, command, timeout);
+    const result: ExecResult = await execute(server, command, timeout);
     return { ...base, exitCode: result.exitCode, output: result.output, timedOut: result.timedOut, truncated: result.truncated, durationMs: result.durationMs };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -54,8 +63,9 @@ async function runOne(server: ServerConfig, command: string, timeout: number): P
   }
 }
 
-export function runExec(servers: ServerConfig[], command: string, timeout: number, concurrency: number): Promise<ExecOutcome[]> {
-  return eachLimited(servers, concurrency, (server) => runOne(server, command, timeout));
+/** 在这些服务器上执行（同时最多 concurrency 台） */
+export function runExec(servers: ServerConfig[], command: string, timeout: number, concurrency: number, execute: Executor = pooled): Promise<ExecOutcome[]> {
+  return eachLimited(servers, concurrency, (server) => runOne(server, command, timeout, execute));
 }
 
 /** 一台的结果：错误 / 超时 / 退出码 */

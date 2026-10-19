@@ -63,7 +63,12 @@ function readJson<T>(file: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    // 在 AI 工具的沙箱里（另一个系统账户）运行时可能读不了用户目录
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new Error(`没有权限读 ${file}：在 AI 工具的沙箱里运行时，请让 cloudssh 在沙箱外运行`);
+    }
     throw new Error(`${file} 不是有效的 JSON：${(error as Error).message}`);
   }
 }

@@ -6,6 +6,8 @@
  * - 只在已登录、非分享页、窗口足够宽时显示；收起后保留一条窄栏
  */
 import {
+  CLIENT_CODENAME,
+  CLIENT_VERSION,
   groupServersByTag,
   SERVER_GROUP_SORTS,
   serverInitial,
@@ -150,8 +152,10 @@ list.setAttribute('role', 'tree');
 
 const footer = el('div', 'cs-sb-footer');
 const instanceLabel = el('span', 'cs-sb-instance');
+// 客户端版本：取正在运行的客户端报的版本（随客户端更新），淡色小字，悬停看代号
+const versionLabel = el('span', 'cs-sb-version');
 const manageButton = iconButton('dns', '', () => void window.cloudsshDesktop?.openInstanceManager?.());
-footer.append(icon('cloud'), instanceLabel, manageButton);
+footer.append(icon('cloud'), instanceLabel, versionLabel, manageButton);
 footer.hidden = true;
 
 const resizer = el('div', 'cs-sb-resizer');
@@ -512,6 +516,105 @@ function showItemMenu(event: MouseEvent, server: ServerConfig): void {
   showMenu(event.clientX, event.clientY, entries);
 }
 
+// ---------- 左下角版本号与自动更新 ----------
+// 平时是淡色的版本号，点一下检查更新；有新版本时后台下载（显示“→ 新版本”），下载好变成“重启更新到 vX”，
+// 点了由客户端确认后重启安装。旧版客户端没有 update 接口：只显示版本号
+
+let appVersion = '';
+let updateStatus: CloudSSHUpdateStatus = { state: 'idle' };
+/** 手动检查后的短暂结果（“已是最新”“检查失败”） */
+let flash: { text: string; until: number } | null = null;
+
+function versionTitle(): string {
+  // 界面与客户端同一版本时带上代号（开发时界面可能比客户端新）
+  const base =
+    appVersion === CLIENT_VERSION
+      ? st('clientVersionNamed', { v: appVersion, zh: CLIENT_CODENAME.zh, en: CLIENT_CODENAME.en })
+      : st('clientVersion', { v: appVersion });
+  if (!window.cloudsshDesktop?.update) return base;
+  const status = updateStatus;
+  const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const detail =
+    status.state === 'checking'
+      ? st('updateChecking')
+      : status.state === 'downloading'
+        ? st('updateDownloading', { v: status.version, p: status.percent })
+        : status.state === 'downloaded'
+          ? st('updateReadyTitle', { v: status.version })
+          : status.state === 'not-available'
+            ? st('updateLatest', { t: time(status.checkedAt) })
+            : status.state === 'error'
+              ? st('updateError', { m: status.message })
+              : status.state === 'disabled'
+                ? status.reason
+                : st('updateClick');
+  return `${base}\n${detail}`;
+}
+
+function renderVersion(): void {
+  if (!appVersion) return;
+  const status = updateStatus;
+  const clickable = !!window.cloudsshDesktop?.update && status.state !== 'disabled';
+  versionLabel.dataset.state = status.state;
+  versionLabel.classList.toggle('is-clickable', clickable);
+  versionLabel.tabIndex = clickable ? 0 : -1;
+  versionLabel.setAttribute('role', clickable ? 'button' : 'note');
+  versionLabel.textContent =
+    flash && Date.now() < flash.until
+      ? flash.text
+      : status.state === 'downloaded'
+        ? st('updateReady', { v: status.version })
+        : status.state === 'downloading'
+          ? `v${appVersion} → ${status.version}`
+          : `v${appVersion}`;
+  versionLabel.title = versionTitle();
+}
+
+function onVersionClick(): void {
+  const update = window.cloudsshDesktop?.update;
+  if (!update || updateStatus.state === 'disabled') return;
+  if (updateStatus.state === 'downloaded') return void update.install();
+  if (updateStatus.state === 'downloading' || updateStatus.state === 'checking') return;
+  updateStatus = { state: 'checking' };
+  renderVersion();
+  void update
+    .check()
+    .then((status) => {
+      updateStatus = status;
+      if (status.state === 'not-available') flash = { text: st('updateLatestShort'), until: Date.now() + 2500 };
+      if (status.state === 'error') flash = { text: st('updateFailShort'), until: Date.now() + 2500 };
+      renderVersion();
+      setTimeout(renderVersion, 2600);
+    })
+    .catch(() => undefined);
+}
+
+versionLabel.addEventListener('click', onVersionClick);
+versionLabel.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    onVersionClick();
+  }
+});
+
+function setupVersion(version: string): void {
+  appVersion = version;
+  renderVersion();
+  const update = window.cloudsshDesktop?.update;
+  if (!update) return;
+  update.onStatus((status) => {
+    updateStatus = status;
+    renderVersion();
+  });
+  void update
+    .status()
+    .then((status) => {
+      updateStatus = status;
+      renderVersion();
+    })
+    .catch(() => undefined);
+}
+
 // ---------- 事件 ----------
 
 function serverFromEvent(event: Event): ServerConfig | null {
@@ -689,6 +792,7 @@ export function mountSidebar(): void {
       .then((info) => {
         instanceLabel.textContent = info.instance.name;
         instanceLabel.title = info.instance.baseUrl;
+        if (info.appVersion) setupVersion(info.appVersion);
         footer.hidden = false;
       })
       .catch(() => undefined);

@@ -188,8 +188,8 @@ describe('Windows 启动器', { skip: !windows && '只在 Windows 上', timeout:
     const removed = runExe(exe, ['uninstall', '--bin-dir', bin, '--keep-skill'], env);
     assert.equal(removed.code, 0, removed.stderr);
     assert.ok(!fs.existsSync(path.join(bin, 'cloudssh.shim')));
-    assert.ok(!fs.existsSync(path.join(bin, 'cssh.exe')));
-    // 正在运行的那个启动器在它退出后由脱离作业的 cmd 删掉
+    // 经启动器运行时 .exe 都在它退出后由脱离作业的 cmd 删掉（命令本身不等它：启动器不把输出管道漏给它）
+    assert.ok(await waitGone(path.join(bin, 'cssh.exe')), 'cssh.exe 应在退出后被删掉');
     assert.ok(await waitGone(exe), 'cloudssh.exe 应在退出后被删掉');
   });
 });
