@@ -131,23 +131,23 @@
 
 /* ---------- 状态高亮（index.ts 按内容打标记） ---------- */
 
-:root .agent-md-content td[data-cs-tone] {
+:root .agent-md-content :is(td, strong, b)[data-cs-tone] {
   font-weight: 600;
 }
 
-:root .agent-md-content td[data-cs-tone="ok"] {
+:root .agent-md-content :is(td, strong, b)[data-cs-tone="ok"] {
   color: var(--cs-tone-ok);
 }
 
-:root .agent-md-content td[data-cs-tone="warn"] {
+:root .agent-md-content :is(td, strong, b)[data-cs-tone="warn"] {
   color: var(--cs-tone-warn);
 }
 
-:root .agent-md-content td[data-cs-tone="bad"] {
+:root .agent-md-content :is(td, strong, b)[data-cs-tone="bad"] {
   color: var(--cs-tone-bad);
 }
 
-/* 以 ⚠️ / ❌ 开头的列表项、段落：浅色底，问题一眼可见 */
+/* 以“异常：”“注意：”（或 ⚠️ / ❌）开头的列表项、段落：浅色底，问题一眼可见 */
 :root .agent-md-content [data-cs-callout] {
   margin-left: -6px;
   padding: 2px 6px;
@@ -353,4 +353,37 @@
   .cs-as-close {
     width: 40px;
   }
+}
+
+/* ---------- 上下文出错后由客户端接续（recovery.ts）：一行弱化的说明 ---------- */
+
+:root .agent-message.cs-agent-recovered {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+:root .agent-message.cs-agent-recovered .material-symbols-outlined {
+  flex: none;
+  font-size: 15px;
+}
+
+/* ---------- “完全”权限模式按钮（full-access.ts）：选中时用错误色，提醒不会再有任何确认 ---------- */
+
+.agent-mode-segmented[data-active-mode='full'] .agent-mode-btn[data-mode='full'].is-active {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  color: var(--error);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error) 55%, transparent);
+}
+
+.agent-mode-segmented[data-active-mode='full'] .agent-mode-btn[data-mode='full'].is-active .material-symbols-outlined {
+  color: var(--error);
+  font-variation-settings: 'FILL' 1;
 }

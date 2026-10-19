@@ -1,0 +1,202 @@
+/* ========== AI 跨服务器操作的卡片（ai-remote，电脑与手机共用） ==========
+   AI 回复里的 cloudssh-action 代码块是给客户端看的，不显示；由下面的操作卡片代替。 */
+
+:root .agent-md-code-block[data-code-language='cloudssh-action'] {
+  display: none;
+}
+
+:root .agent-message.cs-ra-group {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--on-surface) 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--on-surface) 4%, transparent);
+  font-size: 12.5px;
+}
+
+.cs-ra-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cs-ra-group-head .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.cs-ra-list {
+  display: grid;
+  gap: 6px;
+}
+
+.cs-ra-card {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  min-width: 0;
+}
+
+.cs-ra-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.cs-ra-head .cs-ra-kind {
+  flex: none;
+  font-size: 15px;
+  color: var(--agent-agent-color, var(--accent));
+}
+
+.cs-ra-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-ra-detail {
+  margin-top: 4px;
+  font-family: var(--cs-font-mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 11.5px;
+  color: var(--on-surface);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cs-ra-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+.cs-ra-state {
+  flex: none;
+  font-size: 15px;
+}
+
+.cs-ra-card[data-state='running'] .cs-ra-state {
+  animation: cs-ra-spin 1s linear infinite;
+}
+
+.cs-ra-card[data-state='done'] .cs-ra-state {
+  color: var(--cs-tone-ok, #2ea043);
+}
+
+.cs-ra-card[data-state='waiting'] .cs-ra-state {
+  color: var(--cs-tone-warn, #d29922);
+}
+
+.cs-ra-card:is([data-state='failed'], [data-state='blocked']) .cs-ra-state,
+.cs-ra-card:is([data-state='failed'], [data-state='blocked']) .cs-ra-status {
+  color: var(--cs-tone-bad, var(--error));
+}
+
+@keyframes cs-ra-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cs-ra-output {
+  margin-top: 5px;
+}
+
+.cs-ra-output summary {
+  cursor: pointer;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+
+.cs-ra-output pre {
+  max-height: 240px;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, #000 22%, transparent);
+  color: var(--on-surface);
+  font-family: var(--cs-font-mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cs-ra-confirm {
+  margin-top: 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  background: var(--error-bg, color-mix(in srgb, var(--error) 10%, transparent));
+}
+
+.cs-ra-reason {
+  margin-bottom: 6px;
+  color: var(--on-surface);
+  font-size: 11.5px;
+}
+
+.cs-ra-progress {
+  height: 3px;
+  margin-bottom: 6px;
+  border-radius: 2px;
+  background: var(--error);
+  width: 100%;
+  transition: width 3s linear;
+}
+
+.cs-ra-progress.is-running {
+  width: 0;
+}
+
+.cs-ra-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.cs-ra-btn {
+  flex: 1;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--on-surface) 22%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cs-ra-btn.is-danger {
+  border-color: transparent;
+  background: var(--error);
+  color: #fff;
+}
+
+@media (max-width: 600px) {
+  .cs-ra-btn {
+    min-height: 36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-ra-card[data-state='running'] .cs-ra-state {
+    animation: none;
+  }
+
+  .cs-ra-progress {
+    transition: none;
+  }
+}

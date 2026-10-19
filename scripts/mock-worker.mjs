@@ -511,7 +511,7 @@ const AGENT_REPLY = [
   '',
   '## 系统资源巡检报告',
   '',
-  '**主机**: mock-pi (aarch64)  **运行时长**: 1 天 16 小时  **结论**: ✅ 三个维度都在健康区间，无需干预。',
+  '**主机**: mock-pi (aarch64)  **运行时长**: 1 天 16 小时  **结论**: 三个维度大体健康，`/boot/firmware` 需要清理。',
   '',
   '### 一、CPU',
   '',
@@ -530,9 +530,9 @@ const AGENT_REPLY = [
   '',
   '### 二、磁盘',
   '',
-  '- ✅ `/` 已用 41%（12G / 29G）',
-  '- ⚠️ `/var/log` 增长较快，近 7 天新增 2.1G',
-  '- ❌ `/boot/firmware` 只剩 3% 可用空间',
+  '- **正常**：`/` 已用 41%（12G / 29G）',
+  '- **注意**：`/var/log` 增长较快，近 7 天新增 2.1G',
+  '- **异常**：`/boot/firmware` 只剩 3% 可用空间',
   '',
   '### 建议',
   '',
@@ -543,16 +543,253 @@ const AGENT_REPLY = [
   '```',
 ].join('\n');
 
+/**
+ * 模拟 Worker 端 AI 会话的上下文状态（每条连接一份），用来调试客户端的接续逻辑：
+ *   消息里带 #long：本轮正常回复，之后上下文“过长”，再发消息都会在压缩时报 responses_schema（与 Worker 一样会先执行一条命令），
+ *                   直到 agent_reset；
+ *   消息里带 #compact：本轮回复后“压缩成功”，清空编辑检查点，之后编辑更早的消息报 responses_history。
+ * 判断标记时忽略客户端接续时附带的 <earlier_conversation> 回顾。
+ */
+const agentStates = new WeakMap();
+
+function agentState(ws) {
+  let state = agentStates.get(ws);
+  if (!state) {
+    state = { nextTurn: 0, turns: new Set(), long: false, compacted: false };
+    agentStates.set(ws, state);
+  }
+  return state;
+}
+
+/**
+ * 模拟 AI 请求跨服务器操作（客户端 ai-remote）：消息里带 #remote 时回一个 cloudssh-action 代码块
+ * （#remote-dir 传目录，#remote-risky 带一条需要确认的命令）；收到 <cloudssh_action_results> 时总结结果、不再请求
+ */
+function mockRemoteReply(request) {
+  // 只认开头：服务器目录的用法说明里也提到了这个标记
+  if (request.trimStart().startsWith('<cloudssh_action_results>')) {
+    const lines = request.split('\n').filter((line) => /^\[\d+\]|^exit code|^done:|^failed:|^rejected|^blocked/.test(line));
+    return `已拿到其他服务器的结果：\n\n${lines.map((line) => `- ${line}`).join('\n')}\n\n✅ 跨服务器操作完成。`;
+  }
+  if (!request.includes('#remote')) return null;
+  if (request.includes('#remote-slow')) {
+    return '先在 DE-03 上跑一个慢命令。\n\n```cloudssh-action\n{"action":"exec","server":"DE-03 法兰克福","command":"sleep 20","timeout":60}\n```';
+  }
+  const actions = [
+    { action: 'exec', server: 'DE-03 法兰克福', command: 'df -h' },
+    request.includes('#remote-dir')
+      ? { action: 'copy', from: { server: 'current', path: '/root/www' }, to: { server: 'JP-D', path: '/tmp/' } }
+      : { action: 'copy', from: { server: 'current', path: '/root/notes.txt' }, to: { server: 'DE-03 法兰克福', path: '/tmp/' } },
+    { action: 'copy', from: { server: 'current', path: '/root/deploy.sh' }, to: { server: 'JP-D', path: '/tmp/deploy-copy.sh' } },
+  ];
+  if (request.includes('#remote-risky')) actions.push({ action: 'exec', server: 'JP-D', command: 'rm -rf /tmp/old-logs' });
+  return `我来在其他服务器上处理这些操作。\n\n\`\`\`cloudssh-action\n${actions.map((item) => JSON.stringify(item)).join('\n')}\n\`\`\``;
+}
+
+function mockAgentReset(ws) {
+  agentStates.delete(ws);
+  console.log('AGENT reset');
+  ws.sendJson({ type: 'agent_frame', runId: 'mock-run', subType: 'reset_done' });
+}
+
 function mockAgentReply(ws, msg) {
-  console.log('AGENT 收到的 message ↓\n' + msg.message + '\nAGENT ↑');
+  console.log(`AGENT 收到的 message（userIndex=${msg.userIndex ?? '-'}）↓\n` + msg.message + '\nAGENT ↑');
   const frame = (subType, extra = {}) => ws.sendJson({ type: 'agent_frame', runId: 'mock-run', requestId: msg.requestId, subType, ...extra });
+  const state = agentState(ws);
+  const request = String(msg.message ?? '').replace(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>/, '');
   frame('run_start');
-  const pieces = AGENT_REPLY.match(/[\s\S]{1,60}/g);
+  const fail = (code, executed) => {
+    if (executed) frame('executing', { tool: 'execute_command', args: { command: 'df -h' } });
+    setTimeout(() => {
+      frame('error', { code });
+      frame('run_end', { outcome: 'failed' });
+    }, 150);
+  };
+  if (typeof msg.userIndex === 'number') {
+    if (!state.turns.has(msg.userIndex) && (state.turns.size > 0 || state.compacted)) return fail('responses_history');
+    for (const turn of [...state.turns]) if (turn >= msg.userIndex) state.turns.delete(turn);
+    state.nextTurn = msg.userIndex;
+  }
+  state.turns.add(state.nextTurn++);
+  if (state.long) return fail('responses_schema', true);
+  // #confirm：模拟 AI 要执行危险命令，Worker 发 confirm_required 等客户端回 agent_confirm
+  if (request.includes('#confirm')) {
+    const command = 'rm -rf /tmp/old-logs';
+    const confirmationId = crypto.randomUUID();
+    const askedAt = Date.now();
+    frame('executing', { tool: 'execute_command', args: { command } });
+    frame('confirm_required', { command, reason: '删除文件操作，为保证安全需要确认', confirmationId });
+    state.pendingConfirm = (answer) => {
+      if (answer.confirmationId !== confirmationId || answer.command !== command) return;
+      state.pendingConfirm = null;
+      console.log(`AGENT 确认结果 approved=${answer.approved}，等待 ${Date.now() - askedAt}ms`);
+      const text = answer.approved ? `✅ 已执行 \`${command}\`。` : `❌ 用户拒绝了 \`${command}\`，没有执行。`;
+      frame('stream_chunk', { content: text });
+      frame('stream_end', { content: text });
+      frame('run_end', { outcome: 'completed' });
+    };
+    return;
+  }
+  const reply = mockRemoteReply(request) ?? AGENT_REPLY;
+  const pieces = reply.match(/[\s\S]{1,60}/g);
   pieces.forEach((piece, index) => setTimeout(() => frame('stream_chunk', { content: piece }), 40 * (index + 1)));
   setTimeout(() => {
-    frame('stream_end', { content: AGENT_REPLY });
+    frame('stream_end', { content: reply });
+    if (request.includes('#long')) state.long = true;
+    if (request.includes('#compact')) {
+      state.turns.clear();
+      state.compacted = true;
+      frame('context_status', { compacted: true, earliestEditableTurn: state.nextTurn });
+    }
     frame('run_end', { outcome: 'completed' });
   }, 40 * (pieces.length + 2));
+}
+
+// ---------- AI 跨服务器操作的后台会话（客户端 overrides/shared/ai-remote） ----------
+// 客户端把命令包在标记里：初始化打印 __CSRDY<id>；执行时打印 __CSBEG<id>、输出、__CSRC<退出码>、__CSEND<id>。
+// 这里认出这些行并模拟执行：几条常用命令给假输出；传文件相关的命令（查路径、生成临时密钥、ssh 直连、tar 打包解包、
+// mkdir、rm）作用在下面的内存文件系统上（所有服务器共用一份，按路径区分即可调试）。
+
+/** 单引号字符串还原（'\'' 是转义的单引号）；"$HOME" 换成 /root */
+function shellWord(text) {
+  return text.replace(/"\$HOME"/g, '/root').replace(/'((?:[^']|'\\'')*)'/g, (_, inner) => inner.replace(/'\\''/g, "'"));
+}
+
+function mkdirp(path) {
+  const parts = path.split('/').filter(Boolean);
+  for (let i = 1; i <= parts.length; i++) {
+    const prefix = `/${parts.slice(0, i).join('/')}`;
+    if (!sftpTree.has(prefix)) sftpPut(prefix, 'dir');
+  }
+}
+
+function copyTree(src, dest) {
+  mkdirp(sftpParent(dest));
+  for (const [path, node] of [...sftpTree.entries()]) {
+    if (path !== src && !path.startsWith(`${src}/`)) continue;
+    sftpTree.set(dest + path.slice(src.length), { ...node, data: node.data ? Buffer.from(node.data) : null, mtime: Math.floor(Date.now() / 1000) });
+  }
+}
+
+function removeTree(path) {
+  for (const key of [...sftpTree.keys()]) if (key === path || key.startsWith(`${path}/`)) sftpTree.delete(key);
+}
+
+function mockExec(cmd) {
+  const ok = (output = '') => ({ output, rc: 0 });
+  const quoted = String.raw`'(?:[^']|'\\'')*'`;
+  const word = String.raw`(?:"\$HOME"/)?${quoted}|"\$HOME"`;
+  let m;
+  if ((m = /^sleep (\d+)/.exec(cmd))) return { output: '', rc: 0, delay: Number(m[1]) * 1000 };
+  if ((m = /^exit (\d+)/.exec(cmd))) return { output: '', rc: Number(m[1]) };
+  if (cmd === 'hostname') return ok('mock');
+  if (cmd === 'whoami') return ok('root');
+  if (cmd === 'uptime') return ok(' 10:00:00 up 1 day, 16:02,  1 user,  load average: 0.17, 0.08, 0.02');
+  if (cmd === 'df -h') return ok('Filesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        29G   12G   16G  41% /\ntmpfs           2.0G     0  2.0G   0% /dev/shm');
+  if (cmd === 'free -h') return ok('               total        used        free      shared  buff/cache   available\nMem:           3.8Gi       1.1Gi       1.2Gi        12Mi       1.5Gi       2.4Gi\nSwap:          2.0Gi       1.9Gi       100Mi');
+  if (cmd.startsWith('echo ')) return ok(cmd.slice(5));
+  if ((m = /^cat ([^\s]+)$/.exec(cmd)) && sftpTree.get(m[1])?.data) return ok(sftpTree.get(m[1]).data.toString('utf8'));
+  if (cmd === 'printf %s "$HOME"') return ok('/root');
+  // 传文件：查源
+  if ((m = new RegExp(`^p=(${word}); if \\[ -d`).exec(cmd))) {
+    const path = shellWord(m[1]).replace(/\/+$/, '') || '/';
+    const node = sftpTree.get(path);
+    if (!node) return { output: 'missing', rc: 3 };
+    if (node.type === 'dir') {
+      const bytes = [...sftpTree.entries()].filter(([p]) => p.startsWith(`${path}/`)).reduce((sum, [, n]) => sum + (n.size || 0), 0);
+      return ok(`dir\n${Math.ceil(bytes / 1024) || 4}\n${path}`);
+    }
+    return ok(`file\n${node.size}\n${path}`);
+  }
+  // 传文件：查目标落点
+  if ((m = new RegExp(`^d=(${word}); case`).exec(cmd))) {
+    const d = shellWord(m[1]);
+    const name = shellWord(new RegExp(`f="\\$\\{d%/\\}/"(${quoted})`).exec(cmd)?.[1] ?? "''");
+    const f = d.endsWith('/') || sftpTree.get(d)?.type === 'dir' ? `${d.replace(/\/+$/, '')}/${name}` : d;
+    return ok(`${sftpTree.has(f) ? 'exists' : 'new'}\n${f}`);
+  }
+  // 直连：目标主机公钥、源上生成临时密钥、目标加临时公钥、清理
+  if (cmd.startsWith('cat /etc/ssh/ssh_host_')) return ok('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockHostKeyMockHostKeyMockHostKeyMock root@mock');
+  if (cmd.includes('ssh-keygen -q')) {
+    const tag = /-C '([^']+)'/.exec(cmd)?.[1] ?? 'cloudssh-xfer';
+    return ok(`/tmp/cloudssh.mock\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockClientKeyMockClientKeyMock ${tag}`);
+  }
+  if (cmd.includes('restrict ssh-ed25519')) {
+    console.log('ai-remote 临时公钥加入 authorized_keys');
+    return ok();
+  }
+  if (cmd.includes('awk -v now=')) {
+    console.log('ai-remote 临时公钥已清理');
+    return ok();
+  }
+  // 直连传输：ssh 到目标（文件 cat > 、目录 tar 管道）
+  if (cmd.includes('ssh -F /dev/null')) {
+    const esc = String.raw`'\\''`;
+    let src;
+    let dest;
+    if ((m = new RegExp(`^k=${quoted}; tar czf - -C (${quoted}) (${quoted}) \\|`).exec(cmd))) {
+      src = `${shellWord(m[1]).replace(/\/+$/, '')}/${shellWord(m[2])}`;
+      dest = new RegExp(`mkdir -p ${esc}(.*?)${esc} && tar xzf`).exec(cmd)?.[1];
+    } else {
+      src = shellWord(new RegExp(`< (${quoted})$`).exec(cmd)?.[1] ?? "''");
+      dest = new RegExp(`cat > ${esc}(.*?)${esc}\\.cs-part`).exec(cmd)?.[1];
+    }
+    if (!dest || !sftpTree.has(src)) return { output: 'mock ssh: cannot parse transfer', rc: 255 };
+    copyTree(src, dest.startsWith('/') ? dest : `/root/${dest}`);
+    console.log('ai-remote 直连传输', src, '→', dest);
+    return ok();
+  }
+  // 中转：源上打包、目标上解包
+  if ((m = new RegExp(`^tar czf (${quoted}) -C (${quoted}) (${quoted})$`).exec(cmd))) {
+    const archive = shellWord(m[1]);
+    const root = `${shellWord(m[2]).replace(/\/+$/, '')}/${shellWord(m[3])}`;
+    const entries = [...sftpTree.entries()]
+      .filter(([p]) => p === root || p.startsWith(`${root}/`))
+      .map(([p, n]) => [p.slice(sftpParent(root).length + (sftpParent(root) === '/' ? 0 : 1)), { type: n.type, data: n.data?.toString('base64') ?? null, size: n.size }]);
+    sftpPut(archive, 'file', 0, Buffer.from(JSON.stringify(entries)));
+    sftpTree.get(archive).size = sftpTree.get(archive).data.length;
+    return ok();
+  }
+  if ((m = new RegExp(`^mkdir -p (${quoted}) && tar xzf (${quoted}) -C ${quoted} --strip-components=1`).exec(cmd))) {
+    const dest = shellWord(m[1]);
+    const archive = shellWord(m[2]);
+    const entries = JSON.parse(sftpTree.get(archive)?.data?.toString('utf8') ?? '[]');
+    mkdirp(dest);
+    for (const [rel, node] of entries) {
+      const stripped = rel.split('/').slice(1).join('/');
+      if (!stripped) continue;
+      sftpTree.set(`${dest}/${stripped}`, { type: node.type, size: node.size, data: node.data ? Buffer.from(node.data, 'base64') : null, mtime: Math.floor(Date.now() / 1000) });
+    }
+    sftpTree.delete(archive);
+    return ok();
+  }
+  // 同机复制
+  if ((m = new RegExp(`cp -a (${quoted})(/\\.)? (${quoted})/?$`).exec(cmd))) {
+    copyTree(shellWord(m[1]), shellWord(m[3]).replace(/\/+$/, ''));
+    return ok();
+  }
+  if ((m = new RegExp(`^mkdir -p "\\$\\(dirname -- (${quoted})\\)"`).exec(cmd))) {
+    mkdirp(sftpParent(shellWord(m[1])));
+    return ok();
+  }
+  if ((m = new RegExp(`^rm -r?f (${quoted})(\\.cs-part)?$`).exec(cmd))) {
+    removeTree(shellWord(m[1]) + (m[2] ?? ''));
+    return ok();
+  }
+  return { output: `sh: ${cmd.split(/\s+/)[0]}: command not found (mock)`, rc: 127 };
+}
+
+function mockRemoteLine(line, write) {
+  const out = (text) => write(text.replace(/\n/g, '\r\n'));
+  let m = /CSRDY%s\\n' '(\w+)'/.exec(line);
+  if (m) return out(`__CSRDY${m[1]}\n`);
+  m = /CSBEG%s\\n' '(\w+)'; \{ cs_run (\d+) ('(?:[^']|'\\'')*'|"\$\(printf %s '([A-Za-z0-9+/=]+)' \| base64 -d\)") <\/dev\/null/.exec(line);
+  if (!m) return out('mock: unrecognized remote line\n');
+  const id = m[1];
+  const cmd = m[4] ? Buffer.from(m[4], 'base64').toString('utf8') : m[3].slice(1, -1).replace(/'\\''/g, "'");
+  console.log('ai-remote exec:', cmd.length > 160 ? `${cmd.slice(0, 160)}…` : cmd);
+  const { output, rc, delay } = mockExec(cmd);
+  setTimeout(() => out(`__CSBEG${id}\n${output}\n__CSRC${rc}\n__CSEND${id}\n`), delay ?? 30);
 }
 
 function attachShell(ws, url) {
@@ -587,6 +824,8 @@ function attachShell(ws, url) {
         if (msg.type === 'ping') ws.sendJson({ type: 'pong', ...(msg.id ? { id: msg.id } : {}) });
         if (msg.type === 'resize' && Number(msg.cols) > 0 && Number(msg.rows) > 0) Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
         if (msg.type === 'agent_start') mockAgentReply(ws, msg);
+        if (msg.type === 'agent_reset') mockAgentReset(ws);
+        if (msg.type === 'agent_confirm') agentState(ws).pendingConfirm?.(msg);
         return;
       } catch {
         // 不是 JSON，当作键盘输入
@@ -601,7 +840,13 @@ function attachShell(ws, url) {
         if (rest) i += rest[0].length - 1;
         continue;
       }
-      if (ch === '\r') {
+      if (ch === '\r' || ch === '\n') {
+        // 客户端 AI 跨服务器操作的后台会话（ai-remote）：命令带 \137\137CS 标记，按协议回应，不打印提示符
+        if (line.includes('\\137\\137CS')) {
+          mockRemoteLine(line, write);
+          line = '';
+          continue;
+        }
         write('\r\n');
         if (line.trim() === 'exit') {
           write('logout\r\n');
@@ -624,7 +869,8 @@ function attachShell(ws, url) {
         // 不做补全
       } else if (ch >= ' ') {
         line += ch;
-        write(ch);
+        // 后台会话关了回显（stty -echo），这里也不回显
+        if (!line.startsWith(' ') || !line.includes('\\137')) write(ch);
       }
     }
   };
@@ -641,6 +887,10 @@ sftpPut('/root/.bashrc', 'file', 0, Buffer.from(['# ~/.bashrc', 'export PS1="\\u
 sftpPut('/root/deploy.sh', 'file', 0, Buffer.from(['#!/bin/sh', 'set -e', 'echo deploying...', 'sleep 1', 'echo done', ''].join('\n')));
 sftpPut('/root/notes.txt', 'file', 0, Buffer.from('CloudSSH mock notes\n'.repeat(40)));
 sftpPut('/root/data.tar.gz', 'file', 73400320);
+sftpPut('/root/www/index.html', 'file', 0, Buffer.from('<h1>mock site</h1>\n'));
+sftpPut('/root/www/assets', 'dir');
+sftpPut('/root/www/assets/app.js', 'file', 0, Buffer.from('console.log("mock");\n'));
+sftpPut('/tmp', 'dir');
 for (const node of sftpTree.values()) if (node.data) node.size = node.data.length;
 
 function sftpParent(path) {
