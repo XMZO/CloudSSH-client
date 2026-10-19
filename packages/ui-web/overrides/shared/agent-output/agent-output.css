@@ -980,6 +980,24 @@
   font-size: 15px;
 }
 
+/* 当前模型不支持（DeepSeek 等）：变灰、点不了 */
+.cs-bar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cs-bar-btn:disabled:is(:hover, :focus-visible) {
+  background: transparent;
+  color: var(--on-surface-variant);
+}
+
+/* 联网搜索开关：开着时强调色；开着但代理不支持时划掉 */
+.cs-bar-search[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.cs-bar-search[data-inactive='true'] .cs-bar-label,
 .cs-bar-effort[data-inactive='true'] .cs-bar-label {
   text-decoration: line-through;
   opacity: 0.7;
@@ -1074,6 +1092,16 @@
   overflow-wrap: anywhere;
 }
 
+.cs-deploy-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cs-tone-warn, #d29922) 12%, transparent);
+  color: var(--on-surface);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .cs-deploy-status {
   display: inline-block;
   margin-top: 6px;
@@ -1090,6 +1118,16 @@
   .cs-bar-ring {
     height: 30px;
     font-size: 12px;
+  }
+
+  /* 手机上弹窗不占太多地方：思考深度只留档位名和状态，长说明在“部署方法”里看；列表收短 */
+  .cs-pop-effort .cs-pop-item-hint,
+  .cs-pop-effort .cs-pop-note {
+    display: none;
+  }
+
+  .cs-pop-list {
+    max-height: 220px;
   }
 
   .cs-bar-model .cs-bar-label {

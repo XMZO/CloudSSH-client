@@ -1,7 +1,7 @@
 /**
  * 发给 AI 的消息附加内容（只在发出的 message 里，对话里显示的仍是原话）：
  *   用户原话 + 服务器名称与标签（<server_context>）+ 跨服务器操作（<cloudssh_servers>，见 ai-remote）
- *   + 提问格式（<cloudssh_ask>）+ 回复风格提示（<reply_style>，见 style.ts）+ 思考深度标记（ai-model.ts，有代理时）
+ *   + 提问格式（<cloudssh_ask>）+ 回复风格提示（<reply_style>，见 style.ts）+ 指令标签（思考深度、联网搜索，有 AI 增强代理时；ai-model.ts）
  *
  * Worker 按字节算上下文、整理得很早（见 meter.ts），这些附加内容都尽量只发一次：跨服务器操作平时只附一句简介，
  * 用户提到别的服务器、或 AI 用 {"action":"list"} 要列表时才给完整的目录与用法。
@@ -13,7 +13,7 @@
 import { getServers } from '../../sidebar/store';
 import { serversContext, serversTeaser } from '../ai-remote/protocol';
 import { hasOtherServers, mentionsOtherServers } from '../ai-remote/servers';
-import { reasoningMarker } from './ai-model';
+import { proxyDirectives } from './ai-model';
 import { askContext } from './ask';
 import { activeStylePrompt, styledMessage } from './style';
 
@@ -55,6 +55,11 @@ export interface DecorateOptions {
   noDirectory?: boolean;
   /** 判断是否提到别的服务器时只看这段（用户原话；前面附的回顾 / 摘要里提到的不算） */
   about?: string;
+  /**
+   * 上下文很紧时（出错接续第二次、新会话里放不下）只附必要的：服务器名称与标签、指令标签；用户提到别的服务器时
+   * 只附简介。提问格式、回复风格、服务器目录都不附，也不记为已发，之后有地方时再附
+   */
+  lean?: boolean;
 }
 
 /**
@@ -122,24 +127,26 @@ export function decorateOutbound(message: string, panel: unknown, options: Decor
   const tracked = !!panel && typeof panel === 'object';
   const known = tracked && !options.fresh && directorySent.has(panel);
   if (!options.noDirectory && !known && hasOtherServers(current)) {
-    if (mentionsOtherServers(options.about ?? message, current)) {
+    const mentioned = mentionsOtherServers(options.about ?? message, current);
+    if (mentioned && !options.lean) {
       parts.push(serversContext(current));
       if (tracked) directorySent.add(panel);
-    } else if (options.fresh || !tracked || !teaserSent.has(panel)) {
+    } else if (options.lean ? mentioned : options.fresh || !tracked || !teaserSent.has(panel)) {
       parts.push(serversTeaser(current));
       if (tracked) teaserSent.add(panel);
     }
   }
   // 提问格式（ask.ts）：每个会话说明一次
-  if (tracked && (options.fresh || !askSent.has(panel))) {
+  if (!options.lean && tracked && (options.fresh || !askSent.has(panel))) {
     parts.push(askContext());
     askSent.add(panel);
   }
+  // 指令标签放在最后（ai-model.ts）：AI 增强代理转发前删掉，给请求加上思考深度、原生联网搜索
+  const marker = proxyDirectives();
+  const withMarker = (text: string) => (marker ? `${text}\n\n${marker}` : text);
+  if (options.lean) return withMarker(parts.join('\n\n'));
   const style = activeStylePrompt();
   const reminder = tracked && !options.fresh && !!style && styleSent.get(panel) === style;
   if (tracked && style) styleSent.set(panel, style);
-  // 思考深度标记放在最后（ai-model.ts）：思考深度代理转发前删掉它、给请求加上 reasoning.effort
-  const marker = reasoningMarker();
-  const styled = styledMessage(parts.join('\n\n'), reminder);
-  return marker ? `${styled}\n\n${marker}` : styled;
+  return withMarker(styledMessage(parts.join('\n\n'), reminder));
 }

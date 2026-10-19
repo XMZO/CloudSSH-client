@@ -186,6 +186,7 @@ today
 toolbar
 transform
 translate
+travel_explore
 trending_up
 tune
 upload

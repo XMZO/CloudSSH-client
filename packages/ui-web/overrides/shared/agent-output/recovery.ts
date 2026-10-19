@@ -17,7 +17,8 @@
  */
 import { getLocale } from '../../../upstream/frontend/src/i18n';
 import { at } from './i18n';
-import { bytesOf, meterSent } from './meter';
+import { bytesOf, markWeakCheckpoint, meterOverflowed, meterSent, roomFor } from './meter';
+import { currentAiConfig } from './ai-model';
 import { decorateOutbound, expectReset } from './outbound';
 
 /** 用到的网页版 AgentPanel 内部成员（ai-remote 也用） */
@@ -61,8 +62,10 @@ const RECOVERABLE = new Set(['responses_schema', 'responses_budget', 'responses_
 const MAX_RECOVERIES = 2;
 /** Worker 拒收超过 16000 字的消息，留些余量 */
 const MAX_MESSAGE = 15_500;
-/** 回顾按 UTF-8 字节计（Worker 也按字节算上下文，见 meter.ts）：约占整理线的四分之一，中文约 3000 字 */
+/** 回顾按 UTF-8 字节计（Worker 也按字节算上下文，见 meter.ts）：最多约占整理线的四分之一，中文约 3000 字 */
 export const RECAP_BYTES = 9000;
+/** 新会话里剩的地方不到这么多就不附回顾（附了也只会再次超限） */
+const RECAP_MIN = 800;
 const USER_CLIP = 600;
 const REPLY_CLIP = 1200;
 
@@ -178,6 +181,22 @@ export function buildRecap(
   return `<earlier_conversation>\n${head}\n${lines.join('\n')}${tail}\n</earlier_conversation>`;
 }
 
+/** 对话里加一行弱化的说明 */
+function appendNotice(panel: PanelInternals, notice: string, glyph = 'history'): void {
+  if (!panel.messagesEl) return;
+  const line = document.createElement('div');
+  line.className = 'agent-message cs-agent-recovered';
+  const icon = document.createElement('span');
+  icon.className = 'material-symbols-outlined';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = glyph;
+  const text = document.createElement('span');
+  text.textContent = notice;
+  line.append(icon, text);
+  panel.messagesEl.append(line);
+  panel.scrollToBottom?.();
+}
+
 /** 面板里失败那一轮收尾：思考过程标成已中止并留在原处，后面加一行说明 */
 function closeFailedAttempt(panel: PanelInternals, notice: string): void {
   panel.markLastActiveMessageAborted();
@@ -187,24 +206,32 @@ function closeFailedAttempt(panel: PanelInternals, notice: string): void {
   // 让网页版为新一轮另起一个思考过程；旧的放回原位
   panel.removeThinkingProcess();
   if (thinking && parent) parent.insertBefore(thinking, next);
-  if (!panel.messagesEl) return;
-  const line = document.createElement('div');
-  line.className = 'agent-message cs-agent-recovered';
-  const icon = document.createElement('span');
-  icon.className = 'material-symbols-outlined';
-  icon.setAttribute('aria-hidden', 'true');
-  icon.textContent = 'history';
-  const text = document.createElement('span');
-  text.textContent = notice;
-  line.append(icon, text);
-  panel.messagesEl.append(line);
-  panel.scrollToBottom?.();
+  appendNotice(panel, notice);
 }
 
 function recover(panel: PanelInternals, state: RequestState, code: string): boolean {
-  if (state.recoveries >= MAX_RECOVERIES || !state.outbound.trim()) return false;
-  // 新会话里之前附过的服务器信息、回复风格都不在了：全部重新附上
-  const original = decorateOutbound(state.outbound, panel, { fresh: true });
+  const overflow = code === 'responses_schema' || code === 'responses_budget';
+  if (overflow) {
+    // 新会话第一次调用就超了：底（系统提示、记忆、终端）比估计的大，下面按修正后的底裁回顾
+    meterOverflowed(panel);
+    // 整理上下文时交不出 Worker 要的 JSON：记下这个模型，之后提前由客户端压缩（compact.ts），并提醒一次
+    if (code === 'responses_schema' && markWeakCheckpoint()) {
+      const model = currentAiConfig()?.model ?? '';
+      setTimeout(() => appendNotice(panel, at('weakCheckpoint', { model }), 'info'), 0);
+    }
+  }
+  if (state.recoveries >= MAX_RECOVERIES || !state.outbound.trim()) {
+    // 新会话里也放不下：说明原因和办法（网页版接着显示原来的错误）
+    if (overflow) setTimeout(() => appendNotice(panel, at('recoveryGaveUp'), 'info'), 0);
+    return false;
+  }
+  // 新会话里之前附过的服务器信息、回复风格都不在了：重新附上；第二次接续、或新会话里放不下时只附必要的
+  let lean = state.recoveries >= 1;
+  let original = decorateOutbound(state.outbound, panel, { fresh: true, lean });
+  if (!lean && roomFor(panel, bytesOf(original)) < RECAP_MIN * 2) {
+    lean = true;
+    original = decorateOutbound(state.outbound, panel, { fresh: true, lean });
+  }
   if (original.length > MAX_MESSAGE) return false;
   // 刚附上的这些就是发给新会话的：这次重置回来时不要再忘掉
   expectReset(panel, true);
@@ -217,12 +244,24 @@ function recover(panel: PanelInternals, state: RequestState, code: string): bool
   const before = code === 'responses_history' || code === 'responses_config_changed';
   const executed = before ? [] : state.executed;
   const reason = code === 'responses_config_changed' ? 'model' : 'overflow';
-  const recap = buildRecap(prior, executed, Math.min(RECAP_BYTES, MAX_MESSAGE - original.length - 2), reason, from ? base!.summary : '');
+  // 回顾按新会话里剩的地方裁（底估得准时不会一进去就又超限）；地方太小就不附
+  const budget = Math.min(RECAP_BYTES, MAX_MESSAGE - original.length - 2, roomFor(panel, bytesOf(original)));
+  const recap = budget >= RECAP_MIN ? buildRecap(prior, executed, budget, reason, from ? base!.summary : '') : '';
   const message = recap ? `${recap}\n\n${original}` : original;
 
   closeFailedAttempt(
     panel,
-    at(code === 'responses_history' ? 'recoveredEdit' : code === 'responses_config_changed' ? 'recoveredModel' : 'recovered')
+    at(
+      code === 'responses_history'
+        ? 'recoveredEdit'
+        : code === 'responses_config_changed'
+          ? 'recoveredModel'
+          : !recap && prior.length
+            ? 'recoveredNoRecap'
+            : code === 'responses_schema'
+              ? 'recoveredSchema'
+              : 'recovered'
+    )
   );
   // Worker 立即处理 agent_reset（不排队），随后的 agent_start 在全新的上下文里开始
   panel.wsSend!(JSON.stringify({ type: 'agent_reset' }));

@@ -21,6 +21,8 @@ const args = process.argv.slice(2);
 const port = Number(args.find((arg) => /^\d+$/.test(arg)) ?? 8788);
 const uiArg = args.indexOf('--ui');
 const uiDir = uiArg >= 0 && args[uiArg + 1] ? nodePath.resolve(args[uiArg + 1]) : null;
+/** --mobile-shim：托管手机版构建时在 index.html 最前面插入 scripts/mock-tauri.js，浏览器里就能跑手机版界面 */
+const mobileShim = args.includes('--mobile-shim');
 const anonymous = args.includes('--anon');
 const now = Date.now();
 
@@ -201,7 +203,7 @@ async function handleHttp(req, res) {
   // 模拟思考深度代理的检测接口（客户端直接访问，要带 CORS）
   if (path === '/mock-proxy/cloudssh-reasoning') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    return res.end(JSON.stringify({ cloudsshReasoningProxy: 1, upstream: true }));
+    return res.end(JSON.stringify({ cloudsshReasoningProxy: 3, upstream: true, features: ['reasoning', 'web_search'] }));
   }
   // AI 配置（客户端 agent-output/ai-model.ts 读、切换模型）：与 Worker 一致，换接口地址必须带新密钥
   if (path === '/api/ai/config' && method === 'GET') return json(res, 200, { configured: true, base_url: aiBase, model: aiModel, api_key_last4: 'mock' });
@@ -301,12 +303,19 @@ const CONTENT_TYPES = {
 };
 
 function serveUi(res, pathname) {
+  if (mobileShim && pathname === '/__mock-tauri.js') {
+    res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-store' });
+    return fs.createReadStream(new URL('./mock-tauri.js', import.meta.url)).pipe(res);
+  }
   let file = nodePath.join(uiDir, decodeURIComponent(pathname));
   // 只允许目录内的文件；目录或不存在的路径交给单页应用的 index.html
   if (!file.startsWith(uiDir + nodePath.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     file = nodePath.join(uiDir, 'index.html');
   }
   res.writeHead(200, { 'Content-Type': CONTENT_TYPES[nodePath.extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
+  if (mobileShim && file.endsWith('index.html')) {
+    return res.end(fs.readFileSync(file, 'utf8').replace(/<head([^>]*)>/i, '<head$1><script src="/__mock-tauri.js"></script>'));
+  }
   fs.createReadStream(file).pipe(res);
 }
 
@@ -525,6 +534,20 @@ function runCommand(line, write, term, ws) {
     case 'clear':
       write('\x1b[2J\x1b[H');
       break;
+    case 'stream': {
+      // stream [秒数]：像 tail -f 那样持续刷彩色日志（每 50ms 5 行），调试终端渲染卡顿
+      const seconds = Math.min(120, Math.max(1, Number(args[0]) || 10));
+      let n = 0;
+      const timer = setInterval(() => {
+        let out = '';
+        for (let i = 0; i < 5; i++, n++) {
+          out += `\x1b[2m2026-10-19 12:${String(Math.floor(n / 60) % 60).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}\x1b[0m \x1b[3${(n % 6) + 1}m[worker-${n % 8}]\x1b[0m request id=${n.toString(16).padStart(8, '0')} path=/api/v1/items/${n} status=200 duration=${(n * 7) % 250}ms\r\n`;
+        }
+        write(out);
+      }, 50);
+      setTimeout(() => clearInterval(timer), seconds * 1000);
+      break;
+    }
     default:
       write(`\x1b[2m（模拟）已执行：${line.trim()}\x1b[0m\r\n`);
   }
@@ -541,10 +564,14 @@ const MOCK_PROXY = `http://127.0.0.1:${port}/mock-proxy`;
 const AI_MODELS = ['claude-sonnet-4-5', 'deepseek-chat', 'gemini-2.5-pro', 'gpt-5', 'gpt-5-mini', 'gpt-5.1-codex'];
 let aiBase = args.includes('--reasoning-proxy') ? MOCK_PROXY : AI_RELAY;
 let aiModel = 'gpt-5';
-const REASONING_MARK = /\s*\[cloudssh-reasoning:(auto|none|minimal|low|medium|high|xhigh)\]/g;
+// 与 tools/reasoning-proxy 一致：正式标签 <cloudssh_reasoning effort="high"/>，也认 0.3.23 的旧写法
+const SEARCH_MARK = /\s*<cloudssh_web_search\s+mode=\\*"(on|off)\\*"\s*\/>/g;
+const REASONING_MARK = /\s*(?:<cloudssh_reasoning\s+effort=\\*"(auto|none|minimal|low|medium|high|xhigh)\\*"\s*\/>|\[cloudssh-reasoning:(auto|none|minimal|low|medium|high|xhigh)\])/g;
 
 /** 与 Worker 的上下文口径一致：系统提示 + 工具约 1.15 万字节，到 37760 字节整理；这里按每 token 3.3 字节换算 */
 const MOCK_PREFIX_TOKENS = 3500;
+/** #heavy-base：模拟服务器记忆、终端快照很大（底多占的 token，跨会话保留；#light-base 恢复） */
+let mockBaseExtra = 0;
 const MOCK_LIMIT_TOKENS = Math.floor(37760 / 3.3);
 const mockTokens = (text) => Math.ceil(Buffer.byteLength(String(text)) / 3.3);
 
@@ -602,7 +629,8 @@ const AGENT_REPLY = [
  *   上下文涨到整理线时与用户遇到的一样报 responses_schema（Worker 整理失败），带 #checkpoint-ok 则模拟整理成功。
  *   客户端压缩（<cloudssh_compact>）：流式写一段摘要；之前发过 #compact-fail 就报错（测试改用对话要点），#compact-tool 则先调工具。
  *   会话绑定第一次用的模型，换了模型报 responses_config_changed，直到 agent_reset；模型名不认识报 responses_http 404。
- *   接了思考深度代理（--reasoning-proxy，或 AI 设置里接口地址改成 MOCK_PROXY）时，#reasoning-reject 带思考深度报 400。
+ *   接了思考深度代理（--reasoning-proxy，或 AI 设置里接口地址改成 MOCK_PROXY）时，#reasoning-reject 带思考深度报 400，
+ *   #proxy-down 模拟 Worker 访问不到代理（同区域限制，报 522）。
  * 判断标记时忽略客户端接续时附带的 <earlier_conversation> 回顾。
  */
 const agentStates = new WeakMap();
@@ -677,24 +705,34 @@ function mockAgentReply(ws, msg) {
   const state = agentState(ws);
   // 思考深度标记：接了代理时由“代理”删掉、换成 reasoning.effort；没接代理还带着标记说明客户端判断错了
   let effort = null;
-  const rawMessage = String(msg.message ?? '').replace(REASONING_MARK, (_, level) => {
-    effort = level;
-    return '';
-  });
+  let webSearch = null;
+  const rawMessage = String(msg.message ?? '')
+    .replace(REASONING_MARK, (_, tag, legacy) => {
+      effort = tag || legacy;
+      return '';
+    })
+    .replace(SEARCH_MARK, (_, mode) => {
+      webSearch = mode;
+      return '';
+    });
   if (effort && aiBase !== MOCK_PROXY) console.log(`AGENT 警告：没接思考深度代理，标记 [cloudssh-reasoning:${effort}] 会原样发给模型`);
-  else if (aiBase === MOCK_PROXY) console.log(`AGENT 代理：reasoning.effort = ${effort && effort !== 'auto' ? effort : '（不加）'}`);
+  else if (aiBase === MOCK_PROXY) console.log(`AGENT 代理：reasoning.effort = ${effort && effort !== 'auto' ? effort : '（不加）'}，联网搜索 = ${webSearch ?? '（没带标签）'}`);
   const request = rawMessage.replace(/<earlier_conversation>[\s\S]*?<\/earlier_conversation>/, '');
   for (const flag of ['#compact-fail', '#compact-tool', '#checkpoint-ok']) if (request.includes(flag)) state.flags.add(flag);
+  if (request.includes('#heavy-base')) mockBaseExtra = 5500;
+  if (request.includes('#light-base')) mockBaseExtra = 0;
   // 上一轮还在流式输出（客户端顶掉了它）：与 Worker 一样先停掉
   if (state.current) mockAgentStop(ws);
   const timers = [];
   const later = (fn, ms) => timers.push(setTimeout(fn, ms));
   // 用量：这一轮各次调用的输入 / 输出合计（与 Worker run_end 的 usage 一致）
-  const firstInput = MOCK_PREFIX_TOKENS + state.ctx + mockTokens(msg.message) + 300;
+  const firstInput = MOCK_PREFIX_TOKENS + mockBaseExtra + state.ctx + mockTokens(msg.message) + 300;
   const usage = (output, calls = 1, growth = 0) => {
     const inputs = Array.from({ length: calls }, (_, i) => firstInput + Math.round((growth * i) / Math.max(1, calls - 1)));
     const input = inputs.reduce((a, b) => a + b, 0);
-    return { calls, reportedCalls: calls, input, cached: Math.floor(input * 0.6), output, reasoning: 90 * calls, checkpointCalls: 0 };
+    // 推理用量随“代理”加上的档位变化（客户端思考深度菜单里显示上一轮的推理用量，用来确认是否生效）
+    const perCall = { minimal: 0, low: 120, medium: 400, high: 900, xhigh: 1600 }[aiBase === MOCK_PROXY ? effort : ''] ?? 300;
+    return { calls, reportedCalls: calls, input, cached: Math.floor(input * 0.6), output, reasoning: perCall * calls, checkpointCalls: 0 };
   };
   state.current = { frame, timers, usage };
   const finishRun = (outcome, use) => {
@@ -716,6 +754,7 @@ function mockAgentReply(ws, msg) {
   if (!AI_MODELS.includes(aiModel)) return fail('responses_http', false, { status: 404 });
   // #reasoning-reject：模型不支持 reasoning.effort，接口报 400
   if (request.includes('#reasoning-reject') && effort && effort !== 'auto' && aiBase === MOCK_PROXY) return fail('responses_http', false, { status: 400 });
+  if (request.includes('#proxy-down') && aiBase === MOCK_PROXY) return fail('responses_http', false, { status: 522 });
   state.model = aiModel;
   console.log(`AGENT 上下文约 ${firstInput} tokens（整理线约 ${MOCK_LIMIT_TOKENS}），模型 ${aiModel}`);
   // 客户端压缩：写摘要
@@ -771,7 +810,7 @@ function mockAgentReply(ws, msg) {
     frame('stream_end', { content: reply });
     const output = mockTokens(reply);
     const use = big ? usage(output, 3, 2600) : usage(output);
-    state.ctx = firstInput - MOCK_PREFIX_TOKENS + (big ? 2600 : 0) + output;
+    state.ctx = firstInput - MOCK_PREFIX_TOKENS - mockBaseExtra + (big ? 2600 : 0) + output;
     if (request.includes('#long')) state.long = true;
     if (request.includes('#compact')) {
       state.turns.clear();

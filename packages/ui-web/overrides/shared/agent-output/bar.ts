@@ -1,7 +1,8 @@
 /**
  * AI 面板输入框下方的一行（电脑与手机共用）：模型、思考深度、上下文占用。
  * - 模型：当前模型，点开可搜索、切换（ai-model.ts，切换前先压缩，见 compact.ts）
- * - 思考深度：自动（不附带）/ 最低 / 低 / 中 / 高 / 超高，经思考深度代理加进请求（见 ai-model.ts），没部署代理时可看部署方法
+ * - 思考深度：自动（不附带）/ 最低 / 低 / 中 / 高 / 超高，经 AI 增强代理加进请求（见 ai-model.ts），没部署代理时可看部署方法
+ * - 联网：开关模型自己的原生联网搜索（同样经 AI 增强代理，版本 3 起），代理不支持时点按看部署方法
  * - 上下文：圆环显示估算的占用（meter.ts）；电脑悬停、手机点按弹出详情，可立即压缩、开关自动压缩
  */
 import { onLocaleChange } from '../../../upstream/frontend/src/i18n';
@@ -15,9 +16,13 @@ import {
   EFFORTS,
   listModels,
   loadAiConfig,
+  modelSupport,
   onAiConfig,
   proxyState,
   setEffort,
+  setWebSearch,
+  webSearchAvailable,
+  webSearchEnabled,
 } from './ai-model';
 import proxySource from '../../../../../tools/reasoning-proxy/worker.js?raw';
 import { autoCompactEnabled, compactPanel, isCompacting, onCompactChange, setAutoCompact, switchModel } from './compact';
@@ -161,10 +166,14 @@ function fillContext(root: HTMLElement, panel: BarPanel): void {
   const last = state.last;
   if (last && last.reportedCalls) {
     let text = at('ctxLast', { calls: last.calls, input: formatTokens(last.input), output: formatTokens(last.output) });
-    if (last.cached) text += at('ctxCached', { n: formatTokens(last.cached) });
     if (last.reasoning) text += at('ctxReasoning', { n: formatTokens(last.reasoning) });
     root.append(el('p', 'cs-pop-line is-muted', text));
   }
+  // 缓存命中：输入里有多少是接口缓存命中的（上一轮、这个面板累计；服务商不回报时为 0）
+  const cacheLine = (key: 'ctxCache' | 'ctxCacheTotal', cached: number, input: number) =>
+    el('p', 'cs-pop-line is-muted', at(key, { cached: formatTokens(cached), input: formatTokens(input), pct: Math.round((cached / input) * 100) }));
+  if (last && last.reportedCalls && last.input > 0) root.append(cacheLine('ctxCache', last.cached, last.input));
+  if (state.totalInput > 0 && state.totalInput !== last?.input) root.append(cacheLine('ctxCacheTotal', state.totalCached, state.totalInput));
   const compactions = state.compactions + state.workerCompactions;
   if (compactions) root.append(el('p', 'cs-pop-line is-muted', at('ctxCompactions', { n: compactions })));
   root.append(el('p', 'cs-pop-note', at('ctxExplain', { total: formatTokens(capacity()) })));
@@ -363,7 +372,7 @@ function proxyLine(): HTMLElement {
   return line;
 }
 
-function fillEffort(root: HTMLElement): void {
+function fillEffort(root: HTMLElement, panel: BarPanel): void {
   const config = currentAiConfig();
   const effort = currentEffort();
   root.append(el('div', 'cs-pop-title', at('effortTitle')), proxyLine());
@@ -388,7 +397,14 @@ function fillEffort(root: HTMLElement): void {
     });
     list.append(item);
   }
-  root.append(list, el('p', 'cs-pop-note', at('effortExplain')));
+  root.append(list);
+  // 验证是否生效：接口回报的推理用量（同一个问题换档位对比），代理日志里也有每次请求的档位
+  const last = meterOf(panel).last;
+  if (proxyState() === 'ok') {
+    if (last?.reportedCalls) root.append(el('p', 'cs-pop-line', at('effortLastReasoning', { n: formatTokens(last.reasoning) })));
+    root.append(el('p', 'cs-pop-note', at('effortVerify')));
+  }
+  root.append(el('p', 'cs-pop-note', at('effortExplain')));
   // 还没检测过代理：检测完重画一次（检测过就不再触发，免得来回重画）
   if (proxyState() === 'checking') {
     void detectProxy().then(() => {
@@ -428,7 +444,7 @@ function openDeployGuide(): void {
   close.addEventListener('click', closeGuide);
   head.append(close);
   const body = el('div', 'cs-as-body cs-deploy-body');
-  body.append(el('p', 'cs-deploy-intro', at('deployIntro')));
+  body.append(el('p', 'cs-deploy-intro', at('deployIntro')), el('p', 'cs-deploy-warn', at('deployZone')));
   const steps = el('ol', 'cs-deploy-steps');
   const step = (text: string, ...extra: HTMLElement[]) => {
     const li = el('li');
@@ -469,7 +485,7 @@ function openDeployGuide(): void {
   status.textContent = at(state === 'ok' ? 'effortActive' : state === 'no-upstream' ? 'effortNoUpstream' : 'effortInactive');
   status.dataset.state = state;
   step(at('deployStep4'), recheck, status);
-  body.append(steps, el('p', 'cs-pop-note', at('deployNote')));
+  body.append(steps, el('p', 'cs-pop-note', at('deploySearch')), el('p', 'cs-pop-note', at('deployNote')));
   dialog.append(head, body);
   root.append(dialog);
   document.body.append(root);
@@ -511,8 +527,10 @@ export function addComposerBar(panel: unknown): void {
   effort.setAttribute('aria-haspopup', 'dialog');
   const effortName = el('span', 'cs-bar-label');
   effort.append(icon('psychology'), effortName);
+  const search = button('cs-bar-btn cs-bar-search');
+  search.append(icon('travel_explore'), el('span', 'cs-bar-label', at('searchLabel')));
   const ring = buildRing();
-  root.append(model, effort, el('span', 'cs-bar-spacer'), ring);
+  root.append(model, effort, search, el('span', 'cs-bar-spacer'), ring);
   composer.append(root);
 
   const render = () => {
@@ -521,11 +539,34 @@ export function addComposerBar(panel: unknown): void {
     const active = proxyState() === 'ok';
     modelName.textContent = !config ? '…' : config.configured ? config.model || at('modelUnset') : at('modelUnset');
     model.title = `${at('modelTitle')}: ${config?.model ?? ''}`.trim();
-    effortName.textContent = at(EFFORT_LABEL[level]);
+    // 当前模型已知不支持（DeepSeek 等）：按钮变灰、点不了，消息里也不带（见 ai-model.ts modelSupport）
+    const support = modelSupport();
+    const modelLabel = config?.model ?? '';
+    const noReasoning = support.reasoning === 'no';
+    effortName.textContent = noReasoning ? at('effortNA') : at(EFFORT_LABEL[level]);
+    effort.disabled = noReasoning;
+    effort.dataset.unsupported = String(noReasoning);
     // 选了档位但代理没生效：变暗，提示看部署方法
-    effort.dataset.inactive = String(level !== 'auto' && !active);
-    effort.title = `${at('effortTitle')}: ${at(EFFORT_LABEL[level])}${level !== 'auto' && !active ? ` · ${at('effortInactive')}` : ''}`;
+    effort.dataset.inactive = String(!noReasoning && level !== 'auto' && !active);
+    effort.title = noReasoning
+      ? at('effortUnsupported', { model: modelLabel })
+      : `${at('effortTitle')}: ${at(EFFORT_LABEL[level])}${level !== 'auto' && !active ? ` · ${at('effortInactive')}` : ''}`;
     effort.hidden = !config?.configured;
+    const on = webSearchEnabled();
+    const available = webSearchAvailable();
+    const noSearch = support.search === 'no';
+    search.hidden = !config?.configured;
+    search.disabled = noSearch;
+    search.dataset.unsupported = String(noSearch);
+    search.setAttribute('aria-pressed', String(on && available && !noSearch));
+    search.dataset.inactive = String(on && !available && !noSearch);
+    const searchLabel = search.querySelector('.cs-bar-label');
+    if (searchLabel) searchLabel.textContent = at('searchLabel');
+    search.title = noSearch
+      ? at('searchUnsupported', { model: modelLabel })
+      : !available
+        ? at(on ? 'searchUnavailableOn' : 'searchUnavailable')
+        : at(on ? 'searchOn' : 'searchOff');
     renderRing(ring, p);
     if (popover && popover.anchor === ring) popover.refill();
   };
@@ -536,7 +577,18 @@ export function addComposerBar(panel: unknown): void {
   });
   effort.addEventListener('click', () => {
     if (popover?.anchor === effort) return closePopover();
-    void loadAiConfig().then(() => openPopover(effort, 'cs-pop-effort', (box) => fillEffort(box)));
+    void loadAiConfig().then(() => openPopover(effort, 'cs-pop-effort', (box) => fillEffort(box, p)));
+  });
+  search.addEventListener('click', () => {
+    closePopover();
+    // 代理还不支持（没部署、或是旧版本）：先看部署方法；开着的仍可关掉
+    if (!webSearchAvailable() && !webSearchEnabled()) {
+      void loadAiConfig()
+        .then(() => detectProxy())
+        .then(() => (webSearchAvailable() ? setWebSearch(true) : openDeployGuide()));
+      return;
+    }
+    setWebSearch(!webSearchEnabled());
   });
   bindRing(ring, p);
   render();

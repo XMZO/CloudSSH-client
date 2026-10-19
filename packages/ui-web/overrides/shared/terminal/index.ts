@@ -3,8 +3,9 @@
  * 按任意键立即重连（reconnect-countdown.ts）、会话正常结束（exit、空闲超时）后按任意键重新连接的提示。
  *
  * 构建钩子（vite.config.ts）在网页版每创建/销毁一个终端时调用 __cloudsshTerminalCreated / __cloudsshTerminalDisposed，
- * 这里据此设置字体、挂上高亮引擎。
+ * 这里据此设置字体、挂上高亮引擎；WebGL 上下文丢失时调用 __cloudsshWebglLost，这里在页面可见后重新挂上 WebGL 渲染器。
  */
+import { WebglAddon } from '@xterm/addon-webgl';
 import type { Terminal } from '@xterm/xterm';
 import { getActiveTerminalTheme, onTerminalThemeChange } from '../../../upstream/frontend/src/theme';
 import { colorAdjuster, TerminalHighlighter, type CompiledRule } from './highlight-engine';
@@ -67,6 +68,48 @@ export function terminalFor(node: Element | null): Terminal | null {
   return null;
 }
 
+/** 每个终端最近几次重建 WebGL 渲染器的时间 */
+const webglRestores = new WeakMap<Terminal, number[]>();
+const WEBGL_RESTORE_LIMIT = 5;
+const WEBGL_RESTORE_WINDOW = 10 * 60_000;
+
+/**
+ * WebGL 上下文丢失后（安卓切到后台、显存紧张时常见）网页版只释放渲染器，终端从此退回 DOM 渲染：每个字符格
+ * 都是页面元素，刷屏时整屏重排，小字号格子多时尤其卡。页面回到前台后过一会儿重新挂上 WebGL 渲染器；
+ * 十分钟内丢了 5 次就不再重试（这台设备的 WebGL 不稳定，留在 DOM 渲染）
+ */
+function restoreWebgl(term: Terminal): void {
+  const now = Date.now();
+  const recent = (webglRestores.get(term) ?? []).filter((time) => now - time < WEBGL_RESTORE_WINDOW);
+  if (recent.length >= WEBGL_RESTORE_LIMIT) return;
+  webglRestores.set(term, [...recent, now]);
+  const attach = () => {
+    // 终端已经关掉了
+    if (!highlighters.has(term) || !term.element?.isConnected) return;
+    try {
+      const addon = new WebglAddon();
+      addon.onContextLoss(() => {
+        addon.dispose();
+        restoreWebgl(term);
+      });
+      term.loadAddon(addon);
+    } catch (error) {
+      console.warn('[cloudssh] webgl restore', error);
+    }
+  };
+  const later = () => window.setTimeout(attach, 800);
+  if (document.visibilityState === 'visible') {
+    later();
+    return;
+  }
+  const onVisible = () => {
+    if (document.visibilityState !== 'visible') return;
+    document.removeEventListener('visibilitychange', onVisible);
+    later();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+}
+
 /** 字体在终端打开之后才加载完时，让 xterm 重新测量字宽并按新字宽重排 */
 async function loadFont(): Promise<void> {
   try {
@@ -92,9 +135,11 @@ export function installTerminalEnhancements(): void {
   const scope = globalThis as {
     __cloudsshTerminalCreated?: (term: Terminal) => void;
     __cloudsshTerminalDisposed?: (term: Terminal) => void;
+    __cloudsshWebglLost?: (term: Terminal) => void;
   };
   scope.__cloudsshTerminalCreated = onCreated;
   scope.__cloudsshTerminalDisposed = onDisposed;
+  scope.__cloudsshWebglLost = restoreWebgl;
   // 服务器端断开时自动关闭标签（可开关，见 ../session-end.ts）
   installSessionEnd();
   // 等待自动重连时：构建钩子在网页版写出“x 秒后重连”之后调用，把那一行换成精确到毫秒的实时倒计时并附上按键提示

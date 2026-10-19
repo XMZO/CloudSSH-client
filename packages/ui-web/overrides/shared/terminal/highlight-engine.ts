@@ -7,6 +7,12 @@
  * - 只给没有颜色的字符上色（ls、grep 等程序自己着色的部分保持原样）；反色的字符也不动
  * - 全屏程序（备用缓冲区，例如 vim、htop、less）里不高亮
  * - 同一字符只取最先匹配的规则；隐藏的标签页不扫描，切回来时再补
+ *
+ * 性能：每处高亮都是 xterm 叠在终端上的一个页面元素，终端每次重绘 xterm 都要把它们逐个重新摆放。刷屏（tail -f、
+ * 编译输出）时这会变成每帧重排几百个元素，手机上、小字号（一屏格子多、高亮多）时明显卡顿。所以：
+ * - 短时间内换行很多（刷屏）时先撤掉高亮，输出停下 300ms 后再补
+ * - 一屏最多 300 处，再多只留靠下的（最新的输出）
+ * - 只在终端从隐藏变为显示后的那次重绘时补扫，平时的重绘（光标闪烁等）不触发扫描
  */
 import type { IDecoration, IMarker, Terminal } from '@xterm/xterm';
 
@@ -19,6 +25,13 @@ export interface CompiledRule {
 const MAX_LINE_CHARS = 4000;
 /** 连续输出时最多每 50ms 扫描一次 */
 const SCAN_DELAY = 50;
+/** 300ms 内换行达到 15 次算刷屏 */
+const BURST_WINDOW = 300;
+const BURST_LINES = 15;
+/** 刷屏停下后等这么久再高亮 */
+const QUIET_DELAY = 300;
+/** 一屏最多这么多处高亮 */
+const MAX_DECORATIONS = 300;
 
 interface Entry {
   marker: IMarker;
@@ -38,6 +51,12 @@ export class TerminalHighlighter {
   private timer = 0;
   private disposed = false;
   private readonly listeners: { dispose(): void }[];
+  /** 刷屏检测：当前窗口的起点与换行数；刷屏状态持续到这个时间 */
+  private windowStart = 0;
+  private windowLines = 0;
+  private burstUntil = 0;
+  /** 上次因为终端隐藏没扫描：下次重绘（切回来）时补上 */
+  private hiddenSkipped = false;
 
   constructor(
     private readonly term: Terminal,
@@ -46,17 +65,59 @@ export class TerminalHighlighter {
   ) {
     const schedule = () => this.schedule();
     this.listeners = [
-      term.onWriteParsed(schedule),
+      term.onLineFeed(() => this.countLine()),
+      term.onWriteParsed(() => this.onOutput()),
       term.onScroll(schedule),
       term.onResize(schedule),
       term.buffer.onBufferChange(schedule),
-      // 切换标签后终端重新显示时会重绘一次；装饰没变时扫描结果相同，不会再触发重绘
-      term.onRender(schedule),
+      // 切换标签后终端重新显示时会重绘一次：只有之前因为隐藏没扫描时才补扫
+      term.onRender(() => {
+        if (this.hiddenSkipped) this.schedule();
+      }),
     ];
   }
 
+  /** 每次换行调用（很频繁，只做计数） */
+  private countLine(): void {
+    const now = performance.now();
+    if (now - this.windowStart > BURST_WINDOW) {
+      this.windowStart = now;
+      this.windowLines = 0;
+    }
+    if (++this.windowLines >= BURST_LINES) this.burstUntil = now + QUIET_DELAY;
+  }
+
+  private bursting(): boolean {
+    return performance.now() < this.burstUntil;
+  }
+
+  private onOutput(): void {
+    if (!this.bursting()) {
+      this.schedule();
+      return;
+    }
+    // 刷屏：先撤掉高亮，停下来再补
+    if (this.entries.length) this.clear();
+    this.later(QUIET_DELAY);
+  }
+
+  /** 重新计时（刷屏时每次输出都往后推） */
+  private later(delay: number): void {
+    if (this.disposed) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => {
+      this.timer = 0;
+      this.scan();
+    }, delay);
+  }
+
   schedule(): void {
-    if (this.disposed || this.timer) return;
+    if (this.disposed) return;
+    if (this.bursting()) {
+      this.later(QUIET_DELAY);
+      return;
+    }
+    if (this.timer) return;
     this.timer = window.setTimeout(() => {
       this.timer = 0;
       this.scan();
@@ -89,8 +150,17 @@ export class TerminalHighlighter {
     const term = this.term;
     const element = term.element;
     if (this.disposed || !element) return;
-    // 隐藏的标签页（display:none）不扫描，保留现有装饰
-    if (!element.isConnected || element.offsetParent === null) return;
+    // 还在刷屏：等停下来
+    if (this.bursting()) {
+      this.later(QUIET_DELAY);
+      return;
+    }
+    // 隐藏的标签页（display:none）不扫描，保留现有装饰，切回来重绘时补上
+    if (!element.isConnected || element.offsetParent === null) {
+      this.hiddenSkipped = true;
+      return;
+    }
+    this.hiddenSkipped = false;
     const buffer = term.buffer.active;
     const rules = this.rules();
     if (!rules.length || buffer.type === 'alternate') {
@@ -98,7 +168,9 @@ export class TerminalHighlighter {
       return;
     }
 
-    const spans = this.collect(rules);
+    let spans = this.collect(rules);
+    // 太多时只留靠下的（最新的输出），免得一屏几百个装饰元素拖慢重绘
+    if (spans.length > MAX_DECORATIONS) spans = spans.sort((a, b) => b.row - a.row).slice(0, MAX_DECORATIONS);
     const wanted = new Map<string, Span>();
     for (const span of spans) wanted.set(`${span.row}:${span.x}:${span.width}:${span.color}`, span);
 

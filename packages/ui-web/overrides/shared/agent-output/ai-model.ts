@@ -1,16 +1,18 @@
 /**
- * AI 模型与思考深度（电脑与手机共用，不改 CloudSSH 的 Worker）。
+ * AI 模型、思考深度与联网搜索（电脑与手机共用，不改 CloudSSH 的 Worker）。
  *
  * 模型存在 Worker 的 AI 配置里（GET / PUT /api/ai/config，每个用户一份、所有服务器共用），这里读出来显示在 AI 面板
  * 输入框下方并可直接切换；模型列表来自 POST /api/ai/models（只传已保存的接口地址，Worker 用已存的密钥去取，
  * 换地址必须带新密钥，这里不碰密钥）。
  *
- * 思考深度：Worker 组请求体时只带 model / input / tools 等固定字段（responses-client.ts 明确不让调用方塞别的参数），
- * 不会带 reasoning.effort。客户端能影响请求的只有模型名、消息内容和接口地址，所以在 Worker 与模型接口之间加一层：
- * 思考深度代理（tools/reasoning-proxy，一个独立的小 Worker，AI 设置里的接口地址填它）。客户端在每条消息末尾附一个
- * 标记 [cloudssh-reasoning:high]，代理转发前删掉所有标记，按最后一个给请求加上 reasoning.effort。
- * 每条消息各自带标记，所以随时切换、不用开新会话；“自动”的标记表示不加，用服务商默认。
- * 只有检测到代理时才附标记（GET 接口地址/cloudssh-reasoning），没有代理时标记会被原样发给模型，所以不附。
+ * 思考深度与联网搜索：Worker 组请求体时只带 model / input / tools 等固定字段（responses-client.ts 明确不让调用方塞
+ * 别的参数），不会带 reasoning.effort，也不会加模型自己的搜索工具。客户端能影响请求的只有模型名、消息内容和接口地址，
+ * 所以在 Worker 与模型接口之间加一层：AI 增强代理（tools/reasoning-proxy，一个独立的小 Worker，AI 设置里的接口地址
+ * 填它）。客户端在每条消息末尾附指令标签 <cloudssh_reasoning effort="high"/> <cloudssh_web_search mode="on"/>，
+ * 代理转发前删掉所有标签，按最后一个给请求加上 reasoning.effort、模型的原生搜索工具（并把 Worker 不认的搜索条目
+ * 从结果里去掉）。每条消息各自带标签，所以随时切换、不用开新会话。
+ * 只有检测到代理时才附标签（GET 接口地址/cloudssh-reasoning，返回版本与功能）：没有代理时标签会被原样发给模型。
+ * 0.3.23 部署的版本 1 代理只认 [cloudssh-reasoning:high]；版本 3 起才有联网搜索。
  */
 import { instanceKey } from './instance';
 
@@ -38,6 +40,7 @@ export const EFFORT_LABEL = {
 export type ProxyState = 'ok' | 'no-upstream' | 'absent' | 'checking';
 
 const EFFORT_KEY = 'cloudssh_ai_effort';
+const SEARCH_KEY = 'cloudssh_ai_web_search';
 const CONFIG_TTL = 30_000;
 const MODELS_TTL = 5 * 60_000;
 const PROXY_TTL = 5 * 60_000;
@@ -45,7 +48,7 @@ const PROXY_TTL = 5 * 60_000;
 let cache: { key: string; config: AiConfig | null; at: number } | null = null;
 let loading: Promise<AiConfig | null> | null = null;
 let models: { key: string; list: string[]; at: number } | null = null;
-let proxy: { base: string; state: ProxyState; at: number } | null = null;
+let proxy: { base: string; state: ProxyState; version: number; features: string[]; at: number } | null = null;
 let probing: Promise<ProxyState> | null = null;
 const listeners = new Set<() => void>();
 
@@ -172,19 +175,27 @@ export function detectProxy(force = false): Promise<ProxyState> {
   if (probing) return probing;
   probing = (async () => {
     let state: ProxyState = 'absent';
+    let version = 0;
+    let features: string[] = [];
     try {
       const response = await fetch(`${base.replace(/\/+$/, '')}/cloudssh-reasoning`, {
         cache: 'no-store',
         credentials: 'omit',
         signal: AbortSignal.timeout(6000),
       });
-      const data = response.ok ? ((await response.json().catch(() => null)) as { cloudsshReasoningProxy?: unknown; upstream?: unknown } | null) : null;
-      if (data?.cloudsshReasoningProxy === 1) state = data.upstream === false ? 'no-upstream' : 'ok';
+      const data = response.ok
+        ? ((await response.json().catch(() => null)) as { cloudsshReasoningProxy?: unknown; upstream?: unknown; features?: unknown } | null)
+        : null;
+      if (typeof data?.cloudsshReasoningProxy === 'number' && data.cloudsshReasoningProxy >= 1) {
+        version = data.cloudsshReasoningProxy;
+        state = data.upstream === false ? 'no-upstream' : 'ok';
+        features = Array.isArray(data.features) ? data.features.filter((item): item is string => typeof item === 'string') : ['reasoning'];
+      }
     } catch {
       // 不是代理、或访问不到
     }
-    const changed = proxy?.base !== base || proxy.state !== state;
-    proxy = { base, state, at: Date.now() };
+    const changed = proxy?.base !== base || proxy.state !== state || proxy.features.join() !== features.join();
+    proxy = { base, state, version, features, at: Date.now() };
     if (changed) notifyAll();
     return state;
   })().finally(() => {
@@ -193,9 +204,75 @@ export function detectProxy(force = false): Promise<ProxyState> {
   return probing;
 }
 
-/** 附在每条消息末尾的标记（代理没生效时为空串） */
-export function reasoningMarker(): string {
-  return proxyState() === 'ok' ? `[cloudssh-reasoning:${currentEffort()}]` : '';
+// ---------- 联网搜索 ----------
+
+export function webSearchEnabled(): boolean {
+  try {
+    return localStorage.getItem(SEARCH_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setWebSearch(enabled: boolean): void {
+  try {
+    if (enabled) localStorage.setItem(SEARCH_KEY, '1');
+    else localStorage.removeItem(SEARCH_KEY);
+  } catch {
+    // 存不下只在本次生效
+  }
+  notifyAll();
+}
+
+/** 代理支持联网搜索（版本 3 起，且没用 WEB_SEARCH=off 关掉） */
+export function webSearchAvailable(): boolean {
+  return proxyState() === 'ok' && !!proxy?.features.includes('web_search');
+}
+
+// ---------- 模型支持哪些 ----------
+
+/** yes 已知支持；no 已知不支持（按钮变灰、消息里不带）；unknown 认不出的模型名（照常可选，接口不认时代理 / 提示兜底） */
+export type Support = 'yes' | 'no' | 'unknown';
+
+/** 去掉 OpenRouter 式的厂商前缀（deepseek/deepseek-chat）和 :online 之类的后缀 */
+function modelKey(model: string): string {
+  return model.trim().toLowerCase().replace(/^.*\//, '').replace(/:[a-z-]+$/, '');
+}
+
+/** 没有思考深度档位（reasoning.effort）的：DeepSeek、通义、智谱、Kimi 等国产模型，开源模型，GPT-4 系列等非推理模型 */
+const NO_REASONING =
+  /deepseek|^ds-|qwen|qwq|glm|kimi|moonshot|doubao|ernie|hunyuan|minimax|abab|baichuan|spark|yi-|llama|mistral|mixtral|codestral|gemma|phi-|command-r|gpt-4o|gpt-4\.1|^gpt-4(-|$)|gpt-3\.5|chatgpt|gemini-1\.|gemini-2\.0|claude-3-(5|haiku|opus|sonnet)|claude-3\.5/;
+/** 有思考深度档位的：OpenAI 推理模型（o 系列、GPT-5、gpt-oss）、Grok 推理模型 */
+const REASONING = /^o[1-9](-|$)|gpt-5|gpt-oss|grok-3-mini|grok-4/;
+/** 没有原生联网搜索的：国产与开源模型、老的 GPT、o1 / o3-mini */
+const NO_SEARCH =
+  /deepseek|^ds-|qwen|qwq|glm|kimi|moonshot|doubao|ernie|hunyuan|minimax|abab|baichuan|spark|yi-|llama|mistral|mixtral|codestral|gemma|phi-|command-r|gpt-3\.5|^gpt-4(-|$)|^o1(-|$)|^o3-mini|gpt-oss/;
+/** 有原生联网搜索的：GPT-4o / 4.1 / 5、o3、o4-mini、Claude、Gemini、Grok、Perplexity */
+const SEARCH = /gpt-4o|gpt-4\.1|gpt-5|^o3(-|$)|^o4-mini|claude|gemini|grok|sonar|perplexity/;
+
+export function modelSupport(model = currentAiConfig()?.model ?? ''): { reasoning: Support; search: Support } {
+  const key = modelKey(model);
+  if (!key) return { reasoning: 'unknown', search: 'unknown' };
+  return {
+    // gpt-5-chat 这类聊天版不是推理模型
+    reasoning: /gpt-5[\d.]*-chat/.test(key) ? 'no' : REASONING.test(key) ? 'yes' : NO_REASONING.test(key) ? 'no' : 'unknown',
+    search: NO_SEARCH.test(key) ? 'no' : SEARCH.test(key) ? 'yes' : 'unknown',
+  };
+}
+
+/**
+ * 附在每条消息末尾的指令标签（代理没生效时为空串）：思考深度（旧版代理用旧写法）+ 联网搜索开关（代理支持时）。
+ * search 为 false 时这一条不搜索（压缩上下文写摘要时）
+ */
+export function proxyDirectives(options: { search?: boolean } = {}): string {
+  if (proxyState() !== 'ok') return '';
+  // 当前模型已知不支持的：思考深度按自动（不加参数）、不搜索
+  const support = modelSupport();
+  const effort = support.reasoning === 'no' ? 'auto' : currentEffort();
+  const tags = [(proxy?.version ?? 0) >= 2 ? `<cloudssh_reasoning effort="${effort}"/>` : `[cloudssh-reasoning:${effort}]`];
+  const search = support.search !== 'no' && (options.search ?? webSearchEnabled());
+  if (webSearchAvailable()) tags.push(`<cloudssh_web_search mode="${search ? 'on' : 'off'}"/>`);
+  return tags.join(' ');
 }
 
 // AI 设置弹窗（网页版 ai-config.ts）保存后重新读

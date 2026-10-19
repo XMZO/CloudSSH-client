@@ -63,6 +63,9 @@ export interface MeterState {
   /** 客户端压缩次数、Worker 自己整理的次数（这个面板） */
   compactions: number;
   workerCompactions: number;
+  /** 这个面板累计的输入 token 与其中缓存命中的部分（接口回报的） */
+  totalInput: number;
+  totalCached: number;
 }
 
 const meters = new WeakMap<object, MeterState>();
@@ -88,6 +91,8 @@ export function meterOf(panel: object): MeterState {
       estimated: false,
       compactions: 0,
       workerCompactions: 0,
+      totalInput: 0,
+      totalCached: 0,
     };
     meters.set(panel, state);
   }
@@ -194,7 +199,13 @@ function settle(state: MeterState, usage: Usage | null): void {
     state.estimated = true;
   }
   state.projected = 0;
-  if (usage) state.last = usage;
+  if (usage) {
+    state.last = usage;
+    if (usage.reportedCalls) {
+      state.totalInput += usage.input;
+      state.totalCached += Math.min(usage.cached, usage.input);
+    }
+  }
 }
 
 /** 现在压缩的话，下一条消息时大约剩多少（底 + 摘要 + 重新附上的内容；摘要按 summaryBytes 估） */
@@ -252,6 +263,56 @@ export function meterFrame(panel: object, frame: Record<string, unknown>): void 
 export function meterSent(panel: unknown, message: string): void {
   if (!panel || typeof panel !== 'object') return;
   meterOf(panel).sentBytes += bytesOf(message);
+}
+
+/**
+ * 新会话里除了底（系统提示、工具、观察）和这条消息，还能放多少字节（出错接续的回顾按这个裁）；
+ * 留出新的终端快照等观察与一点余量
+ */
+export function roomFor(panel: object, messageBytes: number): number {
+  return Math.floor(WORKER_LIMIT - meterOf(panel).base * ratio() - messageBytes - OBS_MAX_BYTES - 1500);
+}
+
+/**
+ * Worker 报上下文超限、整理失败（responses_schema / responses_budget）时调用：要是新会话第一次调用就超了，
+ * 说明底（系统提示、服务器记忆、终端快照等）加这条消息已经到线，把底的估计往上调
+ */
+export function meterOverflowed(panel: object): void {
+  const state = meterOf(panel);
+  if (state.turns || state.runExecuted) return;
+  const atLeast = (WORKER_LIMIT - state.runSent) / ratio();
+  if (atLeast > state.base) state.base = Math.round(atLeast);
+}
+
+// ---------- 写不出 Worker 检查点（严格 JSON）的模型 ----------
+
+const WEAK_KEY = 'cloudssh_ai_weak_checkpoint';
+
+function weakModels(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(WEAK_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 这个模型（默认当前模型）整理上下文时交不出 Worker 要的 JSON：上下文只能靠客户端提前压缩 */
+export function isWeakCheckpoint(model = modelKey()): boolean {
+  return !!model && weakModels().includes(model);
+}
+
+/** 记下来；第一次记下时返回 true（用来只提醒一次） */
+export function markWeakCheckpoint(model = modelKey()): boolean {
+  if (!model) return false;
+  const list = weakModels();
+  if (list.includes(model)) return false;
+  try {
+    localStorage.setItem(WEAK_KEY, JSON.stringify([...list, model].slice(-50)));
+  } catch {
+    // 存不下只影响这次
+  }
+  return true;
 }
 
 /** 客户端压缩后：Worker 端已重置，下一条消息会带上摘要（字节） */

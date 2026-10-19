@@ -96,15 +96,25 @@ function highlight(root: Element): void {
   }
 }
 
-/** 网页版流式输出时整段重写回复的 HTML：合并到下一帧统一处理 */
-function watchReplies(): void {
-  const pending = new Set<Element>();
-  let frame = 0;
-  const flush = () => {
-    frame = 0;
-    for (const root of pending) if (root.isConnected) highlight(root);
-    pending.clear();
-  };
+/**
+ * 网页版流式输出时整段重写回复的 HTML：合并到下一帧统一处理。
+ * 只盯每个 AI 面板（面板渲染完时由构建钩子交过来），不盯整个页面：终端的高亮装饰、手机端的各种浮层
+ * 一刻不停地增删元素，整页监听会让每次终端刷新都多跑一遍回调（手机上、小字号时尤其明显）
+ */
+const pendingReplies = new Set<Element>();
+let replyFrame = 0;
+const watchedPanels = new WeakSet<Element>();
+
+function flushReplies(): void {
+  replyFrame = 0;
+  for (const root of pendingReplies) if (root.isConnected) highlight(root);
+  pendingReplies.clear();
+}
+
+function watchReplies(panelRoot: Element): void {
+  if (watchedPanels.has(panelRoot)) return;
+  watchedPanels.add(panelRoot);
+  const pending = pendingReplies;
   new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target.parentElement;
@@ -116,8 +126,9 @@ function watchReplies(): void {
         node.querySelectorAll('.agent-md-content').forEach((child) => pending.add(child));
       }
     }
-    if (pending.size && !frame) frame = requestAnimationFrame(flush);
-  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    if (pending.size && !replyFrame) replyFrame = requestAnimationFrame(flushReplies);
+  }).observe(panelRoot, { childList: true, subtree: true, characterData: true });
+  panelRoot.querySelectorAll('.agent-md-content').forEach((root) => highlight(root));
 }
 
 /** AI 面板标题栏里加“回复风格”按钮（每个会话标签各有一个 AI 面板，id 相同） */
@@ -173,6 +184,8 @@ export function installAgentOutput(): void {
     historyPanelReady(panel);
     addComposerBar(panel);
     installCompactCommand(panel);
+    const root = (panel as { panelEl?: HTMLElement | null } | null)?.panelEl;
+    if (root) watchReplies(root);
   };
   (globalThis as { __cloudsshAgentFrame?: (panel: unknown, frame: Record<string, unknown>) => boolean }).__cloudsshAgentFrame = (
     panel,
@@ -212,9 +225,9 @@ export function installAgentOutput(): void {
   installComposerBar();
   installAiRemote();
   const start = () => {
-    watchReplies();
     addHeaderButtons();
-    document.querySelectorAll('.agent-md-content').forEach((root) => highlight(root));
+    // 构建钩子之前就已经存在的面板（一般没有）
+    document.querySelectorAll<HTMLElement>('[id="agent-panel"]').forEach((root) => watchReplies(root));
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();

@@ -6,25 +6,34 @@
  * - 在当前会话里让 AI 自己写一份摘要（普通文字，不要求格式；对话里不显示，换成一张带进度条的卡片），
  *   然后重置 Worker 端会话，下一条消息前附上这份摘要，在新会话里接着聊
  * - 手动：上下文占用弹窗里的“立即压缩”，或在输入框发 /compact
- * - 自动：一轮正常结束后估算的占用到了七成、而且压缩确实能腾出地方时（可关）
+ * - 自动：一轮正常结束后估算的占用到了七成、而且压缩确实能腾出地方时（可关）；
+ *   发消息前估计加上这条就要到线时，先压缩再发（同一个开关）
+ * - 整理上下文时交不出 Worker 要的 JSON 的模型（小模型常见，见 meter.ts isWeakCheckpoint）：Worker 自己整理必然失败，
+ *   所以更早压缩（五成五、发送前八成）
  * - 切换模型 / 思考深度前：Worker 会话绑定了模型，换了就得开新会话，先用旧模型压缩
  * 模型没写出摘要（多半是 Worker 自己先整理时出错）就改用面板里的对话要点，同样重置后接着聊；用户点停止则什么都不变。
  */
 import { getLocale } from '../../../upstream/frontend/src/i18n';
 import { notify } from '../../../upstream/frontend/src/ui-feedback';
-import { currentEffort, EFFORT_LABEL, loadAiConfig, proxyState, reasoningMarker, saveModel } from './ai-model';
+import { currentEffort, EFFORT_LABEL, loadAiConfig, modelSupport, proxyDirectives, proxyState, saveModel } from './ai-model';
 import { at } from './i18n';
-import { afterCompact, bytesOf, meterCompacted, meterOf, percentOf, ratio, WORKER_LIMIT } from './meter';
+import { afterCompact, bytesOf, isWeakCheckpoint, meterCompacted, meterOf, percentOf, ratio, WORKER_LIMIT } from './meter';
 import { expectReset } from './outbound';
 import { buildRecap, clearSummaryBase, clipBytes, RECAP_BYTES, setSummaryBase, summaryBaseOf, usable, type PanelInternals } from './recovery';
 
-export type CompactReason = 'manual' | 'auto' | 'switch';
+export type CompactReason = 'manual' | 'auto' | 'switch' | 'presend';
 export type CompactResult = 'done' | 'fallback' | 'cancelled' | 'skipped';
 
 const AUTO_KEY = 'cloudssh_ai_auto_compact';
 /** 自动压缩：估算占用到这里、且压缩能腾出的部分（相对整理线）超过 AUTO_GAIN 才做 */
 const AUTO_AT = 0.7;
+const AUTO_AT_WEAK = 0.55;
 const AUTO_GAIN = 0.15;
+/** 发送前：估计加上这条消息（含附加内容、新的观察）会到整理线的这么多时先压缩 */
+const PRESEND_AT = 0.92;
+const PRESEND_AT_WEAK = 0.8;
+/** 估计的附加内容与新观察（字节） */
+const PRESEND_EXTRA = 4500;
 /** 摘要的长度上限（字节）；进度条按写到多少字算写完 */
 const SUMMARY_BYTES = 7000;
 const EXPECTED_CHARS = 1500;
@@ -123,7 +132,8 @@ class CompactCard {
     this.root.dataset.state = 'running';
     this.root.setAttribute('role', 'status');
     const head = el('div', 'cs-compact-head');
-    head.append(icon('compress'), el('span', '', at(reason === 'switch' ? 'compactRunningSwitch' : 'compactRunning')));
+    const title = reason === 'switch' ? 'compactRunningSwitch' : reason === 'presend' ? 'compactRunningPresend' : 'compactRunning';
+    head.append(icon('compress'), el('span', '', at(title)));
     this.track = el('div', 'cs-compact-track');
     this.track.setAttribute('role', 'progressbar');
     this.track.setAttribute('aria-valuemin', '0');
@@ -198,8 +208,8 @@ export function compactPanel(panel: unknown, reason: CompactReason): Promise<Com
     };
     runs.set(panel, run);
     changed(panel);
-    // 写摘要也按当前选的思考深度（有思考深度代理时）
-    const marker = reasoningMarker();
+    // 写摘要也按当前选的思考深度，但不联网搜索（有 AI 增强代理时）
+    const marker = proxyDirectives({ search: false });
     panel.wsSend!(
       JSON.stringify({
         type: 'agent_start',
@@ -322,7 +332,7 @@ export function autoCompactCheck(panel: unknown, frame: Record<string, unknown>)
     if (panel.isAgentRunning || runs.has(panel) || state.turns < 2) return;
     // 压缩后还剩底、摘要和重新附上的内容：腾不出多少地方就不压
     const gain = ((state.tokens - afterCompact(state)) * ratio()) / WORKER_LIMIT;
-    if (percentOf(state) >= AUTO_AT && gain >= AUTO_GAIN) void compactPanel(panel, 'auto');
+    if (percentOf(state) >= (isWeakCheckpoint() ? AUTO_AT_WEAK : AUTO_AT) && gain >= AUTO_GAIN) void compactPanel(panel, 'auto');
   }, 80);
 }
 
@@ -335,12 +345,36 @@ export function noticeLine(panel: PanelInternals, text: string, glyph = 'info'):
   panel.scrollToBottom?.();
 }
 
-/** 代理给请求加了思考深度、接口报 400 / 422：多半是这个模型不支持 reasoning.effort（或不支持这一档），提示一下 */
+/** 已经提示过“连不上代理”的面板：同一个会话只提示一次 */
+const unreachableHinted = new WeakSet<object>();
+const contextHinted = new WeakSet<object>();
+
+/**
+ * 接口出错时的提示：
+ * - 400 / 422 且经代理带了思考深度：多半是这个模型不支持 reasoning.effort（或不支持这一档）
+ * - 其他 400 / 413 / 422（对话已经跑过几轮）：小模型自己的上下文窗口可能比 Worker 的预算还小，对话超出了它的上限
+ * - 接了代理时 5xx、403 或请求发不出去：可能是 CloudSSH 的 Worker 访问不到代理（Cloudflare 不允许同一区域内的
+ *   Worker 互相请求，错误 1042 / 522）。设备检测代理是直接访问的，能显示“已生效”，Worker 那边却可能连不上
+ */
 export function reasoningHintCheck(panel: unknown, frame: Record<string, unknown>): void {
-  if (frame.subType !== 'error' || frame.code !== 'responses_http' || !usable(panel)) return;
-  if (![400, 422].includes(Number(frame.status)) || proxyState() !== 'ok') return;
+  if (frame.subType !== 'error' || !usable(panel)) return;
+  const status = Number(frame.status);
+  const proxied = proxyState() === 'ok';
   const effort = currentEffort();
-  if (effort !== 'auto') setTimeout(() => noticeLine(panel, at('effortRejected', { effort: at(EFFORT_LABEL[effort]) }), 'psychology'), 0);
+  if (frame.code === 'responses_http' && (status === 400 || status === 413 || status === 422)) {
+    if (proxied && status !== 413 && effort !== 'auto' && modelSupport().reasoning !== 'no') {
+      setTimeout(() => noticeLine(panel, at('effortRejected', { effort: at(EFFORT_LABEL[effort]) }), 'psychology'), 0);
+    } else if (meterOf(panel).turns >= 1 && !contextHinted.has(panel)) {
+      contextHinted.add(panel);
+      setTimeout(() => noticeLine(panel, at('contextRejected', { status }), 'info'), 0);
+    }
+    return;
+  }
+  if (!proxied) return;
+  const unreachable = (frame.code === 'responses_http' && (status >= 500 || status === 403)) || frame.code === 'responses_failed';
+  if (!unreachable || unreachableHinted.has(panel)) return;
+  unreachableHinted.add(panel);
+  setTimeout(() => noticeLine(panel, at('proxyUnreachable'), 'lan'), 0);
 }
 
 /** Worker 自己整理了上下文（检查点）：对话里说一声 */
@@ -378,17 +412,58 @@ export async function switchModel(panel: unknown, target: string): Promise<boole
 }
 
 /** 输入框里发 /compact（或 /压缩）：不发给 AI，直接压缩 */
+/** 发这条消息会不会让 Worker 整理（而压缩又确实能腾出地方） */
+function needsPresend(panel: object, text: string): boolean {
+  const state = meterOf(panel);
+  const tokens = state.tokens || state.projected;
+  if (!autoCompactEnabled() || state.turns < 1 || !tokens) return false;
+  const r = ratio();
+  const next = tokens * r + bytesOf(text) + PRESEND_EXTRA;
+  const gain = (tokens - afterCompact(state)) * r;
+  return next >= WORKER_LIMIT * (isWeakCheckpoint() ? PRESEND_AT_WEAK : PRESEND_AT) && gain >= WORKER_LIMIT * 0.1;
+}
+
 export function installCompactCommand(panel: unknown): void {
   const root = (panel as { panelEl?: HTMLElement | null } | null)?.panelEl;
   const input = root?.querySelector<HTMLTextAreaElement>('#agent-input');
+  const send = root?.querySelector<HTMLButtonElement>('#agent-send-btn');
   if (!input) return;
+  /** 压缩完替用户点发送时不再拦 */
+  let bypass = false;
+  const setInput = (value: string) => {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
   const run = (event: Event) => {
-    if (!usable(panel) || panel.isAgentRunning || !/^\/(compact|压缩|壓縮)$/i.test(input.value.trim())) return;
+    if (bypass || !usable(panel) || panel.isAgentRunning) return;
+    const text = input.value.trim();
+    if (!text) return;
+    if (/^\/(compact|压缩|壓縮)$/i.test(text)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setInput('');
+      void compactPanel(panel, 'manual');
+      return;
+    }
+    // 上下文快满：先压缩，压完替用户发出这条（用户点停止则把内容放回输入框，不发）
+    if (!needsPresend(panel, text)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    input.value = '';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    void compactPanel(panel, 'manual');
+    const draft = input.value;
+    setInput('');
+    void compactPanel(panel, 'presend').then((result) => {
+      setInput(draft);
+      if (result === 'cancelled' || !send) {
+        input.focus();
+        return;
+      }
+      bypass = true;
+      try {
+        send.click();
+      } finally {
+        bypass = false;
+      }
+    });
   };
   input.addEventListener(
     'keydown',
@@ -397,5 +472,5 @@ export function installCompactCommand(panel: unknown): void {
     },
     true
   );
-  root?.querySelector('#agent-send-btn')?.addEventListener('click', run, true);
+  send?.addEventListener('click', run, true);
 }

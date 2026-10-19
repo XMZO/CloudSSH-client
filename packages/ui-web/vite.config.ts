@@ -158,6 +158,13 @@ const COMMON_HOOKS: Hook[] = [
     anchor: '  dispose(): void {\n    this.disconnect();\n',
     inject: '    (globalThis as any).__cloudsshTerminalDisposed?.(this.terminal);\n',
   },
+  {
+    // WebGL 上下文丢失（安卓切到后台、显存紧张时常见）后网页版只释放渲染器，终端就一直退回慢得多的 DOM 渲染
+    // （每格一个元素，小字号时尤其卡）。交给 overrides/shared/terminal 在页面可见时重新挂上 WebGL 渲染器
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '        this.webglAddon.dispose();\n',
+    inject: '        (globalThis as any).__cloudsshWebglLost?.(this.terminal);\n',
+  },
   // 等待自动重连时：“x 秒后重连”换成精确到毫秒的实时倒计时（overrides/shared/terminal/reconnect-countdown.ts），
   // 并可按任意键立即重连。两处排定重连的方法里用一个同名的局部 setTimeout 照常排定，同时记下“立即执行”的入口
   // （键盘输入在 Shell 未就绪时调用它），再把网页版刚写的那一行交给倒计时，文案参数与网页版那一行相同。
