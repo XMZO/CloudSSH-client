@@ -22,7 +22,8 @@ interface Window {
     update?: {
       status(): Promise<CloudSSHUpdateStatus>;
       check(): Promise<CloudSSHUpdateStatus>;
-      install(): Promise<boolean>;
+      /** confirmed：界面已经用自己的弹窗问过（客户端不再弹系统对话框；旧版客户端忽略，照样弹） */
+      install(confirmed?: boolean): Promise<boolean>;
       onStatus(callback: (status: CloudSSHUpdateStatus) => void): void;
     };
     vault?: {

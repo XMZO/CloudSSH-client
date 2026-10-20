@@ -16,7 +16,7 @@ import {
 } from '@cloudssh/core';
 import { copyTextToClipboard } from '../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../upstream/frontend/src/host-display';
-import { notify } from '../../upstream/frontend/src/ui-feedback';
+import { confirmAction, notify } from '../../upstream/frontend/src/ui-feedback';
 import {
   activeServerId,
   canConnect,
@@ -526,7 +526,7 @@ function showItemMenu(event: MouseEvent, server: ServerConfig): void {
 // ---------- 左下角版本号与自动更新 ----------
 // 平时是淡色的版本号，点一下检查更新；有新版本时后台下载（显示“→ 新版本”、小进度条与百分比，悬停看大小与速度），
 // 下载好变成“重启更新到 vX”，
-// 点了由客户端确认后重启安装。旧版客户端没有 update 接口：只显示版本号
+// 点了先用网页版的弹窗确认（跟随主题），再由客户端重启安装。旧版客户端没有 update 接口：只显示版本号
 
 let appVersion = '';
 let updateStatus: CloudSSHUpdateStatus = { state: 'idle' };
@@ -597,10 +597,32 @@ function formatBytes(bytes: number): string {
   return bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+/** 正在问“重启更新吗”：再点版本号不再叠一个弹窗 */
+let confirmingInstall = false;
+
+/** 重启更新前用网页版自己的弹窗确认（跟随配色主题）；确认后告诉客户端已经问过，它就不再弹系统对话框 */
+async function confirmInstall(version: string): Promise<void> {
+  const update = window.cloudsshDesktop?.update;
+  if (!update || confirmingInstall) return;
+  confirmingInstall = true;
+  try {
+    const ok = await confirmAction({
+      title: st('updateConfirmTitle', { v: version }),
+      message: st('updateConfirmMessage'),
+      confirmText: st('updateConfirmNow'),
+      cancelText: st('updateConfirmLater'),
+      variant: 'info',
+    });
+    if (ok) await update.install(true);
+  } finally {
+    confirmingInstall = false;
+  }
+}
+
 function onVersionClick(): void {
   const update = window.cloudsshDesktop?.update;
   if (!update || updateStatus.state === 'disabled') return;
-  if (updateStatus.state === 'downloaded') return void update.install();
+  if (updateStatus.state === 'downloaded') return void confirmInstall(updateStatus.version).catch(() => undefined);
   if (updateStatus.state === 'downloading' || updateStatus.state === 'checking') return;
   updateStatus = { state: 'checking' };
   renderVersion();

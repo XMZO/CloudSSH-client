@@ -28,7 +28,8 @@ contextBridge.exposeInMainWorld('cloudsshDesktop', {
   update: {
     status: () => ipcRenderer.invoke('desktop:update-status'),
     check: () => ipcRenderer.invoke('desktop:update-check'),
-    install: () => ipcRenderer.invoke('desktop:update-install'),
+    /** confirmed：界面已经用自己的弹窗确认过（只对内置界面生效，其他页面仍弹系统对话框） */
+    install: (confirmed?: boolean) => ipcRenderer.invoke('desktop:update-install', confirmed === true),
     onStatus: (callback: (status: unknown) => void) => {
       ipcRenderer.on('desktop:update-status', (_event, status: unknown) => callback(status));
     },

@@ -100,22 +100,27 @@ export function registerIpc(): void {
     senderInstance(event);
     return getUpdater().check();
   });
-  ipcMain.handle('desktop:update-install', async (event) => {
+  ipcMain.handle('desktop:update-install', async (event, confirmed: unknown) => {
     senderInstance(event);
     const status = getUpdater().status();
     if (status.state !== 'downloaded') return false;
     const window = BrowserWindow.fromWebContents(event.sender);
-    const options = {
-      type: 'question' as const,
-      buttons: ['立即重启更新', '稍后'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'CloudSSH 更新',
-      message: `重启并更新到 v${status.version}？`,
-      detail: '所有窗口会关闭，打开的终端会话会断开。不着急的话，退出客户端时也会自动更新。',
-    };
-    const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-    if (response !== 0) return false;
+    // 内置界面已经用自己的弹窗（跟随主题）问过了；跟随 Worker 的网页、旧界面仍由这里弹系统对话框确认
+    if (!(confirmed === true && hasCustomChrome(window))) {
+      const options = {
+        type: 'question' as const,
+        buttons: ['立即重启更新', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+        // 普通按钮（Windows 默认把自定义按钮画成整行的命令链接，又宽又不像对话框）
+        noLink: true,
+        title: 'CloudSSH 更新',
+        message: `重启并更新到 v${status.version}？`,
+        detail: '所有窗口会关闭，打开的终端会话会断开。不着急的话，退出客户端时也会自动更新。',
+      };
+      const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+      if (response !== 0) return false;
+    }
     markQuitting();
     getUpdater().quitAndInstall();
     return true;
