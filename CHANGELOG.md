@@ -4,12 +4,11 @@
 
 版本号与代号统一由根目录的 `version.json` 管理（见 README“[版本号与版本代号](README.md#版本号与版本代号)”）。代号取自夜空中的亮星：次版本号或主版本号升级时换新代号，修订版沿用原代号。
 
-## [Unreleased]
+## [0.3.33] - 2026-10-20 · 牛郎 Altair
 
 ### 新增
 
 - **MCP 文件与长任务工具**（本机 `cloudssh mcp` 与远程 `mcp http` 都有）：`read_file`（带行号、分段读，走 SFTP 不受 64KB 输出限制，最大 20MB）、`list_dir`、`write_file`（覆盖 / 追加 / 只建新文件；原子替换并沿用原权限与属主）、`edit_file`（精确替换，要求唯一，写回前核对文件没被改过）；`start_job` / `job_status` 在后台跑长任务（`setsid nohup`，断开不影响），查看状态与输出、停止；`exec` 加 `cwd`。改已有文件与危险命令一样，没开完全权限时要 `confirm`
-
 - **远程 MCP：`cloudssh mcp http`**：给 Meta Muse 这类装不了 skill 的云端 AI 用的连接器（公网 HTTPS 的远程 MCP，OAuth 授权），放在一台常开的服务器上经 CloudSSH 操作所有服务器。工具 `list_servers`、`exec`、`copy`；权限 `full` / `ask` / `read-only`（默认只读：只放行查看类命令）；可以把跑它的机器自己排除在外。内置只认一个人的 OAuth 2.1（动态注册、Client ID Metadata Document、口令授权页与锁定、PKCE、刷新令牌轮换）；Docker 部署文件与步骤在 `tools/mcp-remote/`
 
 ### 修复
