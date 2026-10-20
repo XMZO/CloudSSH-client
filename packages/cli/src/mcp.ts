@@ -3,10 +3,11 @@
  * 应用也能用命令行的能力。协议手写，不引入 SDK：
  * - initialize（客户端要的版本认识就用它，否则回最新的）、ping、tools/list、tools/call、notifications/cancelled；
  *   resources/list、prompts/list 回空列表（有的客户端不管声明的能力也会来问）；也接受 JSON-RPC 批量请求
- * - 工具：list_servers、exec、upload、download、copy，直接调 targets / exec / files 的实现。每次调用都重新读 config.json
- *   与登录：桌面客户端同步来的新会话、改过的完全权限与默认超时即时生效；服务器列表缓存 15 秒（list_servers 总是重取）
+ * - 工具：list_servers、exec（可带 cwd）、read_file、list_dir、write_file、edit_file、start_job、job_status、upload、download、
+ *   copy，直接调 targets / exec / files / remote-files 的实现。每次调用都重新读 config.json 与登录：桌面客户端同步来的新会话、
+ *   改过的完全权限与默认超时即时生效；服务器列表缓存 15 秒（list_servers 总是重取）
  * - 危险命令与命令行同一套判定：拦截级一律拒绝；危险命令要 confirm: true（相当于 --yes），完全权限（confirm never）时不用；
- *   copy 覆盖已有目标同样要 confirm
+ *   start_job 的命令同样判定；copy 覆盖已有目标、write_file / edit_file 改已有文件同样要 confirm
  * - 结果有界：整段文字不超过 64KB（与远端输出上限一致），多台时按份额各留输出的末尾
  * - 工具出错（没登录、找不到服务器、命令失败……）返回 isError 结果给模型；工具名不对之类的协议错误返回 JSON-RPC 错误；
  *   单次调用出错、未处理的异常都不会让进程退出
@@ -15,8 +16,8 @@
  * - 带 progressToken 的调用发 notifications/progress：传文件的进度，命令执行中每 5 秒报一次已用时间
  * stdout 只写协议消息；console.log 等改到 stderr，免得复用的代码打日志弄坏协议。
  *
- * 远程模式（cloudssh mcp http，见 mcp-http.ts）：给云端的 AI（例如 Muse 的自定义连接器）用，工具是 list_servers、exec、copy
- * （只读时没有 copy）；upload / download 读写的是这台机器的磁盘，对远程客户端没有意义，不提供。权限由 --access 决定
+ * 远程模式（cloudssh mcp http，见 mcp-http.ts）：给云端的 AI（例如 Muse 的自定义连接器）用，工具是上面除 upload / download 外的全部
+ * （只读时没有 write_file、edit_file、copy）；upload / download 读写的是这台机器的磁盘，对远程客户端没有意义，不提供。权限由 --access 决定
  * （full / ask / read-only，见 RemoteOptions），只读时 exec 只放行查看类命令（readonly.ts）；exclude 里的服务器（通常是跑这个
  * 服务的机器自己，上面存着 CloudSSH 的登录）不出现在列表里，也不能当目标。
  */
@@ -26,10 +27,11 @@ import os from 'node:os';
 import { closeRemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
 import { loadConfig, UsageError, type CliConfig } from './config';
 import { commandVerdict, outcomeOk, outcomeStatus, runExec, type ExecOutcome } from './exec';
-import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes, localPath, progressText, upload, type Progress } from './files';
+import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes, localPath, progressText, shellPath, upload, type Progress } from './files';
 import { userGuidance } from './install';
 import { ApiError } from './net';
 import { readOnlyCheck } from './readonly';
+import { editText, jobStatus, listDir, numberLines, readText, startJob, writeText, type WriteMode } from './remote-files';
 import { activeInstance, filterServers, formatServerRow, hostId, loadServers, resolveSingle, resolveTargets } from './targets';
 
 /** 认识的协议版本，新的在前 */
@@ -100,6 +102,14 @@ export function shareBudget(sizes: number[], budget: number): number[] {
     open = open.filter((index) => sizes[index] > share);
   }
   return alloc;
+}
+
+/** 带行号的文件内容：超过上限时在整行处截断，提示用 offset / limit 分段读；more 是没超时附在末尾的说明 */
+function boundedLines(text: string, more: string, limit = OUTPUT_LIMIT): string {
+  if (byteLength(text + more) <= limit) return text + more;
+  const note = '\n（超过 64KB，后面的行省略了：用 offset / limit 分段读）';
+  const clipped = clipBytes(text, limit - byteLength(note), 'head');
+  return clipped.slice(0, Math.max(0, clipped.lastIndexOf('\n'))) + note;
 }
 
 /** 超过上限时只留开头（列表、说明之类） */
@@ -209,8 +219,10 @@ const READ_ONLY_DOC =
 export type RemoteAccess = 'full' | 'ask' | 'read-only';
 export const REMOTE_ACCESS: RemoteAccess[] = ['full', 'ask', 'read-only'];
 
+const READ_TOOLS = ['list_servers', 'exec', 'read_file', 'list_dir', 'start_job', 'job_status'];
+
 function remoteTools(remote: RemoteOptions): string[] {
-  return remote.access === 'read-only' ? ['list_servers', 'exec'] : ['list_servers', 'exec', 'copy'];
+  return remote.access === 'read-only' ? READ_TOOLS : [...READ_TOOLS, 'write_file', 'edit_file', 'copy'];
 }
 
 /** 危险命令按哪种确认方式：远程模式看 access，本机看 config.json */
@@ -239,10 +251,15 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       type: 'integer',
       minimum: 1,
       maximum: 3600,
-      description: `Seconds before the command is killed (default ${timeout}). Start longer jobs with nohup, tmux or systemd and check back later.`,
+      description: `Seconds before the command is killed (default ${timeout}). For anything longer (builds, backups, upgrades) use start_job instead.`,
     },
+    cwd: { type: 'string', description: 'Directory to run in (default: the login user\'s home). Each call starts a fresh shell, so cd does not carry over between calls.' },
     confirm: { type: 'boolean', description: 'Set to true only after the user approved this risky command (same as --yes)' },
   };
+  const writeConfirm = fullAccess
+    ? ''
+    : ' Overwriting or changing an existing file needs confirm: true: ask the user first.';
+  const one = { type: 'string', description: 'One server: host ID (srv-12), name or alias' };
   if (readOnly) {
     delete execProperties.confirm;
     execProperties.command = { type: 'string', description: 'A read-only shell command (see the tool description for what is allowed)' };
@@ -287,6 +304,118 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       annotations: readOnly
         ? { title: 'Run a read-only command', readOnlyHint: true, openWorldHint: true }
         : { title: 'Run a command', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    {
+      name: 'read_file',
+      title: 'Read a file',
+      description:
+        'Read a text file on one server, with line numbers (like cat -n). Transferred over SFTP, so it is not limited by the 64 KB command output; up to 20 MB, at most 64 KB of numbered lines per call: use offset / limit for the rest. Binary files are refused. Prefer this over exec cat for files you will edit.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          path: { type: 'string', description: 'File path; relative paths start in the login user\'s home directory, ~ works' },
+          offset: { type: 'integer', minimum: 1, description: 'First line to show (default 1)' },
+          limit: { type: 'integer', minimum: 1, maximum: 20000, description: 'How many lines to show (default 2000)' },
+        },
+        required: ['target', 'path'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Read a file', readOnlyHint: true, openWorldHint: true },
+    },
+    {
+      name: 'list_dir',
+      title: 'List a directory',
+      description: 'List a directory on one server (ls -l: type and permissions, owner, size, modification time, name; directories first). At most 1000 entries.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          path: { type: 'string', description: 'Directory (default: the login user\'s home)' },
+          all: { type: 'boolean', description: 'Include hidden entries (default false)' },
+        },
+        required: ['target'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'List a directory', readOnlyHint: true, openWorldHint: true },
+    },
+    {
+      name: 'write_file',
+      title: 'Write a file',
+      description:
+        'Write text (UTF-8) to a file on one server over SFTP: no shell quoting or heredoc needed. mode overwrite (default) replaces the file atomically and keeps its permissions and owner; append adds to the end; create refuses if the file exists. Missing parent directories are created; symlinks are written through to their target. Up to 10 MB.' +
+        writeConfirm,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          path: { type: 'string', description: 'File path; relative paths start in the login user\'s home directory' },
+          content: { type: 'string', description: 'The full text to write (or to append)' },
+          mode: { type: 'string', enum: ['overwrite', 'append', 'create'], description: 'Default overwrite' },
+          ...(fullAccess ? {} : { confirm: { type: 'boolean', description: 'Set to true only after the user agreed to change an existing file' } }),
+        },
+        required: ['target', 'path', 'content'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Write a file', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: 'edit_file',
+      title: 'Edit a file',
+      description:
+        'Change part of a text file on one server by exact string replacement: old_string must appear exactly once (include a few surrounding lines to make it unique) unless replace_all is true. Whitespace and indentation must match exactly: read_file first and copy the text without the line-number prefix. The file is only written if nobody changed it since it was read; permissions and owner are kept. Returns the changed lines.' +
+        writeConfirm,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          path: { type: 'string', description: 'File path' },
+          old_string: { type: 'string', description: 'The exact text to replace' },
+          new_string: { type: 'string', description: 'The replacement text' },
+          replace_all: { type: 'boolean', description: 'Replace every occurrence (default false: old_string must be unique)' },
+          ...(fullAccess ? {} : { confirm: { type: 'boolean', description: 'Set to true only after the user agreed to this change' } }),
+        },
+        required: ['target', 'path', 'old_string', 'new_string'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Edit a file', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    {
+      name: 'start_job',
+      title: 'Start a background job',
+      description:
+        'Start a long-running command on one server in the background (builds, backups, upgrades, large downloads, docker compose pull …) and return a job ID at once. It runs in its own session with nohup, so it keeps going after this call, the connection or the session ends; output goes to a log on the server. Check it with job_status. ' +
+        (readOnly ? 'The command must pass the same read-only rules as exec.' : 'The same rules as exec apply to the command (risky commands, confirm).'),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          command: { type: 'string', description: 'The shell command (runs with bash if available, otherwise sh)' },
+          cwd: { type: 'string', description: 'Directory to run in (default: the login user\'s home)' },
+          ...(readOnly || fullAccess ? {} : { confirm: { type: 'boolean', description: 'Set to true only after the user approved this risky command' } }),
+        },
+        required: ['target', 'command'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Start a background job', readOnlyHint: readOnly, destructiveHint: !readOnly, idempotentHint: false, openWorldHint: true },
+    },
+    {
+      name: 'job_status',
+      title: 'Background job status',
+      description:
+        'Show a background job started with start_job: running or finished (with exit code), the command, and the last lines of its output. Without job_id, list the recent jobs on that server. stop: true ends the job (its whole process group). Job files are kept for 7 days.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          job_id: { type: 'string', description: 'The ID returned by start_job (omit to list recent jobs)' },
+          tail: { type: 'integer', minimum: 1, maximum: 2000, description: 'How many output lines to show (default 50)' },
+          stop: { type: 'boolean', description: 'End the job first' },
+        },
+        required: ['target'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Background job status', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     {
       name: 'upload',
@@ -352,6 +481,9 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
       `These tools work on the servers the user saved in CloudSSH${origin ? ` (${origin})` : ''}, through the CloudSSH server: it signs in with the stored credentials and handles jump hosts and Cloudflare tunnels.`,
       'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
       'Commands run in a non-interactive shell and only the last 64 KB of output is kept. Batch independent read-only checks for one server into one exec with `echo \'== …\'` headers joined by `;`.',
+      'For files use read_file / list_dir' +
+        (remote.access === 'read-only' ? '' : ' / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text)') +
+        '; for anything that runs longer than a minute or two use start_job and check it with job_status.',
       remote.access === 'read-only'
         ? READ_ONLY_DOC
         : remote.access === 'full'
@@ -365,6 +497,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     `These tools work on the servers the user saved in CloudSSH${origin ? ` (${origin})` : ''}, through the CloudSSH server: it signs in with the stored credentials and handles jump hosts and Cloudflare tunnels.`,
     'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
     'Commands run in a non-interactive shell and only the last 64 KB of output is kept. Ask the user before risky commands and pass confirm: true only after they agree.',
+    'For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.',
     'If a tool reports that the login expired or no instance is signed in, ask the user to run `cloudssh login` in a terminal, or to turn on "同步登录给命令行" in the CloudSSH desktop app.',
   ].join('\n');
   return base + (config ? userGuidance(config, '`confirm: true`') : '');
@@ -543,6 +676,36 @@ export class McpServer {
     this.remote?.audit?.(text);
   }
 
+  /** 命令能不能执行（exec 与 start_job 共用）：只读清单、拦截级、危险命令确认；不能执行时抛 ToolError，并记审计 */
+  private allowCommand(tool: string, command: string, confirm: boolean, config: CliConfig, targets: ServerConfig[]): void {
+    const where = targets.map((server) => hostId(server)).join(',');
+    const summary = clipBytes(command.replace(/\s+/g, ' '), 300, 'head');
+    if (this.remote?.access === 'read-only') {
+      // 只读：拦截级照样拒绝；其余由只读清单判定（比“危险命令要确认”更严，awk、sed 这类有自己的规则）
+      const blocked = commandVerdict(command, true, 'never');
+      const check = blocked.action === 'refuse' ? { ok: false as const, reason: blocked.reason } : readOnlyCheck(command);
+      if (!check.ok) {
+        this.audit(`${tool} 拒绝 ${where}：${check.reason}｜${summary}`);
+        throw new ToolError(`只读模式，没有执行（${check.reason}）。只能执行查看类命令；需要改动服务器时请用户自己操作`);
+      }
+    }
+    const verdict = commandVerdict(command, confirm, confirmMode(config, this.remote));
+    this.audit(`${tool} ${verdict.action === 'run' ? '执行' : '拒绝'} ${where}：${summary}`);
+    if (verdict.action === 'refuse') throw new ToolError(`拒绝执行（${verdict.reason}）：拦截级命令一律拒绝，没有执行`);
+    if (verdict.action === 'confirm') {
+      const names = targets.map((server) => `${hostId(server)} ${server.name}`).join('、');
+      throw new ToolError(`危险命令（${verdict.reason}），没有执行：先告诉用户要在 ${names} 上执行什么，用户同意后带 confirm: true 再调用`);
+    }
+  }
+
+  /** 改已有文件前的确认（write_file / edit_file）：完全权限或带了 confirm 才改 */
+  private mayChange(config: CliConfig, confirm: boolean, server: ServerConfig): (path: string) => boolean {
+    return (path) => {
+      if (confirm || confirmMode(config, this.remote) === 'never') return true;
+      throw new ToolError(`${hostId(server)} ${server.name} 上已有 ${path}，没有改动：先告诉用户要改什么，用户同意后带 confirm: true 再调用`);
+    };
+  }
+
   private readonly tools: Record<string, (args: Json, context: CallContext) => Promise<ToolOutput>> = {
     list_servers: async (args) => {
       const query = optString(args, 'query');
@@ -557,38 +720,113 @@ export class McpServer {
       const target = reqString(args, 'target');
       const command = reqString(args, 'command').replace(/\r\n/g, '\n');
       const timeoutArg = optInt(args, 'timeout', 1, 3600);
+      const cwd = optString(args, 'cwd');
       const confirm = optBool(args, 'confirm');
       const { config, servers } = await this.prepare();
       const targets = resolveTargets(target, servers, config);
-      const where = targets.map((server) => hostId(server)).join(',');
-      if (this.remote?.access === 'read-only') {
-        // 只读：拦截级照样拒绝；其余由只读清单判定（比“危险命令要确认”更严，awk、sed 这类有自己的规则）
-        const blocked = commandVerdict(command, true, 'never');
-        const check = blocked.action === 'refuse' ? { ok: false as const, reason: blocked.reason } : readOnlyCheck(command);
-        if (!check.ok) {
-          this.audit(`exec 拒绝 ${where}：${check.reason}｜${clipBytes(command.replace(/\s+/g, ' '), 300, 'head')}`);
-          throw new ToolError(`只读模式，没有执行（${check.reason}）。只能执行查看类命令；需要改动服务器时请用户自己操作`);
-        }
-      }
-      const verdict = commandVerdict(command, confirm, confirmMode(config, this.remote));
-      this.audit(`exec ${verdict.action === 'run' ? '执行' : '拒绝'} ${where}：${clipBytes(command.replace(/\s+/g, ' '), 300, 'head')}`);
-      if (verdict.action === 'refuse') throw new ToolError(`拒绝执行（${verdict.reason}）：拦截级命令一律拒绝，没有执行`);
-      if (verdict.action === 'confirm') {
-        const where = targets.map((server) => `${hostId(server)} ${server.name}`).join('、');
-        throw new ToolError(`危险命令（${verdict.reason}），没有执行：先告诉用户要在 ${where} 上执行什么，用户同意后带 confirm: true 再调用`);
-      }
+      this.allowCommand('exec', command, confirm, config, targets);
       context.use(targets);
       const timeout = timeoutArg ?? config.timeout;
+      // 同一行用 ; 接上：命令里的 heredoc 照常可用（正文从下一行开始）
+      const full = cwd?.trim() ? `cd -- ${shellPath(cwd.trim())} || exit 1; ${command}` : command;
       const started = Date.now();
       const heartbeat = context.progress
         ? setInterval(() => context.progress!(`执行中，已 ${Math.round((Date.now() - started) / 1000)} 秒`), HEARTBEAT_MS)
         : null;
       try {
-        const results = await runExec(targets, command, timeout, config.concurrency);
+        const results = await runExec(targets, full, timeout, config.concurrency);
         return { text: formatExec(results), isError: !results.every(outcomeOk) };
       } finally {
         if (heartbeat) clearInterval(heartbeat);
       }
+    },
+
+    read_file: async (args, context) => {
+      const target = reqString(args, 'target');
+      const path = reqString(args, 'path');
+      const offset = optInt(args, 'offset', 1, Number.MAX_SAFE_INTEGER) ?? 1;
+      const limit = optInt(args, 'limit', 1, 20000) ?? 2000;
+      const { config, servers } = await this.prepare();
+      const server = resolveSingle(target, servers, config);
+      context.use([server]);
+      this.audit(`read_file ${hostId(server)}:${path}`);
+      const file = await readText(server, path);
+      const { body, total, from, to } = numberLines(file.text, offset, limit);
+      const head = `${hostId(server)} ${server.name}:${file.info.path}（${formatBytes(file.info.size)}，共 ${total} 行${total ? `，第 ${from}–${to} 行` : ''}）`;
+      const more = to < total ? `\n（还有第 ${to + 1}–${total} 行：offset: ${to + 1}）` : '';
+      return { text: boundedLines(`${head}\n${body || '（空文件）'}`, more) };
+    },
+
+    list_dir: async (args, context) => {
+      const target = reqString(args, 'target');
+      const path = optString(args, 'path')?.trim() || '~';
+      const all = optBool(args, 'all');
+      const { config, servers } = await this.prepare();
+      const server = resolveSingle(target, servers, config);
+      context.use([server]);
+      const listing = (await listDir(server, path, all)).replace(/\n+$/, '');
+      const lines = listing.split('\n');
+      const note = lines.length > 1002 ? '\n（超过 1000 项，后面的省略了：用 exec 配合 find / grep 筛选）' : '';
+      return { text: bounded(`${hostId(server)} ${server.name}:${lines[0]}\n${lines.slice(1, 1002).join('\n')}${note}`) };
+    },
+
+    write_file: async (args, context) => {
+      const target = reqString(args, 'target');
+      const path = reqString(args, 'path');
+      const content = optString(args, 'content');
+      if (content === undefined) throw new ToolError('缺少参数 content');
+      const mode = (optString(args, 'mode') ?? 'overwrite') as WriteMode;
+      if (!['overwrite', 'append', 'create'].includes(mode)) throw new ToolError('mode 只能是 overwrite、append、create');
+      const confirm = optBool(args, 'confirm');
+      const { config, servers } = await this.prepare();
+      const server = resolveSingle(target, servers, config);
+      context.use([server]);
+      const result = await writeText(server, path, content, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
+      this.audit(`write_file ${hostId(server)}:${result.path}（${mode}，${result.bytes} 字节）`);
+      const action = mode === 'append' && !result.created ? '追加到' : result.created ? '新建' : '覆盖';
+      return { text: `已${action} ${hostId(server)} ${server.name}:${result.path}（${formatBytes(result.bytes)}）` };
+    },
+
+    edit_file: async (args, context) => {
+      const target = reqString(args, 'target');
+      const path = reqString(args, 'path');
+      const oldText = optString(args, 'old_string');
+      const newText = optString(args, 'new_string');
+      if (oldText === undefined || newText === undefined) throw new ToolError('缺少参数 old_string 或 new_string');
+      const replaceAll = optBool(args, 'replace_all');
+      const confirm = optBool(args, 'confirm');
+      const { config, servers } = await this.prepare();
+      const server = resolveSingle(target, servers, config);
+      context.use([server]);
+      const result = await editText(server, path, oldText, newText, replaceAll, this.mayChange(config, confirm, server));
+      this.audit(`edit_file ${hostId(server)}:${result.path}（替换 ${result.replaced} 处）`);
+      return { text: bounded(`已修改 ${hostId(server)} ${server.name}:${result.path}（替换 ${result.replaced} 处）。改后第一处附近：\n${result.snippet}`) };
+    },
+
+    start_job: async (args, context) => {
+      const target = reqString(args, 'target');
+      const command = reqString(args, 'command').replace(/\r\n/g, '\n');
+      const cwd = optString(args, 'cwd')?.trim() || undefined;
+      const confirm = optBool(args, 'confirm');
+      const { config, servers } = await this.prepare();
+      const server = resolveSingle(target, servers, config);
+      this.allowCommand('start_job', command, confirm, config, [server]);
+      context.use([server]);
+      const id = await startJob(server, command, cwd);
+      return { text: `已在 ${hostId(server)} ${server.name} 上启动后台任务 ${id}。用 job_status（target: ${hostId(server)}，job_id: ${id}）查看进度与输出` };
+    },
+
+    job_status: async (args, context) => {
+      const target = reqString(args, 'target');
+      const id = optString(args, 'job_id')?.trim() || undefined;
+      const tail = optInt(args, 'tail', 1, 2000) ?? 50;
+      const stop = optBool(args, 'stop');
+      const { config, servers } = await this.prepare();
+      const server = resolveSingle(target, servers, config);
+      context.use([server]);
+      if (stop) this.audit(`job_status 结束任务 ${hostId(server)} ${id ?? ''}`);
+      const text = (await jobStatus(server, id, tail, stop && !!id)).replace(/\n+$/, '');
+      return { text: bounded(`${hostId(server)} ${server.name}${id ? ` 任务 ${id}` : ' 最近的后台任务'}\n${text}`) };
     },
 
     upload: async (args, context) => {

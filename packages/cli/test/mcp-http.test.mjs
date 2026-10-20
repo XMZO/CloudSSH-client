@@ -248,7 +248,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.equal(note.status, 202);
 
     const tools = await rpc(server.base, token, 'tools/list');
-    assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'copy']);
+    assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'read_file', 'list_dir', 'write_file', 'edit_file', 'start_job', 'job_status', 'copy']);
     const exec = tools.body.result.tools.find((tool) => tool.name === 'exec');
     assert.match(exec.description, /Full access is on/);
     const upload = await rpc(server.base, token, 'tools/call', { name: 'upload', arguments: {} });
@@ -315,9 +315,9 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
 
     after(() => readonly?.stop());
 
-    test('只有 list_servers 与 exec，exec 没有 confirm 参数', async () => {
+    test('只有查看类工具（没有 write_file、edit_file、copy），exec 没有 confirm 参数', async () => {
       const tools = await rpc(readonly.base, token, 'tools/list');
-      assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec']);
+      assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'read_file', 'list_dir', 'start_job', 'job_status']);
       const exec = tools.body.result.tools.find((tool) => tool.name === 'exec');
       assert.equal(exec.inputSchema.properties.confirm, undefined);
       assert.match(exec.description, /Read-only mode/);

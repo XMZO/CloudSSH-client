@@ -44,11 +44,11 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     assert.match(response.result.instructions, new RegExp(mock.url.replace(/[.:/]/g, '\\$&')));
   });
 
-  test('tools/list：五个工具，参数都是 JSON Schema 对象', async () => {
+  test('tools/list：十一个工具，参数都是 JSON Schema 对象', async () => {
     const { result } = await mcp.request('tools/list', {});
     assert.deepEqual(
       result.tools.map((tool) => tool.name),
-      ['list_servers', 'exec', 'upload', 'download', 'copy']
+      ['list_servers', 'exec', 'read_file', 'list_dir', 'write_file', 'edit_file', 'start_job', 'job_status', 'upload', 'download', 'copy']
     );
     for (const tool of result.tools) {
       assert.equal(tool.inputSchema.type, 'object');

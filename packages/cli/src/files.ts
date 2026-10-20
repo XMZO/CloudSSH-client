@@ -28,16 +28,16 @@ export interface Progress {
   (step: string, loaded?: number, total?: number): void;
 }
 
-const quote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
+export const quote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
 /** 远端 Shell 里的路径：~/ 开头展开成 $HOME */
-function shellPath(value: string): string {
+export function shellPath(value: string): string {
   if (value === '~') return '"$HOME"';
   if (value.startsWith('~/')) return `"$HOME"/${quote(value.slice(2))}`;
   return quote(value);
 }
 
-async function run(server: ServerConfig, command: string, timeout = 60): Promise<string> {
+export async function run(server: ServerConfig, command: string, timeout = 60): Promise<string> {
   const result = await remoteExec(server.id, command, timeout);
   if (result.timedOut) throw new Error(`${server.name}: 超时`);
   if (result.exitCode !== 0) {
@@ -47,7 +47,7 @@ async function run(server: ServerConfig, command: string, timeout = 60): Promise
   return result.output;
 }
 
-async function openSftp(server: ServerConfig): Promise<HeadlessSftp> {
+export async function openSftp(server: ServerConfig): Promise<HeadlessSftp> {
   const session = remoteSession(server.id);
   await session.ready;
   if (!session.sftpUrl) throw new Error(`${server.name}: 没有 SFTP 通道`);

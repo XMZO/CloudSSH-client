@@ -2,7 +2,7 @@
 
 Meta Muse 这类云端助手不能安装 skill，也碰不到你电脑上的 `cloudssh`，但能接**自定义连接器**：一个公网 HTTPS 的远程 MCP 地址，用 OAuth 授权。`cloudssh mcp http` 就是这样一个服务器，放在一台常开的服务器上，经 CloudSSH 操作你保存的服务器（与命令行同一套：跳板、隧道、主机 ID、64KB 输出上限）。
 
-- **工具**：`list_servers`、`exec`、`copy`（只读时没有 `copy`）。`upload` / `download` 读写的是这台服务器的磁盘，对远程客户端没意义，不提供
+- **工具**：`list_servers`、`exec`（可带 `cwd`）、`read_file`、`list_dir`、`write_file`、`edit_file`、`start_job`、`job_status`、`copy`（只读时没有 `write_file`、`edit_file`、`copy`）。文件内容走 SFTP：读写不受命令输出 64KB 的限制、不用 Shell 转义；长任务用 `start_job` 在后台跑、`job_status` 查看。`upload` / `download` 读写的是这台服务器的磁盘，对远程客户端没意义，不提供
 - **权限**（`ACCESS`）：`full` 与命令行的完全权限一样，危险命令直接执行（`rm -rf /` 这类拦截级仍拒绝）；`ask` 危险命令要 AI 先问你、再带 `confirm: true`；`read-only` 只放行查看类命令（文件、日志、状态、进程、网络、磁盘、容器），写文件、重定向到文件、安装、重启、删除、命令替换、子 Shell、heredoc、解释器一律拒绝。只读判定是尽力而为的护栏，不是沙箱
 - **不提供的服务器**（`EXCLUDE`）：跑这个服务的机器自己。它上面存着 CloudSSH 的登录，能在它上面执行命令就能读到登录
 - **授权**：只认一个人。Muse 添加连接器时打开授权页，输入部署时设的口令（只存 scrypt 哈希）；连续输错 5 次后锁定，1 分钟起、最长 15 分钟。令牌只存 SHA-256，访问令牌 1 小时、刷新令牌 30 天（每用一次换新的）

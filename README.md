@@ -440,12 +440,17 @@ cloudssh alias set web srv-12         # 别名；cloudssh config set confirm nev
 
 ### MCP 服务器（给不支持 skill 的应用）
 
-Claude Desktop、Cursor、VS Code、Windsurf 等不认 skill 的应用用 MCP 接入同一套能力：`cloudssh mcp` 是 stdio 上的 MCP 服务器（JSON-RPC 2.0，一行一条消息，协议手写、不引入新依赖），提供 5 个工具，直接调命令行的 `targets` / `exec` / `files` 实现：
+Claude Desktop、Cursor、VS Code、Windsurf 等不认 skill 的应用用 MCP 接入同一套能力：`cloudssh mcp` 是 stdio 上的 MCP 服务器（JSON-RPC 2.0，一行一条消息，协议手写、不引入新依赖），提供 11 个工具，直接调命令行的 `targets` / `exec` / `files` / `remote-files` 实现：
 
 | 工具 | 参数 | 说明 |
 | ---- | ---- | ---- |
 | `list_servers` | `query`、`tag` | 主机 ID、名称、标签、系统、线路 |
-| `exec` | `target`、`command`、`timeout`、`confirm` | 目标写法与命令行一样（`srv-12`、名称、别名、`tag:`、`all`、逗号隔开）；`confirm: true` 相当于 `--yes` |
+| `exec` | `target`、`command`、`timeout`、`cwd`、`confirm` | 目标写法与命令行一样（`srv-12`、名称、别名、`tag:`、`all`、逗号隔开）；`cwd` 在指定目录执行（每次调用都是新 Shell，`cd` 不会留到下一次）；`confirm: true` 相当于 `--yes` |
+| `read_file` | `target`、`path`、`offset`、`limit` | 读文本文件，带行号（`cat -n` 的样子）。走 SFTP，不受命令输出 64KB 的限制（文件最大 20MB，每次最多 64KB 的行，用 `offset` / `limit` 分段）；二进制文件不读 |
+| `list_dir` | `target`、`path`、`all` | `ls -l`（目录在前、ISO 时间），最多 1000 项 |
+| `write_file` | `target`、`path`、`content`、`mode`、`confirm` | 经 SFTP 写文本，不用 Shell 转义与 heredoc。`overwrite`（默认，先写临时文件再改名，沿用原文件的权限与属主）、`append`、`create`（已存在就不写）；自动建上级目录，符号链接写到它指向的文件；最大 10MB |
+| `edit_file` | `target`、`path`、`old_string`、`new_string`、`replace_all`、`confirm` | 精确替换：`old_string` 要唯一（否则报出现次数，或 `replace_all`）；写回前核对文件的 SHA-256 与读时一致，被别人改过就不写；返回改后附近几行 |
+| `start_job` / `job_status` | `target`、`command`、`cwd` / `job_id`、`tail`、`stop` | 长任务：`setsid nohup` 在新会话里跑，断开、会话关闭都不影响，输出与退出码记在 `~/.cloudssh-jobs/`（7 天后清理）；`job_status` 看状态与输出末尾、不带 `job_id` 列出最近的任务、`stop` 结束整个进程组。命令与 `exec` 同一套危险命令规则 |
 | `upload` / `download` | `target`、`local_path`、`remote_path`（download 另有 `max_size_mb`） | 文件或目录，落点规则同 scp；本机相对路径按 MCP 服务器的工作目录，`~` 是家目录 |
 | `copy` | `from_target`、`from_path`、`to_target`、`to_path`、`confirm` | 服务器之间，能直连就直连；覆盖已有目标要 `confirm` |
 
@@ -455,18 +460,18 @@ cloudssh mcp status                           # 各应用的登记状态
 cloudssh mcp add cursor / cloudssh mcp remove codex
 ```
 
-- **规则与命令行一致**：每次调用重新读 `config.json` 与登录（桌面端同步来的新会话、改了的完全权限与默认超时即时生效）；拦截级命令一律拒绝，危险命令不带 `confirm` 时返回“没有执行，先问用户”，完全权限（`confirm never`）时不用确认；initialize 返回的说明里带上用户设置与“给 AI 的补充说明”
+- **规则与命令行一致**：每次调用重新读 `config.json` 与登录（桌面端同步来的新会话、改了的完全权限与默认超时即时生效）；拦截级命令一律拒绝，危险命令不带 `confirm` 时返回“没有执行，先问用户”，完全权限（`confirm never`）时不用确认；`write_file` / `edit_file` 改已有文件同样要 `confirm`（新建文件不用）；initialize 返回的说明里带上用户设置与“给 AI 的补充说明”
 - **结果有界**：每次结果不超过 64KB（与远端输出上限一致），多台批量时按份额各留输出末尾；工具出错（没登录、找不到服务器、命令失败、参数不对）以 `isError` 结果返回给模型，工具名不对等协议错误返回 JSON-RPC 错误，进程不会因单次调用退出
 - **取消与进度**：收到 `notifications/cancelled` 不再回复，并关掉这次用到的服务器的后台会话（远端命令随之结束）；带 `progressToken` 的调用发 `notifications/progress`（传文件进度，命令执行中每 5 秒报一次）
 - **登记**：只在明确要求时写应用的配置（`install --mcp`、`mcp add`、桌面端开关），写前把原文件备份成 `<文件>.cloudssh-backup-<时间>`，只动名为 `cloudssh` 的一项。配置位置：Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`、Cursor `~/.cursor/mcp.json`、VS Code `%APPDATA%\Code\User\mcp.json`（允许注释，写回时注释保留在备份里）、Windsurf `~/.codeium/windsurf/mcp_config.json`、Codex `~/.codex/config.toml`（`[mcp_servers.cloudssh]`）；macOS / Linux 换成对应的应用配置目录。登记的是“运行时 + 程序 + `mcp`”（不经 `.cmd`，Windows 上很多应用起不了批处理），与命令指向同一个程序；在登记项里自己加的参数（如 `--instance 名称`）与环境变量更新时保留。重新安装时更新已登记的，`uninstall` 移除。改完重启那个应用生效
 - **桌面客户端**：实例管理 → 命令行与 Skill → 设置… 的“MCP”卡片，这台电脑上有的应用每个一个开关（打开即登记、关掉即移除）；客户端换了位置时启动后随命令一起更新
-- **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、5 个工具、危险命令、64KB 上限、取消与进度）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
+- **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、各工具、危险命令、64KB 上限、取消与进度；`mcp-files.test.mjs` 测文件读写改、确认规则与后台任务）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
 
 ### 远程 MCP（给云端 AI，如 Meta Muse 的自定义连接器）
 
 云端助手装不了 skill、也碰不到本机的 `cloudssh`，但能接公网 HTTPS 的远程 MCP（OAuth 授权）。`cloudssh mcp http`（`mcp-http.ts`）就是这样一个服务器，放在一台常开的服务器上、Caddy 后面跑，部署文件与步骤在 [`tools/mcp-remote/`](tools/mcp-remote/README.md)（Docker：非 root、只读文件系统）。
 
-- **工具**：`list_servers`、`exec`、`copy`（只读时没有 `copy`）；`upload` / `download` 读写的是那台服务器的磁盘，不提供
+- **工具**：上面除 `upload` / `download` 外的全部（只读时没有 `write_file`、`edit_file`、`copy`）；`upload` / `download` 读写的是那台服务器的磁盘，不提供
 - **权限**（`--access` / `CLOUDSSH_MCP_ACCESS`）：`full` 同命令行的完全权限（拦截级仍拒绝）；`ask` 危险命令要 `confirm: true`；`read-only`（默认）只放行查看类命令（`readonly.ts`：按词切开命令，命令名与参数逐个对清单，写文件的重定向、命令替换、子 Shell、heredoc、解释器一律拒绝；尽力而为的护栏，不是沙箱）
 - **不提供的服务器**（`--exclude srv-12`）：跑这个服务的机器自己，它上面存着 CloudSSH 的登录
 - **授权**：内置只认一个人的 OAuth 2.1：发现文档（RFC 9728 / 8414）、动态注册（RFC 7591）与 Client ID Metadata Document、授权页口令（scrypt 哈希，`mcp http --hash-password` 生成；连错 5 次锁定）、只支持 PKCE S256、访问令牌 1 小时、刷新令牌 30 天且每用一次换新；令牌只存 SHA-256
