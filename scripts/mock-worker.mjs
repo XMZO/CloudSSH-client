@@ -417,7 +417,8 @@ function createSocket(socket, onMessage) {
 
 // ---------- 假 shell ----------
 
-const PROMPT = '\x1b[1;32mroot@mock\x1b[0m:\x1b[1;34m~\x1b[0m# ';
+/** 提示符；末尾打开括号粘贴模式，像 bash 5.1 起的 readline 在等输入时那样（执行命令时关掉） */
+const PROMPT = '\x1b[1;32mroot@mock\x1b[0m:\x1b[1;34m~\x1b[0m# \x1b[?2004h';
 /** 各种常见日志（系统、nginx 访问日志、容器状态……），用来测试关键词高亮；ls 那一行带程序自己的颜色 */
 const SAMPLE_LOGS = [
   '2026-10-17 15:30:01 INFO  nginx started, listening on 0.0.0.0:443 (pid=1234)',
@@ -1210,6 +1211,30 @@ function attachShell(ws, url) {
   }
 
   let line = '';
+  /** 光标在 line 里的位置（第几个字）：左 / 右方向键移动，打字插在光标处（像 readline） */
+  let pos = 0;
+  /** 收到的左 / 右键数与越界次数（在行首按左、行尾按右），lines 命令显示，用来调试手机端点按定位 */
+  const arrows = { left: 0, right: 0, overflow: 0 };
+  const lineKey = (sequence) => {
+    const chars = [...line];
+    if (sequence === '\x1b[D' || sequence === '\x1bOD') {
+      arrows.left++;
+      if (pos === 0) {
+        arrows.overflow++;
+        return write('\x07');
+      }
+      pos--;
+      write('\b'.repeat(cellWidth(chars[pos])));
+    } else if (sequence === '\x1b[C' || sequence === '\x1bOC') {
+      arrows.right++;
+      if (pos >= chars.length) {
+        arrows.overflow++;
+        return write('\x07');
+      }
+      write(chars[pos]);
+      pos++;
+    }
+  };
   /** 客户端报告的终端尺寸（resize 消息），size 命令显示它 */
   const term = { cols: 80, rows: 24 };
   /**
@@ -1233,7 +1258,7 @@ function attachShell(ws, url) {
       pager.top++;
     } else if (sequence === 'q') {
       pager = null;
-      write(`\x1b[?1l\x1b[?1049l${PROMPT}`);
+      write(`\x1b[?1000l\x1b[?1006l\x1b[?1l\x1b[?1049l${PROMPT}`);
       return;
     } else return;
     drawPager();
@@ -1261,16 +1286,20 @@ function attachShell(ws, url) {
         const rest = /^\x1b(\[[0-9;?]*[ -/]*[@-~]|O.)/.exec(text.slice(i));
         if (rest) i += rest[0].length - 1;
         if (pager && rest) pagerKey(rest[0]);
+        else if (rest) lineKey(rest[0]);
         continue;
       }
       if (pager) {
         pagerKey(ch);
         continue;
       }
-      if ((ch === '\r' || ch === '\n') && line.trim() === 'pager') {
+      if ((ch === '\r' || ch === '\n') && /^pager( -m)?$/.test(line.trim())) {
+        // 像 nano：括号粘贴照开（提示符已经开了）；pager -m 再开鼠标模式（SGR）
+        const mouse = line.trim() === 'pager -m';
         line = '';
-        pager = { top: 0, up: 0, down: 0 };
-        write('\r\n\x1b[?1049h\x1b[?1h');
+        pos = 0;
+        pager = { top: 0, up: 0, down: 0, mouse };
+        write(`\r\n\x1b[?1049h\x1b[?1h${mouse ? '\x1b[?1000h\x1b[?1006h' : ''}`);
         drawPager();
         continue;
       }
@@ -1279,9 +1308,12 @@ function attachShell(ws, url) {
         if (line.includes('\\137\\137CS')) {
           mockRemoteLine(line, write);
           line = '';
+          pos = 0;
           continue;
         }
-        write('\r\n');
+        if (line.trim()) console.log(`行编辑：执行 ${JSON.stringify(line)}，收到 ← ${arrows.left} / → ${arrows.right}，越界 ${arrows.overflow}`);
+        // 执行命令时关括号粘贴（像 readline），提示符处再打开（PROMPT 末尾带着）
+        write('\x1b[?2004l\r\n');
         if (line.trim() === 'exit') {
           write('logout\r\n');
           setTimeout(() => ws.close(1000), 50);
@@ -1289,22 +1321,32 @@ function attachShell(ws, url) {
         }
         const delay = runCommand(line, write, term, ws);
         line = '';
+        pos = 0;
         if (delay) setTimeout(() => write(PROMPT), delay);
         else write(PROMPT);
       } else if (ch === '\x7f' || ch === '\b') {
-        if (line.length) {
-          line = [...line].slice(0, -1).join('');
-          write('\b \b');
+        const chars = [...line];
+        if (pos > 0) {
+          const removed = chars.splice(pos - 1, 1)[0];
+          pos--;
+          line = chars.join('');
+          const rest = chars.slice(pos).join('');
+          write(`${'\b'.repeat(cellWidth(removed))}${rest}${' '.repeat(cellWidth(removed))}${'\b'.repeat(cellWidth(rest) + cellWidth(removed))}`);
         }
       } else if (ch === '\x03') {
         line = '';
+        pos = 0;
         write(`^C\r\n${PROMPT}`);
       } else if (ch === '\t') {
         // 不做补全
       } else if (ch >= ' ') {
-        line += ch;
+        const chars = [...line];
+        chars.splice(pos, 0, ch);
+        pos++;
+        line = chars.join('');
+        const rest = chars.slice(pos).join('');
         // 后台会话关了回显（stty -echo），这里也不回显
-        if (!line.startsWith(' ') || !line.includes('\\137')) write(ch);
+        if (!line.startsWith(' ') || !line.includes('\\137')) write(`${ch}${rest}${'\b'.repeat(cellWidth(rest))}`);
       }
     }
   };
