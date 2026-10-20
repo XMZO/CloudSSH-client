@@ -323,7 +323,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     paletteHintRun: 'Run',
     paletteHintRunSnippet: 'Insert and run',
     paletteHintClose: 'Close',
-    notifications: 'Background notifications',
+    notifications: 'Notifications',
     sessionSection: 'Sessions',
     notificationsOn: 'On',
     notificationsOff: 'Off',

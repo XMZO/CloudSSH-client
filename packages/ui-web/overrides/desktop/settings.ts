@@ -3,8 +3,8 @@
  * 界面主题（工作台 / 经典）、配色、语言、后台通知、会话，以及 AI 设置、命令行与 Skill、关键词高亮、凭据预设、
  * 同步到手机、实例管理、退出登录。配色与 AI 设置、退出登录直接操作网页版自己的控件，行为与网页版一致。
  *
- * 排版：不折叠、不分页，靠横向摆放压低高度——顶部一行是用户与退出登录；中间两栏（左：界面、配色、语言；
- * 右：后台通知、会话），每项的标题与选项同一行；底部的功能按钮排成网格。窗口窄时两栏自动叠成一栏。
+ * 排版：不折叠、不分页，窄而不高——顶部一行是用户与退出登录；中间一栏，每项的标题与选项同一行（标题对齐成一列，
+ * 选项多时在右侧换行），后台通知的分项开关排成一行；底部的功能按钮每行三个。
  */
 import { getLocale, setLocale } from '../../upstream/frontend/src/i18n';
 import { LANGUAGE_CHOICES } from '../shared/language-picker';
@@ -27,10 +27,12 @@ import { dt } from './i18n';
 import { closePopover, isPopoverOpenFor, openPopover } from './popover';
 import { clickById, desktopSkin, setDesktopSkin, type DesktopSkin } from './state';
 
-/** 一项设置：标题在左、选项在右（同一行，选项多时在右侧换行） */
-function section(title: string): HTMLElement {
+/** 一项设置：标题在左、内容在右（同一行，内容多时在右侧换行）；所有标题对齐成一列（见 .cs-dk-set-list） */
+function section(title: string, ...content: HTMLElement[]): HTMLElement {
   const box = el('div', 'cs-dk-set-section');
-  box.append(el('div', 'cs-dk-set-title', title));
+  const body = el('div', 'cs-dk-set-body');
+  body.append(...content);
+  box.append(el('div', 'cs-dk-set-title', title), body);
   return box;
 }
 
@@ -62,6 +64,8 @@ function action(iconName: string, label: string, run: () => void, danger = false
   button.type = 'button';
   if (hint) button.title = hint;
   button.append(icon(iconName), el('span', '', label));
+  // 每行三个，英文等较长的名字可能被省略：悬停能看到全名
+  if (!hint) button.title = label;
   button.addEventListener('click', () => {
     closePopover();
     run();
@@ -112,76 +116,72 @@ export function toggleSettings(anchor: HTMLElement): void {
       if (canLogout) head.append(action('logout', dt('logout'), () => clickById('logout-btn'), true));
       panel.append(head);
     }
-    const columns = el('div', 'cs-dk-set-columns');
-    const left = el('div', 'cs-dk-set-column');
-    const right = el('div', 'cs-dk-set-column');
-    columns.append(left, right);
+    const list = el('div', 'cs-dk-set-list');
 
-    const skin = section(dt('skin'));
-    skin.append(
-      choiceRow<DesktopSkin>(
-        [
-          { value: 'workbench', label: dt('skinWorkbench'), hint: dt('skinWorkbenchDesc') },
-          { value: 'classic', label: dt('skinClassic'), hint: dt('skinClassicDesc') },
-        ],
-        desktopSkin(),
-        (value) => {
-          closePopover();
-          setDesktopSkin(value);
-        }
+    list.append(
+      section(
+        dt('skin'),
+        choiceRow<DesktopSkin>(
+          [
+            { value: 'workbench', label: dt('skinWorkbench'), hint: dt('skinWorkbenchDesc') },
+            { value: 'classic', label: dt('skinClassic'), hint: dt('skinClassicDesc') },
+          ],
+          desktopSkin(),
+          (value) => {
+            closePopover();
+            setDesktopSkin(value);
+          }
+        )
       )
     );
-    left.append(skin);
 
     const select = themeSelect();
     if (select) {
-      const colors = section(dt('colors'));
-      colors.append(
-        choiceRow(
-          [...select.options].map((option) => ({ value: option.value, label: option.textContent?.trim() || option.value })),
-          select.value,
-          (value) => {
-            select.value = value;
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-          }
+      list.append(
+        section(
+          dt('colors'),
+          choiceRow(
+            [...select.options].map((option) => ({ value: option.value, label: option.textContent?.trim() || option.value })),
+            select.value,
+            (value) => {
+              select.value = value;
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          )
         )
       );
-      left.append(colors);
     }
 
-    const language = section(dt('language'));
-    language.append(
-      choiceRow(
-        LANGUAGE_CHOICES.map((choice) => ({ value: choice.locale, label: choice.name })),
-        getLocale(),
-        (locale) => {
-          if (locale !== getLocale()) setLocale(locale);
-        }
+    list.append(
+      section(
+        dt('language'),
+        choiceRow(
+          LANGUAGE_CHOICES.map((choice) => ({ value: choice.locale, label: choice.name })),
+          getLocale(),
+          (locale) => {
+            if (locale !== getLocale()) setLocale(locale);
+          }
+        )
       )
     );
-    left.append(language);
 
-    // 后台通知：总开关 + 三个分项（总开关关掉时分项变灰）
-    const notices = section(dt('notifications'));
-    notices.title = dt('notificationsHint');
+    // 后台通知：总开关 + 三个分项（分项排成一行，总开关关掉时变灰）
     const kinds = el('div', 'cs-dk-checks');
     const syncKinds = () => {
       const off = !notificationsEnabled();
       kinds.classList.toggle('is-off', off);
       kinds.querySelectorAll('input').forEach((box) => (box.disabled = off));
     };
-    notices.append(
-      choiceRow(
-        [
-          { value: 'on', label: dt('notificationsOn'), hint: dt('notificationsHint') },
-          { value: 'off', label: dt('notificationsOff') },
-        ],
-        notificationsEnabled() ? 'on' : 'off',
-        (value) => {
-          setNotificationsEnabled(value === 'on');
-          syncKinds();
-        }
-      )
+    const noticeSwitch = choiceRow(
+      [
+        { value: 'on', label: dt('notificationsOn'), hint: dt('notificationsHint') },
+        { value: 'off', label: dt('notificationsOff') },
+      ],
+      notificationsEnabled() ? 'on' : 'off',
+      (value) => {
+        setNotificationsEnabled(value === 'on');
+        syncKinds();
+      }
     );
     for (const kind of NOTICE_KINDS) {
       const { title, hint } = noticeKindText(kind);
@@ -195,10 +195,11 @@ export function toggleSettings(anchor: HTMLElement): void {
       kinds.append(row);
     }
     syncKinds();
-    right.append(notices, kinds);
+    const notices = section(dt('notifications'), noticeSwitch, kinds);
+    notices.title = dt('notificationsHint');
+    list.append(notices);
 
     // 会话：服务器端断开时自动关闭标签
-    const sessions = section(dt('sessionSection'));
     const ending = serverEndText();
     const endRow = el('label', 'cs-dk-check');
     endRow.title = ending.hint;
@@ -207,11 +208,8 @@ export function toggleSettings(anchor: HTMLElement): void {
     endBox.checked = closeOnServerEnd();
     endBox.addEventListener('change', () => setCloseOnServerEnd(endBox.checked));
     endRow.append(endBox, el('span', '', ending.title));
-    // 只有一个选项：放在标题同一行
-    endRow.classList.add('is-inline');
-    sessions.append(endRow);
-    right.append(sessions);
-    panel.append(columns);
+    list.append(section(dt('sessionSection'), endRow));
+    panel.append(list);
 
     // 功能按钮：排成网格
     const actions = el('div', 'cs-dk-actions');
