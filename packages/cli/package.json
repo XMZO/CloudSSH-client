@@ -1,6 +1,6 @@
 {
   "name": "@cloudssh/cli",
-  "version": "0.3.34",
+  "version": "0.3.35",
   "private": true,
   "description": "CloudSSH 命令行（cloudssh）：不开客户端，直接经 CloudSSH 服务端列出服务器、执行命令、传文件；附带 Claude Code skill 与 MCP 服务器",
   "type": "module",

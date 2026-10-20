@@ -1,6 +1,6 @@
 {
   "name": "cloudssh-client",
-  "version": "0.3.34",
+  "version": "0.3.35",
   "private": true,
   "description": "CloudSSH 客户端（桌面 Electron + Android Tauri 2），对接已部署的 CloudSSH Worker",
   "packageManager": "pnpm@11.8.0",
