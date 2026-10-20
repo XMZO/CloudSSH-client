@@ -154,6 +154,13 @@ const footer = el('div', 'cs-sb-footer');
 const instanceLabel = el('span', 'cs-sb-instance');
 // 客户端版本：取正在运行的客户端报的版本（随客户端更新），淡色小字，悬停看代号
 const versionLabel = el('span', 'cs-sb-version');
+// 下载新版本时跟在后面的小进度条与百分比（第一次有版本号时才放进去，免得空着占位）；进度条只是装饰，读屏读百分比
+const versionText = el('span', 'cs-sb-version-text');
+const versionBar = el('span', 'cs-sb-progress');
+const versionBarFill = el('span', 'cs-sb-progress-fill');
+versionBar.append(versionBarFill);
+versionBar.setAttribute('aria-hidden', 'true');
+const versionPercent = el('span', 'cs-sb-percent');
 const manageButton = iconButton('dns', '', () => void window.cloudsshDesktop?.openInstanceManager?.());
 footer.append(icon('cloud'), instanceLabel, versionLabel, manageButton);
 footer.hidden = true;
@@ -517,7 +524,8 @@ function showItemMenu(event: MouseEvent, server: ServerConfig): void {
 }
 
 // ---------- 左下角版本号与自动更新 ----------
-// 平时是淡色的版本号，点一下检查更新；有新版本时后台下载（显示“→ 新版本”），下载好变成“重启更新到 vX”，
+// 平时是淡色的版本号，点一下检查更新；有新版本时后台下载（显示“→ 新版本”、小进度条与百分比，悬停看大小与速度），
+// 下载好变成“重启更新到 vX”，
 // 点了由客户端确认后重启安装。旧版客户端没有 update 接口：只显示版本号
 
 let appVersion = '';
@@ -538,7 +546,15 @@ function versionTitle(): string {
     status.state === 'checking'
       ? st('updateChecking')
       : status.state === 'downloading'
-        ? st('updateDownloading', { v: status.version, p: status.percent })
+        ? status.total
+          ? st('updateDownloadingBytes', {
+              v: status.version,
+              p: status.percent,
+              done: formatBytes(status.transferred ?? 0),
+              total: formatBytes(status.total),
+              speed: formatBytes(status.bytesPerSecond ?? 0),
+            })
+          : st('updateDownloading', { v: status.version, p: status.percent })
         : status.state === 'downloaded'
           ? st('updateReadyTitle', { v: status.version })
           : status.state === 'not-available'
@@ -559,15 +575,26 @@ function renderVersion(): void {
   versionLabel.classList.toggle('is-clickable', clickable);
   versionLabel.tabIndex = clickable ? 0 : -1;
   versionLabel.setAttribute('role', clickable ? 'button' : 'note');
-  versionLabel.textContent =
-    flash && Date.now() < flash.until
-      ? flash.text
-      : status.state === 'downloaded'
-        ? st('updateReady', { v: status.version })
-        : status.state === 'downloading'
-          ? `v${appVersion} → ${status.version}`
-          : `v${appVersion}`;
+  if (!versionLabel.firstChild) versionLabel.append(versionText, versionBar, versionPercent);
+  const flashText = flash && Date.now() < flash.until ? flash.text : null;
+  const downloading = !flashText && status.state === 'downloading' ? status : null;
+  versionText.textContent =
+    flashText ??
+    (status.state === 'downloaded'
+      ? st('updateReady', { v: status.version })
+      : downloading
+        ? `→ v${downloading.version}`
+        : `v${appVersion}`);
+  versionBar.hidden = versionPercent.hidden = !downloading;
+  if (downloading) {
+    versionBarFill.style.width = `${downloading.percent}%`;
+    versionPercent.textContent = `${downloading.percent}%`;
+  }
   versionLabel.title = versionTitle();
+}
+
+function formatBytes(bytes: number): string {
+  return bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 function onVersionClick(): void {

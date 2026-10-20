@@ -2,7 +2,7 @@
  * 自动更新：electron-updater，发布源是公开的 GitHub 仓库 XMZO/CloudSSH-client 的 Releases（electron-builder.yml 的
  * publish；打包时生成 resources/app-update.yml，发布时上传安装包、blockmap 与 latest.yml）。
  *
- * - 启动 15 秒后检查一次，之后每 6 小时一次；有新版本就在后台静默下载（差分下载），下载完不打扰：
+ * - 启动 15 秒后检查一次，之后每 6 小时一次；有新版本就在后台静默下载（差分下载，左下角显示进度条与百分比），下载完不打扰：
  *   左下角版本号变成“重启更新”，点了确认后重启安装；不点也会在退出客户端时自动安装
  * - 只有用安装包装的客户端才更新：开发版、免安装版（zip，没有卸载程序）不检查，左下角说明原因
  * - 装好新版本后，第一次检查前删掉缓存里多余的那份安装包；卸载时整个更新缓存由卸载程序删除（update-cache.ts）
@@ -23,7 +23,8 @@ const CHECK_EVERY_MS = 6 * 3600_000;
 export type UpdateStatus =
   | { state: 'idle' }
   | { state: 'checking' }
-  | { state: 'downloading'; version: string; percent: number }
+  /** transferred / total 是字节数（差分下载只算要下载的那些块），bytesPerSecond 是当前速度；第一次进度回来之前没有 */
+  | { state: 'downloading'; version: string; percent: number; transferred?: number; total?: number; bytesPerSecond?: number }
   | { state: 'downloaded'; version: string }
   | { state: 'not-available'; checkedAt: number }
   | { state: 'error'; message: string }
@@ -123,8 +124,16 @@ class GitHubUpdater implements UpdateProvider {
     (updater as { disableWebInstaller?: boolean }).disableWebInstaller = true;
     updater.on('checking-for-update', () => this.set({ state: 'checking' }));
     updater.on('update-available', (info) => this.set({ state: 'downloading', version: info.version, percent: 0 }));
+    // electron-updater 大约每秒报一次进度（左下角的进度条与百分比）
     updater.on('download-progress', (progress) => {
-      if (this.current.state === 'downloading') this.set({ ...this.current, percent: Math.floor(progress.percent) });
+      if (this.current.state !== 'downloading') return;
+      this.set({
+        ...this.current,
+        percent: Math.min(100, Math.max(0, Math.floor(progress.percent))),
+        transferred: progress.transferred,
+        total: progress.total,
+        bytesPerSecond: progress.bytesPerSecond,
+      });
     });
     updater.on('update-not-available', () => this.set({ state: 'not-available', checkedAt: Date.now() }));
     updater.on('update-downloaded', (info) => this.set({ state: 'downloaded', version: info.version }));

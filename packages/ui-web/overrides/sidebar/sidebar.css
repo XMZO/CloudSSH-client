@@ -342,9 +342,11 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
 /* 客户端版本：不抢眼的淡色小字，点一下检查更新；侧栏窄时让实例名先省略 */
 .cs-sb-version {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   border-radius: 4px;
   font-size: 11px;
@@ -380,6 +382,47 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
 .cs-sb-version[data-state='downloaded'] {
   color: var(--accent);
   opacity: 1;
+}
+
+/* 窄的时候先省略文字，进度条与百分比留着 */
+.cs-sb-version-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cs-sb-progress {
+  flex: none;
+  position: relative;
+  width: 32px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.cs-sb-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.4s ease-out;
+}
+
+.cs-sb-percent {
+  flex: none;
+}
+
+.cs-sb-progress[hidden],
+.cs-sb-percent[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-sb-progress-fill {
+    transition: none;
+  }
 }
 
 .cs-sb-resizer {

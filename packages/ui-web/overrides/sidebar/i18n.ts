@@ -42,6 +42,7 @@ const zhCN = {
   updateError: '检查更新失败：{m} · 点击重试',
   updateLatestShort: '已是最新',
   updateFailShort: '检查失败：{m}',
+  updateDownloadingBytes: '正在下载新版本 v{v}：{p}%（{done} / {total}，{speed}/s），下载完可以重启更新',
   manageInstances: '实例管理',
   hooksMissing: '当前内置 UI 版本不支持从侧栏连接，请在服务器列表中连接',
 } as const;
@@ -91,6 +92,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     updateError: '檢查更新失敗：{m} · 點擊重試',
     updateLatestShort: '已是最新',
     updateFailShort: '檢查失敗：{m}',
+    updateDownloadingBytes: '正在下載新版本 v{v}：{p}%（{done} / {total}，{speed}/s），下載完可以重新啟動更新',
     manageInstances: '實例管理',
     hooksMissing: '目前內建 UI 版本不支援從側欄連線，請在伺服器清單中連線',
   },
@@ -135,6 +137,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     updateError: 'Update check failed: {m} · click to retry',
     updateLatestShort: 'Up to date',
     updateFailShort: 'Check failed: {m}',
+    updateDownloadingBytes: 'Downloading v{v}: {p}% ({done} of {total}, {speed}/s); restart to update when it is done',
     manageInstances: 'Instances',
     hooksMissing: 'This built-in UI cannot connect from the sidebar; use the server list instead',
   },

@@ -52,7 +52,7 @@ interface CloudSSHDesktopMenuState {
 type CloudSSHUpdateStatus =
   | { state: 'idle' }
   | { state: 'checking' }
-  | { state: 'downloading'; version: string; percent: number }
+  | { state: 'downloading'; version: string; percent: number; transferred?: number; total?: number; bytesPerSecond?: number }
   | { state: 'downloaded'; version: string }
   | { state: 'not-available'; checkedAt: number }
   | { state: 'error'; message: string }

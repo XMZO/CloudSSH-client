@@ -6,6 +6,7 @@
  *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist   # 同时托管构建好的界面，浏览器直接打开调试
  *   node scripts/mock-worker.mjs 8788 --servers 90                 # 补足到 90 台服务器，看节点很多时的流畅度
  *   node scripts/mock-worker.mjs 8788 --anon                       # 未登录（匿名连接页），可走一遍模拟的 GitHub 登录
+ *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist --desktop-shim   # 模拟桌面客户端的桥接（左下角版本号与自动更新）
  *
  * 客户端把实例地址设为 http://127.0.0.1:8788（安卓模拟器可配合 adb reverse tcp:8788 tcp:8788）。
  * 带 --ui 时，非 /api 的 GET 请求返回该目录下的文件（找不到就返回 index.html），浏览器打开 http://127.0.0.1:8788 即可。
@@ -24,6 +25,9 @@ const uiArg = args.indexOf('--ui');
 const uiDir = uiArg >= 0 && args[uiArg + 1] ? nodePath.resolve(args[uiArg + 1]) : null;
 /** --mobile-shim：托管手机版构建时在 index.html 最前面插入 scripts/mock-tauri.js，浏览器里就能跑手机版界面 */
 const mobileShim = args.includes('--mobile-shim');
+/** --desktop-shim：托管桌面版构建时插入 scripts/mock-desktop.js，模拟客户端的桥接（版本号、检查与下载更新） */
+const desktopShim = args.includes('--desktop-shim');
+const shim = mobileShim ? 'mock-tauri.js' : desktopShim ? 'mock-desktop.js' : null;
 const anonymous = args.includes('--anon');
 const now = Date.now();
 
@@ -313,9 +317,9 @@ const CONTENT_TYPES = {
 };
 
 function serveUi(res, pathname) {
-  if (mobileShim && pathname === '/__mock-tauri.js') {
+  if (shim && pathname === `/__${shim}`) {
     res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-store' });
-    return fs.createReadStream(new URL('./mock-tauri.js', import.meta.url)).pipe(res);
+    return fs.createReadStream(new URL(`./${shim}`, import.meta.url)).pipe(res);
   }
   let file = nodePath.join(uiDir, decodeURIComponent(pathname));
   // 只允许目录内的文件；目录或不存在的路径交给单页应用的 index.html
@@ -323,8 +327,8 @@ function serveUi(res, pathname) {
     file = nodePath.join(uiDir, 'index.html');
   }
   res.writeHead(200, { 'Content-Type': CONTENT_TYPES[nodePath.extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
-  if (mobileShim && file.endsWith('index.html')) {
-    return res.end(fs.readFileSync(file, 'utf8').replace(/<head([^>]*)>/i, '<head$1><script src="/__mock-tauri.js"></script>'));
+  if (shim && file.endsWith('index.html')) {
+    return res.end(fs.readFileSync(file, 'utf8').replace(/<head([^>]*)>/i, `<head$1><script src="/__${shim}"></script>`));
   }
   fs.createReadStream(file).pipe(res);
 }
