@@ -478,6 +478,7 @@ function boxMenu() {
 const HELP = [
   '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  pager（全屏，方向键滚动，q 退出）  nano（像 nano，Alt+M 开关鼠标，Ctrl+X 退出）  size  clear  exit',
   '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）',
+  '调试断线判定：stall（远程主机无响应）  backlog（本机没确认输出，如省电冻结）  idle（长时间没操作）  kick（无原因关闭）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
 
@@ -502,6 +503,25 @@ function runCommand(line, write, term, ws) {
       // 模拟远程主机断开（服务器重启、sshd 被杀……）：Worker 报错后以 1011 关闭
       ws.sendJson({ type: 'error', message: '远程主机已关闭连接', event: 'remote_closed' });
       setTimeout(() => ws.close(1011), 50);
+      break;
+    case 'stall':
+      // 远程主机不回保活（宕机、断网）：与 Worker 一样报 keepalive_timeout 后以 1011 关闭
+      ws.sendJson({ type: 'error', message: 'SSH 连接超时，保活失败', event: 'keepalive_timeout' });
+      setTimeout(() => ws.close(1011), 50);
+      break;
+    case 'backlog':
+      // 本机 60 秒没确认终端输出（省电冻结、后台节流）：Worker 报 output_backlog_closed 后以 1000 关闭
+      ws.sendJson({ type: 'error', message: '终端输出积压或客户端确认超时，连接已关闭', event: 'output_backlog_closed' });
+      setTimeout(() => ws.close(1000), 50);
+      break;
+    case 'idle':
+      // 用户长时间没操作（离开、待机）：Worker 报 session_idle_timeout 后以 1000 关闭
+      ws.sendJson({ type: 'error', message: '会话因长时间未活动已自动断开（空闲超时）', event: 'session_idle_timeout' });
+      setTimeout(() => ws.close(1000), 50);
+      break;
+    case 'kick':
+      // 没有任何原因就以 1000 关闭（判断不了是谁那边的原因）
+      setTimeout(() => ws.close(1000), 50);
       break;
     case 'help':
       write(`${HELP}\r\n`);
@@ -1371,6 +1391,8 @@ function attachShell(ws, url) {
         write('\x1b[?2004l\r\n');
         if (line.trim() === 'exit') {
           write('logout\r\n');
+          // 与 Worker 一样：Shell 通道结束时先报 session_ended，再以 1000 关闭
+          ws.sendJson({ type: 'status', message: '会话已结束', event: 'session_ended' });
           setTimeout(() => ws.close(1000), 50);
           return;
         }

@@ -225,17 +225,30 @@ const COMMON_HOOKS: Hook[] = [
     anchor: "  private processTerminalInput(\n    data: string,\n    source: 'keyboard' | 'focus-report' = 'keyboard'\n  ): void {\n",
     inject: "    if (!this.sessionReady && source === 'keyboard' && (this as any).__cloudsshReconnectNow?.() === true) return;\n",
   },
-  // 会话正常结束（exit、空闲超时断开……服务端以 1000 关闭）后网页版不重连，终端就停在那里。
+  // 会话正常结束（exit、空闲超时断开、本机没确认输出……服务端以 1000 关闭）后网页版不重连，终端就停在那里。
   // 会话曾经就绪过的才提示“按任意键重新连接”，按键后立即重连（复用上面的输入入口）：
   // 已保存的服务器重新申请一次性令牌，匿名连接用内存里这次的配置，与网页版自动重连同一套路径。
   // 从没连上（认证失败、主机指纹变化待确认）、分享会话（只允许秒级恢复）不提示。
   // 关闭前是否就绪用实例属性传过去：任一锚点失效时条件不成立，行为与网页版一致。
-  // 在这之前先问 overrides/shared/session-end.ts：开了“服务器端断开时自动关闭标签”且是服务器端断开（1000 / 1011）时，
-  // 它安排关闭标签并返回 true，这里直接结束，不再排定重连、不提示按键重连
+  // 在这之前先问 overrides/shared/session-end.ts：开了“服务器端断开时自动关闭标签”且 Worker 关闭前报的原因确定是
+  // 服务器那头结束（exit、远程主机断开或无响应）时，它安排关闭标签并返回 true，这里直接结束，不再排定重连、不提示按键重连。
+  // 原因靠下面记下的“这条连接最后一个带 event 的 status / error 消息”：关闭码本身分不清——本机省电冻结没确认输出、
+  // 待机太久空闲超时，Worker 同样以 1000 关闭。没记到原因（锚点失效、Worker 没报）时一律不关
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: "          if (msg.type === 'agent_frame') {\n            this.onAgentFrameHandler?.(msg);\n            return;\n          }\n",
+    inject:
+      "          if ((msg.type === 'status' || msg.type === 'error') && typeof msg.event === 'string') (this as any).__cloudsshLastEvent = msg.event;\n",
+  },
   {
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '    this.ws.onclose = (event) => {\n      if (socket !== this.ws) return;\n',
-    inject: '      (this as any).__cloudsshWasReady = this.sessionReady;\n',
+    inject: [
+      '      (this as any).__cloudsshWasReady = this.sessionReady;',
+      '      (this as any).__cloudsshClosingEvent = (this as any).__cloudsshLastEvent;',
+      '      (this as any).__cloudsshLastEvent = undefined;',
+      '',
+    ].join('\n'),
   },
   {
     file: '/upstream/frontend/src/terminal.ts',

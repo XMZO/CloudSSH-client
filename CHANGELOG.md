@@ -8,6 +8,7 @@
 
 ### 修复
 
+- **“服务器端断开时自动关闭标签”把本机原因的断线也当成服务器断开**：原来只看关闭码（1000 / 1011），可本机省电冻结、切到后台没确认终端输出（`output_backlog_closed`）、待机太久没操作（`session_idle_timeout`），Worker 同样以 1000 关闭，标签被直接关掉、不再重连。现在看 Worker 关闭前报的原因：只有 Shell 结束（`session_ended`，exit 等）、远程主机断开（`remote_closed`）、远程主机无响应（`keepalive_timeout`、`idle_timeout`）才关；其他原因、没报原因的一律保留标签，照常自动重连或按任意键重连。电脑与手机同一套；设置里的说明同步改了。假 Worker 的 `exit` 像 Worker 一样先报 `session_ended`，加 `stall`、`backlog`、`idle`、`kick` 模拟各种断线
 - **远程 MCP：Claude Code 等本机客户端授权时报“回调地址（redirect_uri）与注册的不一致”**：本机应用的回调每次登录临时挑端口（Claude Code 的客户端元数据写 `http://localhost/callback`，实际来的是 `http://localhost:62951/callback`），原来要求完全一致。现在本机 http 回调（localhost、127.0.0.1、[::1]）按 RFC 8252 §7.3 不比端口，主机、路径、参数仍要一致，https 回调仍要完全一致；换令牌时的回调仍要与授权时一致
 
 ## [0.3.38] - 2026-10-20 · 牛郎 Altair
