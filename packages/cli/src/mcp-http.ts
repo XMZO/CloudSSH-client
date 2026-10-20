@@ -633,7 +633,14 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
   // ----- 路由 -----
 
   async function route(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    // 扫描器会发 //..%2f.env 这类路径：按协议相对地址解析会抛错，一律当本站路径解析，解析不了回 400
+    let url: URL;
+    try {
+      const raw = req.url ?? '/';
+      url = new URL(`http://localhost${raw.startsWith('/') ? raw : `/${raw}`}`);
+    } catch {
+      return send(res, 400, { error: 'bad_request' });
+    }
     const route = `${req.method} ${url.pathname.replace(/\/+$/, '') || '/'}`;
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {

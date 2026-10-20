@@ -161,6 +161,23 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.equal(bad.status, 401);
   });
 
+  test('扫描器的怪路径：回 404，不报错', async () => {
+    const net = await import('node:net');
+    const { port } = new URL(server.base);
+    for (const path of ['//..%2f.env', '//evil.example/x', '/..%2f..%2fetc/passwd']) {
+      const status = await new Promise((resolve, reject) => {
+        // fetch 会先规范化路径，这里用原始请求行
+        const socket = net.connect(Number(port), '127.0.0.1', () => socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`));
+        let data = '';
+        socket.on('data', (chunk) => (data += chunk));
+        socket.on('end', () => resolve(Number(/^HTTP\/1\.1 (\d+)/.exec(data)?.[1])));
+        socket.on('error', reject);
+      });
+      assert.equal(status, 404, path);
+    }
+    assert.doesNotMatch(server.stderr, /出错/);
+  });
+
   test('动态注册：回调地址要是 https（或本机 http），否则拒绝', async () => {
     assert.equal((await register(server.base, { redirect_uris: ['http://evil.example/cb'] })).status, 400);
     assert.equal((await register(server.base, { redirect_uris: [] })).status, 400);
