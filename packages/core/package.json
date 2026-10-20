@@ -1,6 +1,6 @@
 {
   "name": "@cloudssh/core",
-  "version": "0.3.35",
+  "version": "0.3.36",
   "private": true,
   "description": "CloudSSH 平台无关核心：实例配置、接口路由、协议类型与可注入传输的 API 客户端（桌面/移动/自研 UI 共用）",
   "type": "module",
