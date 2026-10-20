@@ -1271,11 +1271,16 @@ function attachShell(ws, url) {
       nanoStatus(nano.mouse ? '已启用鼠标支持' : '已禁用鼠标支持');
       console.log(`nano：鼠标${nano.mouse ? '打开' : '关闭'}`);
     } else if ((m = /^\x1b\[<0;(\d+);(\d+)M$/.exec(sequence)) && nano.mouse) {
+      const now = Date.now();
+      // 像真的 nano：同一位置很快点两下是双击，设下标记
+      const double = nano.last && nano.last.col === Number(m[1]) && nano.last.row === Number(m[2]) && now - nano.last.at < 400;
       nano.col = Number(m[1]);
       nano.row = Number(m[2]);
       nano.clicks++;
+      nano.last = double ? null : { col: nano.col, row: nano.row, at: now };
       write(`\x1b[${nano.row};${nano.col}H`);
-      console.log(`nano：点击 第 ${nano.row} 行 第 ${nano.col} 列`);
+      if (double) nanoStatus('Mark Set');
+      console.log(`nano：${double ? '双击（设下标记 Mark Set）' : '点击'} 第 ${nano.row} 行 第 ${nano.col} 列`);
     } else if (sequence === '\x18') {
       nano = null;
       write(`\x1b[?1000l\x1b[?1006l\x1b[?1l\x1b[?1049l${PROMPT}`);

@@ -54,7 +54,7 @@ export function installTapCursor(): void {
       tap = null;
       if (!current || event.pointerId !== current.pointerId || current.hadSelection) return;
       if (Date.now() - current.at > TAP_MS || Math.hypot(event.clientX - current.x, event.clientY - current.y) > TAP_MOVE_PX) return;
-      cursorClick(current.term, current.screen, current.x, current.y);
+      cursorClick(current.term, current.screen, current.x, current.y, 'touch');
     },
     true
   );

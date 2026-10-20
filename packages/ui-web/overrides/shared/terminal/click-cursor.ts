@@ -46,6 +46,27 @@ let hinted = false;
 let nanoNoticeShown = false;
 /** 补报给 nano 的点击：桌面端的点击检测不要再处理它 */
 let replaying = false;
+/**
+ * 手机端：替 nano 打开鼠标后，这一下轻点浏览器自己补发的兼容鼠标事件（mousedown / mouseup / click）可能晚到、
+ * 正好赶上鼠标模式已经打开，nano 就会收到同一位置的两次点击，当成双击设下标记（[ Mark Set ]）。
+ * 这段时间里吞掉它们，只留补报的那一下
+ */
+const COMPAT_SWALLOW_MS = 700;
+let swallowCompatUntil = 0;
+let compatGuardInstalled = false;
+
+function guardCompatMouse(): void {
+  swallowCompatUntil = Date.now() + COMPAT_SWALLOW_MS;
+  if (compatGuardInstalled) return;
+  compatGuardInstalled = true;
+  const swallow = (event: Event) => {
+    if (replaying || Date.now() >= swallowCompatUntil) return;
+    if (!(event.target instanceof Element) || !event.target.closest('.xterm')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) document.addEventListener(type, swallow, true);
+}
 
 function modifierArmed(): boolean {
   return !!document.querySelector('#mobile-terminal-toolbar [data-mobile-modifier][aria-pressed="true"]');
@@ -218,7 +239,7 @@ function showEditorHint(): void {
  * 一次干脆的单击 / 轻点落在终端上（调用方已经排除了拖动、长按、双击、按下时就有选区的情况）：
  * 命令行里把光标移过去；nano 没开鼠标时替它打开并补报这一下；别的编辑器没开鼠标时提示一次
  */
-export function cursorClick(term: Terminal, screen: HTMLElement, clientX: number, clientY: number): void {
+export function cursorClick(term: Terminal, screen: HTMLElement, clientX: number, clientY: number, source: 'touch' | 'mouse' = 'mouse'): void {
   if (replaying) return;
   const state = trackTerminal(term);
   if (term.hasSelection() || modifierArmed()) return;
@@ -228,7 +249,11 @@ export function cursorClick(term: Terminal, screen: HTMLElement, clientX: number
   if (term.buffer.active.type === 'alternate') {
     if (mouse) return;
     if (isNano(term)) {
-      if (!state.nanoTried) void enableNanoMouse(term, state, screen, clientX, clientY);
+      if (!state.nanoTried) {
+        // 手机端：这一下轻点浏览器还会补发鼠标事件，鼠标模式打开后别让它再报给 nano（不然成了双击）
+        if (source === 'touch') guardCompatMouse();
+        void enableNanoMouse(term, state, screen, clientX, clientY);
+      }
       return;
     }
     showEditorHint();
