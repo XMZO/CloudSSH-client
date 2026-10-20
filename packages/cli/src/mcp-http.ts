@@ -223,16 +223,40 @@ function fetchClientMetadata(url: string): Promise<Json> {
 
 // ---------- 工具函数 ----------
 
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
 function validRedirectUri(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2000) return false;
   try {
     const url = new URL(value);
     if (url.hash) return false;
     if (url.protocol === 'https:') return true;
-    return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    return url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname);
   } catch {
     return false;
   }
+}
+
+/** 本机回调去掉端口后的样子；不是本机 http 回调时为 null */
+function loopbackWithoutPort(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' || !LOOPBACK_HOSTS.includes(url.hostname) || url.username || url.password || url.hash) return null;
+    url.port = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 回调地址是否是注册过的：一般要完全一致；本机 http 回调按 RFC 8252 §7.3 不比端口（主机、路径、参数照样要一致）——
+ * 本机应用每次登录临时挑一个端口，例如 Claude Code 的元数据写的是 http://localhost/callback，实际来的是 http://localhost:62951/callback
+ */
+function redirectAllowed(registered: string[], requested: string): boolean {
+  if (registered.includes(requested)) return true;
+  const target = loopbackWithoutPort(requested);
+  return !!target && registered.some((uri) => loopbackWithoutPort(uri) === target);
 }
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -403,7 +427,7 @@ export async function serveHttp(options: HttpOptions): Promise<void> {
     // 认不出客户端或回调地址时不能跳回去（可能被拿来做开放跳转），直接显示错误
     if (!client) return sendHtml(res, 400, page('无法授权', '<h1>无法授权</h1><p class="error">不认识这个客户端（client_id）。</p>'));
     const redirect = redirectUri || (client.redirectUris.length === 1 ? client.redirectUris[0] : '');
-    if (!redirect || !client.redirectUris.includes(redirect)) {
+    if (!redirect || !redirectAllowed(client.redirectUris, redirect)) {
       return sendHtml(res, 400, page('无法授权', '<h1>无法授权</h1><p class="error">回调地址（redirect_uri）与注册的不一致。</p>'));
     }
     const back = (error: string, description: string) => {

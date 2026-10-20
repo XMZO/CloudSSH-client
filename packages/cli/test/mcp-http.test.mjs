@@ -63,8 +63,8 @@ function authorizeUrl(base, clientId, extra = {}) {
 }
 
 /** 走完授权：打开授权页、交口令，返回跳回去的地址 */
-async function approve(base, clientId, challenge, password = PASSWORD) {
-  const page = await fetch(authorizeUrl(base, clientId, { code_challenge: challenge, code_challenge_method: 'S256' }), { redirect: 'manual' });
+async function approve(base, clientId, challenge, password = PASSWORD, extra = {}) {
+  const page = await fetch(authorizeUrl(base, clientId, { code_challenge: challenge, code_challenge_method: 'S256', ...extra }), { redirect: 'manual' });
   assert.equal(page.status, 200);
   const html = await page.text();
   const request = /name="request" value="([^"]+)"/.exec(html)?.[1];
@@ -189,6 +189,31 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     const confidential = await register(server.base, { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'client_secret_post' });
     assert.equal(confidential.status, 201);
     assert.ok(confidential.body.client_secret);
+  });
+
+  test('本机回调不比端口（RFC 8252）：注册 http://localhost/callback，登录时用临时端口照样能授权、换令牌', async () => {
+    // Claude Code 的客户端元数据就是这样：redirect_uris 不带端口，登录时本机临时挑一个
+    const client = (await register(server.base, { client_name: 'Loopback', redirect_uris: ['http://localhost/callback'] })).body;
+    const tryRedirect = (redirect_uri) =>
+      fetch(authorizeUrl(server.base, client.client_id, { redirect_uri, code_challenge: challengeOf(verifier()), code_challenge_method: 'S256' }), { redirect: 'manual' });
+    // 主机、路径、参数不一样的仍然拒绝；只有本机 http 回调放宽端口
+    for (const other of ['http://127.0.0.1:62951/callback', 'http://localhost:62951/other', 'http://localhost:62951/callback?x=1', 'https://localhost:62951/callback']) {
+      assert.equal((await tryRedirect(other)).status, 400, other);
+    }
+    const redirect = 'http://localhost:62951/callback';
+    const codeVerifier = verifier();
+    const back = await approve(server.base, client.client_id, challengeOf(codeVerifier), PASSWORD, { redirect_uri: redirect });
+    assert.equal(back.status, 302);
+    const location = new URL(back.headers.get('location'));
+    assert.equal(`${location.origin}${location.pathname}`, redirect);
+    const code = location.searchParams.get('code');
+    // 换令牌时的 redirect_uri 要与授权时的一致（带端口）
+    assert.equal((await tokenRequest(server.base, { grant_type: 'authorization_code', code, redirect_uri: 'http://localhost/callback', client_id: client.client_id, code_verifier: codeVerifier })).status, 400);
+    const codeVerifier2 = verifier();
+    const back2 = await approve(server.base, client.client_id, challengeOf(codeVerifier2), PASSWORD, { redirect_uri: redirect });
+    const code2 = new URL(back2.headers.get('location')).searchParams.get('code');
+    const tokens = await tokenRequest(server.base, { grant_type: 'authorization_code', code: code2, redirect_uri: redirect, client_id: client.client_id, code_verifier: codeVerifier2 });
+    assert.equal(tokens.status, 200, JSON.stringify(tokens.body));
   });
 
   test('授权页：不认识的客户端、对不上的回调不跳转；缺 PKCE 跳回带错误；口令错误不发授权码', async () => {

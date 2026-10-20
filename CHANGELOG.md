@@ -4,6 +4,12 @@
 
 版本号与代号统一由根目录的 `version.json` 管理（见 README“[版本号与版本代号](README.md#版本号与版本代号)”）。代号取自夜空中的亮星：次版本号或主版本号升级时换新代号，修订版沿用原代号。
 
+## [Unreleased]
+
+### 修复
+
+- **远程 MCP：Claude Code 等本机客户端授权时报“回调地址（redirect_uri）与注册的不一致”**：本机应用的回调每次登录临时挑端口（Claude Code 的客户端元数据写 `http://localhost/callback`，实际来的是 `http://localhost:62951/callback`），原来要求完全一致。现在本机 http 回调（localhost、127.0.0.1、[::1]）按 RFC 8252 §7.3 不比端口，主机、路径、参数仍要一致，https 回调仍要完全一致；换令牌时的回调仍要与授权时一致
+
 ## [0.3.38] - 2026-10-20 · 牛郎 Altair
 
 ### 变更
