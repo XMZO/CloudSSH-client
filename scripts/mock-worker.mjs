@@ -472,7 +472,7 @@ function boxMenu() {
 }
 
 const HELP = [
-  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  pager（全屏，方向键滚动，q 退出）  size  clear  exit',
+  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  pager（全屏，方向键滚动，q 退出）  nano（像 nano，Alt+M 开关鼠标，Ctrl+X 退出）  size  clear  exit',
   '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
@@ -1249,6 +1249,38 @@ function attachShell(ws, url) {
     const body = Array.from({ length: height }, (_, i) => `第 ${pager.top + i + 1} 行  ${'·'.repeat(10)}`);
     write(`\x1b[H\x1b[2J${body.join('\r\n')}\r\n\x1b[7m pager  第 ${pager.top + 1} 行起  收到 上 ${pager.up} / 下 ${pager.down}  （q 退出）\x1b[0m`);
   };
+  /**
+   * nano 命令：画一个像 nano 的界面（第一行反显的“GNU nano 7.2”标题栏、底部帮助栏），开括号粘贴与光标键应用模式；
+   * Alt+M 开关鼠标支持（SGR），开着时收到点击就把光标移过去并记日志；Ctrl+X 退出。用来调试点哪光标到哪
+   */
+  let nano = null;
+  const drawNano = () => {
+    const width = term.cols;
+    const title = `  GNU nano 7.2${' '.repeat(Math.max(1, Math.floor(width / 2) - 18))}test.txt`;
+    const lines = [`\x1b[H\x1b[2J\x1b[7m${title.padEnd(width).slice(0, width)}\x1b[0m`];
+    for (let row = 2; row <= term.rows - 3; row++) lines.push(`第 ${row - 1} 行：nano 测试文本 hello world`);
+    lines.push('', `\x1b[7m^G\x1b[0m 帮助  \x1b[7m^O\x1b[0m 写入  \x1b[7m^X\x1b[0m 退出  \x1b[7mM-M\x1b[0m 鼠标`, `\x1b[7m^K\x1b[0m 剪切  \x1b[7m^U\x1b[0m 粘贴`);
+    write(`${lines.join('\r\n')}\x1b[${nano.row};${nano.col}H`);
+  };
+  const nanoStatus = (text) => write(`\x1b7\x1b[${term.rows - 2};1H\x1b[2K\x1b[7m[ ${text} ]\x1b[0m\x1b8`);
+  const nanoKey = (sequence) => {
+    let m;
+    if (sequence === '\x1bm' || sequence === '\x1bM') {
+      nano.mouse = !nano.mouse;
+      write(nano.mouse ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1000l\x1b[?1006l');
+      nanoStatus(nano.mouse ? '已启用鼠标支持' : '已禁用鼠标支持');
+      console.log(`nano：鼠标${nano.mouse ? '打开' : '关闭'}`);
+    } else if ((m = /^\x1b\[<0;(\d+);(\d+)M$/.exec(sequence)) && nano.mouse) {
+      nano.col = Number(m[1]);
+      nano.row = Number(m[2]);
+      nano.clicks++;
+      write(`\x1b[${nano.row};${nano.col}H`);
+      console.log(`nano：点击 第 ${nano.row} 行 第 ${nano.col} 列`);
+    } else if (sequence === '\x18') {
+      nano = null;
+      write(`\x1b[?1000l\x1b[?1006l\x1b[?1l\x1b[?1049l${PROMPT}`);
+    }
+  };
   const pagerKey = (sequence) => {
     if (sequence === '\x1b[A' || sequence === '\x1bOA') {
       pager.up++;
@@ -1283,14 +1315,28 @@ function attachShell(ws, url) {
       const ch = text[i];
       if (ch === '\x1b') {
         // 方向键等转义序列：pager 里滚动，其他时候跳过
-        const rest = /^\x1b(\[[0-9;?]*[ -/]*[@-~]|O.)/.exec(text.slice(i));
+        // CSI（含 SGR 鼠标报告 ESC [ < …）、SS3（ESC O x）、Alt+字母（ESC x）
+        const rest = /^\x1b(\[[<0-9;?]*[ -/]*[@-~]|O.|[a-zA-Z])/.exec(text.slice(i));
         if (rest) i += rest[0].length - 1;
-        if (pager && rest) pagerKey(rest[0]);
+        if (nano && rest) nanoKey(rest[0]);
+        else if (pager && rest) pagerKey(rest[0]);
         else if (rest) lineKey(rest[0]);
+        continue;
+      }
+      if (nano) {
+        nanoKey(ch);
         continue;
       }
       if (pager) {
         pagerKey(ch);
+        continue;
+      }
+      if ((ch === '\r' || ch === '\n') && line.trim() === 'nano') {
+        line = '';
+        pos = 0;
+        nano = { mouse: false, row: 2, col: 1, clicks: 0 };
+        write('\r\n\x1b[?1049h\x1b[?1h');
+        drawNano();
         continue;
       }
       if ((ch === '\r' || ch === '\n') && /^pager( -m)?$/.test(line.trim())) {

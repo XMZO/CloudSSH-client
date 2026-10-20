@@ -10,7 +10,7 @@
  * - sidebar/：左侧节点侧栏（按标签分组、搜索、双击连接、会话指示）
  * - shared/language-picker.ts：语言按钮显示当前语言，点开下拉选择
  * - shared/web-fixes.css：网页版界面的通用修正（与手机端共用）
- * - shared/terminal/：内置终端字体与关键词高亮（与手机端共用）
+ * - shared/terminal/：内置终端字体与关键词高亮、单击定位光标（与手机端共用）
  * - desktop/：界面主题（工作台 / 经典）：自绘标题栏、表格化服务器列表、终端占满窗口
  * - shared/server-tags.ts：添加服务器时点选已有标签，标签重命名、复制（与手机端共用）
  */
@@ -20,13 +20,16 @@ import { installLanguagePicker, popoverLanguageMenu } from './shared/language-pi
 import { installAgentOutput } from './shared/agent-output';
 import { installCompactServerForm } from './shared/server-form';
 import { installTagPicker } from './shared/server-tags';
-import { installTerminalEnhancements } from './shared/terminal';
+import { installTerminalEnhancements, terminalFor } from './shared/terminal';
+import { installMouseClickCursor } from './shared/terminal/click-cursor';
 import { mountDesktopShell } from './desktop';
 import { mountSidebar } from './sidebar/sidebar';
 
 document.documentElement.dataset.cloudsshClient = 'desktop';
 // 要在网页版创建第一个终端之前装好（构建钩子在创建终端时回调）
 installTerminalEnhancements();
+// 命令行里单击把光标移过去；nano 没开鼠标时第一次单击替它打开（shared/terminal/click-cursor.ts，与手机端轻点共用）
+installMouseClickCursor(terminalFor);
 
 window.cloudsshDesktop
   ?.info()

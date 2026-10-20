@@ -118,7 +118,6 @@ const zhCN = {
   selCopied: '已复制 {n} 个字符',
   selNothing: '没有可复制的内容',
   fontSizeHud: '字号 {n}',
-  editorMouseHint: '这个编辑器没开鼠标支持，点按定位不了光标：nano 按 Alt+M 打开（或在 ~/.nanorc 加一行 set mouse），vim 输入 :set mouse=a。开了以后点哪光标就到哪，滑动也会照常滚动',
 } as const;
 
 type Key = keyof typeof zhCN;
@@ -243,7 +242,6 @@ const dictionaries: Record<string, Record<Key, string>> = {
     selCopied: '已複製 {n} 個字元',
     selNothing: '沒有可複製的內容',
     fontSizeHud: '字級 {n}',
-    editorMouseHint: '這個編輯器沒開滑鼠支援，點按無法定位游標：nano 按 Alt+M 開啟（或在 ~/.nanorc 加一行 set mouse），vim 輸入 :set mouse=a。開啟後點哪游標就到哪，滑動也會照常捲動',
   },
   'en-US': {
     nodes: 'Hosts',
@@ -362,7 +360,6 @@ const dictionaries: Record<string, Record<Key, string>> = {
     selCopied: 'Copied {n} characters',
     selNothing: 'Nothing to copy',
     fontSizeHud: 'Font size {n}',
-    editorMouseHint: 'This editor has mouse support off, so tapping cannot move the cursor. In nano press Alt+M (or add “set mouse” to ~/.nanorc); in vim type :set mouse=a. Then tapping places the cursor and swiping scrolls as usual',
   },
 };
 

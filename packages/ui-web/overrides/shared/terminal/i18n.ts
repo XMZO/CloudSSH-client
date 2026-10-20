@@ -63,6 +63,8 @@ const zhCN = {
   'note.b-stopped': '停止/缺失',
   'note.b-level-info': '日志级别 INFO',
   'note.b-level-debug': '日志级别 DEBUG',
+  editorMouseHint: '这个编辑器没开鼠标支持，点不到光标位置：vim 输入 :set mouse=a，nano 按 Alt+M（或在 ~/.nanorc 加一行 set mouse）。开了以后点哪光标就到哪，滚动也照常',
+  nanoMouseOn: '已为 nano 打开鼠标支持：点哪光标到哪，滚动照常（Alt+M 可以关掉，关掉后这次不再自动打开）',
 };
 
 type Key = keyof typeof zhCN;
@@ -127,6 +129,8 @@ const dictionaries: Record<string, Record<Key, string>> = {
     'note.b-stopped': '停止/缺失',
     'note.b-level-info': '記錄層級 INFO',
     'note.b-level-debug': '記錄層級 DEBUG',
+    editorMouseHint: '這個編輯器沒開滑鼠支援，點不到游標位置：vim 輸入 :set mouse=a，nano 按 Alt+M（或在 ~/.nanorc 加一行 set mouse）。開啟後點哪游標就到哪，捲動也照常',
+    nanoMouseOn: '已為 nano 開啟滑鼠支援：點哪游標到哪，捲動照常（Alt+M 可以關閉，關閉後這次不再自動開啟）',
   },
   'en-US': {
     reconnectNow: '(press any key to reconnect now)',
@@ -190,6 +194,8 @@ const dictionaries: Record<string, Record<Key, string>> = {
     'note.b-stopped': 'Stopped/missing',
     'note.b-level-info': 'Log level INFO',
     'note.b-level-debug': 'Log level DEBUG',
+    editorMouseHint: 'This editor has mouse support off, so clicking cannot place the cursor. In vim type :set mouse=a; in nano press Alt+M (or add “set mouse” to ~/.nanorc). Then clicking places the cursor and scrolling works as usual',
+    nanoMouseOn: 'Turned on mouse support in nano: click to place the cursor, scrolling works as usual (Alt+M turns it off; it will not be turned on again this time)',
   },
 };
 
