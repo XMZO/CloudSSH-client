@@ -6,6 +6,7 @@
  * - GitHub 登录方式（浏览器 / 应用内，github-login.ts）、登录结果与下载结果提示
  * - 终端触摸操作：长按选中复制、双击选词、双指缩放字号（terminal-touch.ts）
  * - 快捷键栏：按住方向键等连续输入，长按不选中图标、不弹系统菜单（key-repeat.ts）
+ * - nano、less 这类全屏程序里上下滑动：换成方向键（alt-scroll.ts）
  */
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import { t } from '../../upstream/frontend/src/i18n';
@@ -31,6 +32,7 @@ import { closeSheet, isSheetOpen, showActions } from './sheet';
 import { mountTabs } from './tabs';
 import { configurePresets, installCredentialPresets, localVault } from '../shared/credential-presets';
 import { installMobileNotifications } from './notifications';
+import { installAltScroll } from './alt-scroll';
 import { installKeyRepeat } from './key-repeat';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
@@ -228,6 +230,8 @@ if (isTauri()) {
       ['agent output', installAgentOutput],
       ['terminal touch', installTerminalTouch],
       ['key repeat', installKeyRepeat],
+      // 要排在 terminal touch 后面：缩放、拖选时它先把事件拦下
+      ['alt scroll', installAltScroll],
       ['keep alive', installKeepAlive],
       ['notifications', installMobileNotifications],
       ['credential presets', installPresets],

@@ -471,7 +471,7 @@ function boxMenu() {
 }
 
 const HELP = [
-  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  size  clear  exit',
+  '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  pager（全屏，方向键滚动，q 退出）  size  clear  exit',
   '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
@@ -1212,6 +1212,32 @@ function attachShell(ws, url) {
   let line = '';
   /** 客户端报告的终端尺寸（resize 消息），size 命令显示它 */
   const term = { cols: 80, rows: 24 };
+  /**
+   * pager 命令：像 less / nano 那样进备用屏幕、开光标键应用模式，上 / 下方向键滚动 200 行内容，q 退出。
+   * 状态行显示收到的上 / 下键数，用来调试手机端在全屏程序里的滑动（alt-scroll）
+   */
+  let pager = null;
+  const PAGER_LINES = 200;
+  const drawPager = () => {
+    const height = Math.max(3, term.rows - 1);
+    pager.top = Math.max(0, Math.min(PAGER_LINES - height, pager.top));
+    const body = Array.from({ length: height }, (_, i) => `第 ${pager.top + i + 1} 行  ${'·'.repeat(10)}`);
+    write(`\x1b[H\x1b[2J${body.join('\r\n')}\r\n\x1b[7m pager  第 ${pager.top + 1} 行起  收到 上 ${pager.up} / 下 ${pager.down}  （q 退出）\x1b[0m`);
+  };
+  const pagerKey = (sequence) => {
+    if (sequence === '\x1b[A' || sequence === '\x1bOA') {
+      pager.up++;
+      pager.top--;
+    } else if (sequence === '\x1b[B' || sequence === '\x1bOB') {
+      pager.down++;
+      pager.top++;
+    } else if (sequence === 'q') {
+      pager = null;
+      write(`\x1b[?1l\x1b[?1049l${PROMPT}`);
+      return;
+    } else return;
+    drawPager();
+  };
   return (data) => {
     if (typeof data === 'string' && data.startsWith('{')) {
       try {
@@ -1231,9 +1257,21 @@ function attachShell(ws, url) {
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
       if (ch === '\x1b') {
-        // 方向键等转义序列：跳过
+        // 方向键等转义序列：pager 里滚动，其他时候跳过
         const rest = /^\x1b(\[[0-9;?]*[ -/]*[@-~]|O.)/.exec(text.slice(i));
         if (rest) i += rest[0].length - 1;
+        if (pager && rest) pagerKey(rest[0]);
+        continue;
+      }
+      if (pager) {
+        pagerKey(ch);
+        continue;
+      }
+      if ((ch === '\r' || ch === '\n') && line.trim() === 'pager') {
+        line = '';
+        pager = { top: 0, up: 0, down: 0 };
+        write('\r\n\x1b[?1049h\x1b[?1h');
+        drawPager();
         continue;
       }
       if (ch === '\r' || ch === '\n') {
