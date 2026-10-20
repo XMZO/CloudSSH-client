@@ -23,10 +23,11 @@ import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, localPath, 
 import { agentStatus, execViaAgent, runAgent, stopAgent } from './agent';
 import { install, installStatus, mcpLaunch, refresh, skillTargets, syncSkills, uninstall } from './install';
 import { login } from './login';
-import { serveStdio } from './mcp';
+import { REMOTE_ACCESS, serveStdio, type RemoteAccess } from './mcp';
+import { hashPassword, parsePasswordHash, serveHttp } from './mcp-http';
 import { MCP_CLIENTS, mcpTargets, parseMcpClients, registerMcp, unregisterMcp, type McpClientTarget } from './mcp-clients';
 import { api, ApiError, installNetwork, instanceOrigin, networkMessage } from './net';
-import { confirm, interactive, readCommandFile, readStdin } from './prompt';
+import { askSecret, confirm, interactive, readCommandFile, readStdin } from './prompt';
 import { activeInstance, connect as connectInstance, filterServers, formatServerRow, hostId, hostIdsOf, loadServers, resolveSingle, resolveTargets } from './targets';
 
 const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENAME.en}）— CloudSSH 命令行，不开客户端直接操作已保存的服务器
@@ -61,6 +62,9 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
 MCP（给 Claude Desktop、Cursor、VS Code 等不支持 skill 的应用）
   mcp                           MCP 服务器（stdio）：list_servers、exec、upload、download、copy，规则与命令行一致
   mcp status | add <应用> | remove <应用>   查看、登记、移除各应用里的 MCP 服务器（改配置前先备份）
+  mcp http --public-url <https 地址> [--listen 127.0.0.1:8790] [--access full|ask|read-only] [--exclude srv-1,…]
+                                远程 MCP 服务器（给云端 AI，如 Muse 的自定义连接器）：OAuth 授权，口令哈希放在环境变量
+                                CLOUDSSH_MCP_PASSWORD_HASH（mcp http --hash-password 生成）；权限默认 read-only
 
 目标：srv-12（主机 ID，各设备一样）、名称、别名、tag:标签、all，多个用逗号隔开
 通用选项：--instance/-i <名称或地址> 选实例，--json 输出 JSON，--help
@@ -363,14 +367,77 @@ function mcpState(item: McpClientTarget): string {
   return item.present ? '未登记' : '没装这个应用';
 }
 
-/** mcp：不带参数（或 serve）是 stdio 服务器；status / add <应用> / remove <应用> 管各应用里的登记 */
+/** 主机 ID 列表（srv-12,srv-34 或 12,34）→ 编号 */
+function hostIdSet(spec: string | undefined): Set<number> {
+  const ids = new Set<number>();
+  for (const part of (spec ?? '').split(',').map((item) => item.trim()).filter(Boolean)) {
+    const match = /^(?:srv-)?(\d+)$/i.exec(part);
+    if (!match) throw new UsageError(`--exclude 只认主机 ID（srv-12 或 12）：${part}`);
+    ids.add(Number(match[1]));
+  }
+  return ids;
+}
+
+/** mcp http：远程 MCP 服务器（给云端 AI 用）；--hash-password 生成授权口令的哈希 */
+async function cmdMcpHttp(parsed: Parsed): Promise<number> {
+  if (bool(parsed, 'hash-password')) {
+    let password: string;
+    if (interactive()) {
+      password = await askSecret('设置授权口令（至少 12 个字符）：');
+      if ((await askSecret('再输入一次：')) !== password) throw new UsageError('两次输入的口令不一样');
+    } else {
+      password = (await readStdin()).replace(/\r?\n$/, '');
+    }
+    process.stdout.write(`${hashPassword(password)}\n`);
+    return 0;
+  }
+  const publicUrl = str(parsed, 'public-url') ?? process.env.CLOUDSSH_MCP_PUBLIC_URL;
+  if (!publicUrl) throw new UsageError('缺少对外地址：--public-url https://mcp.example.com（或环境变量 CLOUDSSH_MCP_PUBLIC_URL）');
+  let origin: URL;
+  try {
+    origin = new URL(publicUrl);
+  } catch {
+    throw new UsageError(`对外地址不对：${publicUrl}`);
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if ((origin.protocol !== 'https:' && !(origin.protocol === 'http:' && local)) || origin.search || origin.hash) {
+    throw new UsageError('对外地址要是 https://…（本机测试可以用 http://127.0.0.1:端口），不带查询参数');
+  }
+  const passwordHash = process.env.CLOUDSSH_MCP_PASSWORD_HASH;
+  if (!passwordHash) throw new UsageError('缺少授权口令：先用 cloudssh mcp http --hash-password 生成哈希，放进环境变量 CLOUDSSH_MCP_PASSWORD_HASH');
+  parsePasswordHash(passwordHash);
+  const access = (str(parsed, 'access') ?? process.env.CLOUDSSH_MCP_ACCESS ?? 'read-only') as RemoteAccess;
+  if (!REMOTE_ACCESS.includes(access)) throw new UsageError(`--access 只能是 ${REMOTE_ACCESS.join('、')}`);
+  await serveHttp({
+    instance: str(parsed, 'instance'),
+    listen: str(parsed, 'listen') ?? process.env.CLOUDSSH_MCP_LISTEN ?? '127.0.0.1:8790',
+    publicUrl: origin.toString().replace(/\/+$/, ''),
+    passwordHash,
+    access,
+    exclude: hostIdSet(str(parsed, 'exclude') ?? process.env.CLOUDSSH_MCP_EXCLUDE),
+  });
+  return 0;
+}
+
+/** mcp：不带参数（或 serve）是 stdio 服务器；http 是远程服务器；status / add <应用> / remove <应用> 管各应用里的登记 */
 async function cmdMcp(argv: string[]): Promise<number> {
-  const parsed = parseArgs(argv, flagsWith({ 'bin-dir': { type: 'string' } }));
+  const parsed = parseArgs(
+    argv,
+    flagsWith({
+      'bin-dir': { type: 'string' },
+      listen: { type: 'string' },
+      'public-url': { type: 'string' },
+      access: { type: 'string' },
+      exclude: { type: 'string' },
+      'hash-password': { type: 'boolean' },
+    })
+  );
   const [action = 'serve', spec] = parsed.positionals;
   if (action === 'serve') {
     await serveStdio(str(parsed, 'instance'));
     return 0;
   }
+  if (action === 'http') return cmdMcpHttp(parsed);
   const binDir = str(parsed, 'bin-dir');
   let lines: string[] = [];
   if (action === 'add' || action === 'remove') {
@@ -379,7 +446,7 @@ async function cmdMcp(argv: string[]): Promise<number> {
     else lines = unregisterMcp(spec.trim().toLowerCase() === 'all' ? undefined : parseMcpClients(spec));
     if (!lines.length) lines = ['没有要移除的 MCP 登记'];
   } else if (action !== 'status') {
-    throw new UsageError('用法：cloudssh mcp [serve | status | add <应用> | remove <应用>]');
+    throw new UsageError('用法：cloudssh mcp [serve | http | status | add <应用> | remove <应用>]');
   }
   if (bool(parsed, 'json')) {
     // add / remove 与 install 一样输出安装状态（桌面客户端用），status 输出各应用的登记

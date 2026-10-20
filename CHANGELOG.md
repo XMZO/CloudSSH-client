@@ -4,6 +4,12 @@
 
 版本号与代号统一由根目录的 `version.json` 管理（见 README“[版本号与版本代号](README.md#版本号与版本代号)”）。代号取自夜空中的亮星：次版本号或主版本号升级时换新代号，修订版沿用原代号。
 
+## [Unreleased]
+
+### 新增
+
+- **远程 MCP：`cloudssh mcp http`**：给 Meta Muse 这类装不了 skill 的云端 AI 用的连接器（公网 HTTPS 的远程 MCP，OAuth 授权），放在一台常开的服务器上经 CloudSSH 操作所有服务器。工具 `list_servers`、`exec`、`copy`；权限 `full` / `ask` / `read-only`（默认只读：只放行查看类命令）；可以把跑它的机器自己排除在外。内置只认一个人的 OAuth 2.1（动态注册、Client ID Metadata Document、口令授权页与锁定、PKCE、刷新令牌轮换）；Docker 部署文件与步骤在 `tools/mcp-remote/`
+
 ## [0.3.32] - 2026-10-19 · 牛郎 Altair
 
 ### 新增

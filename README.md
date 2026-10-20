@@ -102,6 +102,7 @@ CloudSSH-client/
 │           ├── preload/                   app.ts（实例页面）/ manager.ts（实例管理）
 │           └── manager/                   实例管理页面（本地 HTML）
 ├── tools/
+│   ├── mcp-remote/        远程 MCP 的 Docker 部署（cloudssh mcp http + Caddy，给 Muse 等云端 AI 的连接器）
 │   └── reasoning-proxy/   AI 增强代理：思考深度、联网搜索、长上下文、兼容不规范的中转（结果回 store:true、最后一帧缺结果）（独立的 Cloudflare Worker，部署方法见其 README；代码也内置在 AI 面板里可一键复制）
 └── scripts/
     ├── sync-web-ui.mjs    从 CloudSSH 主仓库同步网页版前端
@@ -460,6 +461,18 @@ cloudssh mcp add cursor / cloudssh mcp remove codex
 - **登记**：只在明确要求时写应用的配置（`install --mcp`、`mcp add`、桌面端开关），写前把原文件备份成 `<文件>.cloudssh-backup-<时间>`，只动名为 `cloudssh` 的一项。配置位置：Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`、Cursor `~/.cursor/mcp.json`、VS Code `%APPDATA%\Code\User\mcp.json`（允许注释，写回时注释保留在备份里）、Windsurf `~/.codeium/windsurf/mcp_config.json`、Codex `~/.codex/config.toml`（`[mcp_servers.cloudssh]`）；macOS / Linux 换成对应的应用配置目录。登记的是“运行时 + 程序 + `mcp`”（不经 `.cmd`，Windows 上很多应用起不了批处理），与命令指向同一个程序；在登记项里自己加的参数（如 `--instance 名称`）与环境变量更新时保留。重新安装时更新已登记的，`uninstall` 移除。改完重启那个应用生效
 - **桌面客户端**：实例管理 → 命令行与 Skill → 设置… 的“MCP”卡片，这台电脑上有的应用每个一个开关（打开即登记、关掉即移除）；客户端换了位置时启动后随命令一起更新
 - **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、5 个工具、危险命令、64KB 上限、取消与进度）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
+
+### 远程 MCP（给云端 AI，如 Meta Muse 的自定义连接器）
+
+云端助手装不了 skill、也碰不到本机的 `cloudssh`，但能接公网 HTTPS 的远程 MCP（OAuth 授权）。`cloudssh mcp http`（`mcp-http.ts`）就是这样一个服务器，放在一台常开的服务器上、Caddy 后面跑，部署文件与步骤在 [`tools/mcp-remote/`](tools/mcp-remote/README.md)（Docker：非 root、只读文件系统）。
+
+- **工具**：`list_servers`、`exec`、`copy`（只读时没有 `copy`）；`upload` / `download` 读写的是那台服务器的磁盘，不提供
+- **权限**（`--access` / `CLOUDSSH_MCP_ACCESS`）：`full` 同命令行的完全权限（拦截级仍拒绝）；`ask` 危险命令要 `confirm: true`；`read-only`（默认）只放行查看类命令（`readonly.ts`：按词切开命令，命令名与参数逐个对清单，写文件的重定向、命令替换、子 Shell、heredoc、解释器一律拒绝；尽力而为的护栏，不是沙箱）
+- **不提供的服务器**（`--exclude srv-12`）：跑这个服务的机器自己，它上面存着 CloudSSH 的登录
+- **授权**：内置只认一个人的 OAuth 2.1：发现文档（RFC 9728 / 8414）、动态注册（RFC 7591）与 Client ID Metadata Document、授权页口令（scrypt 哈希，`mcp http --hash-password` 生成；连错 5 次锁定）、只支持 PKCE S256、访问令牌 1 小时、刷新令牌 30 天且每用一次换新；令牌只存 SHA-256
+- **传输**：Streamable HTTP，`POST /mcp` 回 JSON（只有通知时 202），不推送、不用会话；客户端断开时取消还在执行的调用；每次执行与拒绝在日志里记一行
+- **登录**：那台服务器上单独 `cloudssh login`（`--start` / `--callback`），会话 7 天过期，到期重新登录
+- **测试**：`test/mcp-http.test.mjs` 对假 Worker 跑完整 OAuth 流程（注册、授权页、PKCE、刷新与吊销、口令锁定）、远程工具与权限，以及只读模式的 60 多条放行 / 拒绝用例
 
 ## 快捷键
 

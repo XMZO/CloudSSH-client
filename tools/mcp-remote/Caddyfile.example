@@ -1,0 +1,10 @@
+# 加进服务器的 /etc/caddy/Caddyfile，然后 systemctl reload caddy（Caddy 自动申请证书）。
+# 域名的 DNS 要直接指向这台服务器（不要开 Cloudflare 代理：代理 100 秒没响应就断开，长命令会被掐掉）
+mcp.example.com {
+	reverse_proxy 127.0.0.1:8790 {
+		# 长命令（最多 3600 秒）不能被代理掐掉
+		transport http {
+			read_timeout 3700s
+		}
+	}
+}

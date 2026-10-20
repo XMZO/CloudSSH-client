@@ -1,0 +1,44 @@
+# CloudSSH 远程 MCP（给云端 AI 用，例如 Meta Muse 的自定义连接器）：在一台常开的服务器上用 Docker 跑
+# cloudssh mcp http，前面由 Caddy 提供 HTTPS。部署与登录步骤见同目录的 README.md。
+#
+# 目录（例如 /root/cloudssh）里放：
+#   compose.yaml    本文件
+#   .env            PUBLIC_URL、PASSWORD_HASH、ACCESS、EXCLUDE（见 .env.example；权限 600）
+#   cloudssh.mjs    打好的命令行（packages/cli/dist/cloudssh.mjs），更新时替换它再 docker compose restart
+#   data/           CloudSSH 的登录与 OAuth 状态（属主 1000:1000，权限 700）
+services:
+  cloudssh-mcp:
+    image: node:24-slim
+    container_name: cloudssh-mcp
+    restart: unless-stopped
+    user: "1000:1000"
+    command: ["node", "/app/cloudssh.mjs", "mcp", "http"]
+    environment:
+      CLOUDSSH_HOME: /data/cloudssh
+      HOME: /data/home
+      # 后台常驻会话进程不需要：MCP 服务器自己就常驻、复用会话
+      CLOUDSSH_AGENT: "0"
+      CLOUDSSH_MCP_LISTEN: 0.0.0.0:8790
+      CLOUDSSH_MCP_PUBLIC_URL: ${PUBLIC_URL:?在 .env 里设置 PUBLIC_URL}
+      CLOUDSSH_MCP_PASSWORD_HASH: ${PASSWORD_HASH:?在 .env 里设置 PASSWORD_HASH}
+      CLOUDSSH_MCP_ACCESS: ${ACCESS:-read-only}
+      CLOUDSSH_MCP_EXCLUDE: ${EXCLUDE:-}
+    volumes:
+      - ./cloudssh.mjs:/app/cloudssh.mjs:ro
+      - ./data:/data
+    # 只给本机的 Caddy 用，不直接对外
+    ports:
+      - "127.0.0.1:8790:8790"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

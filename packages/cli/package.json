@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node --test test/mcp.test.mjs test/mcp-install.test.mjs test/windows-launcher.test.mjs test/refresh.test.mjs test/login.test.mjs test/agent.test.mjs",
+    "test": "node build.mjs && node --test test/mcp.test.mjs test/mcp-http.test.mjs test/mcp-install.test.mjs test/windows-launcher.test.mjs test/refresh.test.mjs test/login.test.mjs test/agent.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
