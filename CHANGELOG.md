@@ -12,6 +12,10 @@
 
 - **远程 MCP：`cloudssh mcp http`**：给 Meta Muse 这类装不了 skill 的云端 AI 用的连接器（公网 HTTPS 的远程 MCP，OAuth 授权），放在一台常开的服务器上经 CloudSSH 操作所有服务器。工具 `list_servers`、`exec`、`copy`；权限 `full` / `ask` / `read-only`（默认只读：只放行查看类命令）；可以把跑它的机器自己排除在外。内置只认一个人的 OAuth 2.1（动态注册、Client ID Metadata Document、口令授权页与锁定、PKCE、刷新令牌轮换）；Docker 部署文件与步骤在 `tools/mcp-remote/`
 
+### 修复
+
+- **手机版快捷键栏长按方向键**：原来只认点按，长按时图标（Material Symbols 的连字）被当成文字选中、弹出系统菜单。现在按住方向键、PgUp / PgDn、Del 400ms 后连续输入（先 70ms 一次，按住超过 1.5 秒后 35ms 一次），松手、手指滑开或系统接管手势时停止，连发后松手不多发；工具栏里不再能选中文字、不弹长按菜单（`overrides/mobile/key-repeat.ts`）
+
 ## [0.3.32] - 2026-10-19 · 牛郎 Altair
 
 ### 新增

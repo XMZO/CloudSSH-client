@@ -5,6 +5,7 @@
  * - 后台保活：有会话时让 Android 前台服务保持连接
  * - GitHub 登录方式（浏览器 / 应用内，github-login.ts）、登录结果与下载结果提示
  * - 终端触摸操作：长按选中复制、双击选词、双指缩放字号（terminal-touch.ts）
+ * - 快捷键栏：按住方向键等连续输入，长按不选中图标、不弹系统菜单（key-repeat.ts）
  */
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import { t } from '../../upstream/frontend/src/i18n';
@@ -30,6 +31,7 @@ import { closeSheet, isSheetOpen, showActions } from './sheet';
 import { mountTabs } from './tabs';
 import { configurePresets, installCredentialPresets, localVault } from '../shared/credential-presets';
 import { installMobileNotifications } from './notifications';
+import { installKeyRepeat } from './key-repeat';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
 
@@ -225,6 +227,7 @@ if (isTauri()) {
       ['server form', installCompactServerForm],
       ['agent output', installAgentOutput],
       ['terminal touch', installTerminalTouch],
+      ['key repeat', installKeyRepeat],
       ['keep alive', installKeepAlive],
       ['notifications', installMobileNotifications],
       ['credential presets', installPresets],

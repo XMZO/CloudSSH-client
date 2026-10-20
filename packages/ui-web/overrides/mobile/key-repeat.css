@@ -1,0 +1,16 @@
+/* 手机端快捷键栏：长按不选中图标文字、不弹系统菜单（见 key-repeat.ts）；连发时按钮保持按下的样子 */
+#mobile-terminal-toolbar,
+#mobile-terminal-toolbar * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#mobile-terminal-toolbar button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+#mobile-terminal-toolbar button.cs-key-repeating {
+  opacity: 0.7;
+}
