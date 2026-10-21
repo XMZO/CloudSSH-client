@@ -1,18 +1,18 @@
 /**
  * 紧凑终端栏：网页版的顶栏、标签栏、状态栏合并成一行，把高度留给终端。
  *
- *   [←]  ● 会话名                     [📁] [⋮]
+ *   [←]  ● 会话名                 [📁] [×] [⋮]
  *        root@203.0.*.* · 18 ms · 2/3
  *
  * - ←：回到服务器列表（网页版的“+”）；点标题：会话列表；左右滑动标题：切换上一个/下一个会话
- * - 📁：SFTP；⋮：更多操作（常用命令、AI 助手、搜索、导出、横屏、快捷键、字号、复制名称、复制 ID、复制地址、界面设置、断开）
+ * - 📁：SFTP；×：关闭当前会话（要确认的会话点两下，见 ../../tabs.ts）；⋮：更多操作（常用命令、AI 助手、搜索、导出、横屏、快捷键、字号、复制名称、复制 ID、复制地址、界面设置、断开）
  * 所有动作都转给网页版自己的按钮（即使被隐藏也能点），行为与网页版完全一致。
  * 网页版每次状态变化都会重绘标签栏与状态栏，这里据此同步刷新。
  */
 import { copyTextToClipboard } from '../../../../upstream/frontend/src/clipboard';
 import { maskIPAddress } from '../../../../upstream/frontend/src/host-display';
 import { notify } from '../../../../upstream/frontend/src/ui-feedback';
-import { activeTab, activeTabId, listTabs, switchToTab, type TabInfo } from '../../../sidebar/hooks';
+import { activeTab, activeTabId, closeTabById, listTabs, switchToTab, type TabInfo } from '../../../sidebar/hooks';
 import { getServers } from '../../../sidebar/store';
 import { hostId } from '../../../shared/ai-remote/servers';
 import { shouldConfirmClose } from '../../close-confirm';
@@ -21,7 +21,7 @@ import { openSettings } from '../../settings';
 import { openHighlightEditor } from '../../../shared/terminal';
 import { ht } from '../../../shared/terminal/i18n';
 import { closeSheet, openSheet } from '../../sheet';
-import { openSessionList } from '../../tabs';
+import { needsConfirm, openSessionList, paintArmed, requestClose } from '../../tabs';
 import { clickById, Disposer, h, icon, iconButton, prefersReducedMotion, rafThrottle, upstreamButtonAvailable } from '../dom';
 import { isModuleActive } from '../engine';
 import { fontSizeControl } from '../font-size';
@@ -219,10 +219,17 @@ export const chromeModule: SkinModule = {
       }
       clickById('mobile-sftp-btn');
     });
+    // 关闭当前会话（不用进“更多”）：要确认的会话第一次点变成红色的“关闭”，3 秒内再点才关（与标签栏、会话列表同一套，见 ../../tabs.ts）
+    const close = iconButton('close', st('closeSession'), 'cs-ob-iconbtn cs-ob-close');
+    close.addEventListener('click', () => {
+      const id = activeTabId();
+      if (!id) return;
+      requestClose(id, needsConfirm(id), () => closeTabById(id));
+    });
     const more = iconButton('more_vert', st('more'));
     more.addEventListener('click', openMoreSheet);
 
-    bar.append(back, title, sftp, more);
+    bar.append(back, title, sftp, close, more);
     section.prepend(bar);
 
     const refresh = rafThrottle(() => {
@@ -243,6 +250,12 @@ export const chromeModule: SkinModule = {
       sub.hidden = !parts.length;
       title.setAttribute('aria-label', `${name.textContent} ${sub.textContent}`.trim());
       sftp.classList.toggle('is-unavailable', !tab?.sftpPanel);
+      close.hidden = !tab;
+      if (tab) close.dataset.csCloseId = tab.id;
+      else delete close.dataset.csCloseId;
+      close.setAttribute('aria-label', st('closeSession'));
+      close.title = st('closeSession');
+      paintArmed();
       back.setAttribute('aria-label', st('back'));
       back.title = st('back');
       sftp.setAttribute('aria-label', st('actSftp'));

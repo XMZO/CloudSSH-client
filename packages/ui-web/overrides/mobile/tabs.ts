@@ -41,7 +41,7 @@ function isArmed(id: string): boolean {
 }
 
 /** 按当前状态更新页面上所有关闭按钮（带 data-cs-close-id 的） */
-function paintArmed(): void {
+export function paintArmed(): void {
   for (const button of document.querySelectorAll<HTMLElement>('[data-cs-close-id]')) {
     const on = isArmed(button.dataset.csCloseId ?? '');
     button.classList.toggle('is-armed', on);
@@ -67,7 +67,7 @@ function arm(id: string | null): void {
 }
 
 /** 点了 ×：要确认且这是第一次点就先变成红色的“关闭”；不用确认或 3 秒内第二次点就关 */
-function requestClose(id: string, needsConfirm: boolean, close: () => void): void {
+export function requestClose(id: string, needsConfirm: boolean, close: () => void): void {
   if (needsConfirm && !isArmed(id)) {
     arm(id);
     return;
@@ -76,7 +76,7 @@ function requestClose(id: string, needsConfirm: boolean, close: () => void): voi
   close();
 }
 
-function needsConfirm(id: string): boolean {
+export function needsConfirm(id: string): boolean {
   return shouldConfirmClose(listTabs().find((item) => item.id === id));
 }
 

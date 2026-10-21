@@ -46,6 +46,22 @@ html[data-cs-mods~="chrome"] #terminal-section .terminal-status-bar {
   opacity: 0.38;
 }
 
+/* 关闭当前会话：第一次点之后变成红色的“关闭”，等再点一次（tabs.ts 的两步关闭） */
+.cs-ob-close.is-armed {
+  width: auto;
+  height: 32px;
+  align-self: center;
+  margin: 0 2px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--error);
+  color: #fff;
+}
+
+.cs-ob-close[hidden] {
+  display: none;
+}
+
 .cs-ob-icon {
   font-size: 22px;
   line-height: 1;
