@@ -199,6 +199,16 @@ async function handleHttp(req, res) {
   console.log(method, path);
 
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });
+  // 调试：从外面断开所有 Shell 连接（像网络抖了一下，不发关闭帧），在 pager、nano 里或打了半行命令时也能测断线恢复
+  if (path === '/__mock/drop') {
+    let count = 0;
+    for (const entry of shellSessions.values()) {
+      if (entry.link.pending) continue;
+      entry.link.ws.destroy();
+      count++;
+    }
+    return json(res, 200, { dropped: count });
+  }
   if (anonymous && handleMockOauth(req, res, url)) return;
   if (path === '/api/auth/me') {
     if (anonymous && !sessions.has(cookieOf(req, 'session'))) return json(res, 401, { error: 'Unauthorized' });
@@ -366,7 +376,11 @@ function createSocket(socket, onMessage) {
     sendBinary: (bytes) => !socket.destroyed && socket.write(frame(0x2, bytes)),
     sendJson: (value) => api.sendText(JSON.stringify(value)),
     destroy: () => socket.destroy(),
+    onClose: (callback) => socket.on('close', callback),
+    /** 由这边发了关闭帧（exit、hangup……或回应客户端的关闭）；没有就断开的是异常断线 */
+    closedNormally: false,
     close: (code = 1000) => {
+      api.closedNormally = true;
       if (socket.destroyed) return;
       const payload = Buffer.alloc(2);
       payload.writeUInt16BE(code, 0);
@@ -1212,11 +1226,65 @@ function mockRemoteLine(line, write) {
   setTimeout(() => out(`__CSBEG${id}\n${output}\n__CSRC${rc}\n__CSEND${id}\n`), delay ?? 30);
 }
 
-function attachShell(ws, url) {
+/**
+ * 断线保持（像 Worker 的 60 秒宽限）：异常断开（没有关闭帧，例如 drop）的 Shell 留着，断开期间的输出先存起来；
+ * 客户端带 session + resume_token 回来时接上同一个 Shell，先发 session_resumed、再补发存着的输出（顺序与 Worker 一致）
+ */
+const shellSessions = new Map();
+const SHELL_GRACE_MS = 60_000;
+
+function watchShellSocket(sessionId, socketApi) {
+  socketApi.onClose(() => {
+    const entry = shellSessions.get(sessionId);
+    // 已被恢复的新连接接替
+    if (!entry || entry.link.ws !== socketApi) return;
+    if (socketApi.closedNormally) {
+      shellSessions.delete(sessionId);
+      return;
+    }
+    entry.link.pending = [];
+    entry.timer = setTimeout(() => shellSessions.delete(sessionId), SHELL_GRACE_MS);
+    console.log('Shell 异常断开，保留 60 秒等恢复');
+  });
+}
+
+function resumeShell(rawWs, url) {
+  const sessionId = url.searchParams.get('session') ?? '';
+  const entry = shellSessions.get(sessionId);
+  if (!entry || !entry.link.pending || url.searchParams.get('resume_token') !== entry.resumeToken) {
+    console.log('恢复失败：会话不存在、已过期或令牌不对');
+    rawWs.sendJson({ type: 'error', message: '会话已过期，无法恢复', event: 'resume_failed' });
+    setTimeout(() => rawWs.close(1008), 20);
+    return () => {};
+  }
+  clearTimeout(entry.timer);
+  const buffered = entry.link.pending;
+  entry.link.pending = null;
+  entry.link.ws = rawWs;
+  entry.resumeToken = crypto.randomUUID();
+  watchShellSocket(sessionId, rawWs);
+  rawWs.sendJson({ type: 'session_resumed', resumeToken: entry.resumeToken });
+  for (const chunk of buffered) rawWs.sendBinary(chunk);
+  console.log(`恢复会话，补发 ${buffered.length} 段断开期间的输出`);
+  return entry.handler;
+}
+
+function attachShell(rawWs, url) {
   const sessionId = `session:mock:${crypto.randomUUID()}`;
+  // Shell 里的 ws 都经 link 转给当前连着的 WebSocket；断开期间（pending 不为 null）的输出先存着，恢复后补发
+  const link = { ws: rawWs, pending: null };
+  const ws = {
+    sendJson: (value) => (link.pending ? undefined : link.ws.sendJson(value)),
+    sendBinary: (bytes) => (link.pending ? link.pending.push(Buffer.from(bytes)) : link.ws.sendBinary(bytes)),
+    close: (code) => link.ws.close(code),
+    destroy: () => link.ws.destroy(),
+  };
+  const entry = { link, resumeToken: crypto.randomUUID(), handler: null, timer: null };
+  shellSessions.set(sessionId, entry);
+  watchShellSocket(sessionId, rawWs);
   const write = (text) => ws.sendBinary(Buffer.from(text, 'utf8'));
   ws.sendJson({ type: 'rtt', latency: 18, colo: 'HKG' });
-  ws.sendJson({ type: 'session_created', sessionId, resumeToken: crypto.randomUUID() });
+  ws.sendJson({ type: 'session_created', sessionId, resumeToken: entry.resumeToken });
   ws.sendJson({ type: 'sftp_attach', url: `ws://${url.host}/api/ssh/sftp?session=${encodeURIComponent(sessionId)}&token=sftp-${Date.now()}` });
   // 标了 stall 的服务器卡在认证，永远到不了 Shell 就绪
   const tokenId = Number(/^mock-(\d+)-/.exec(url.searchParams.get('token') ?? '')?.[1]);
@@ -1225,7 +1293,14 @@ function attachShell(ws, url) {
   const steps = stall ? allSteps.slice(0, 5) : allSteps;
   const messages = { version_exchange: '正在交换版本信息...', version_ready: '版本交换完成，正在密钥协商...', host_key_verified: '主机密钥验证通过 (ssh-ed25519) ✓', auth_service_accepted: '认证服务已接受，正在认证...', auth_public_key: '正在使用密钥认证...', auth_success: '认证成功', shell_ready: 'Shell 已就绪' };
   steps.forEach((event, index) => setTimeout(() => ws.sendJson({ type: 'status', message: messages[event], event }), 60 * (index + 1)));
-  if (!stall) setTimeout(() => write(`欢迎使用 CloudSSH 假 shell（输入 help 查看命令）\r\n${PROMPT}`), 60 * (steps.length + 1));
+  /** 命令还在跑（sleep 等），或还没打印过提示符：这时收到窗口变化不重画提示符 */
+  let busy = true;
+  if (!stall) {
+    setTimeout(() => {
+      busy = false;
+      write(`欢迎使用 CloudSSH 假 shell（输入 help 查看命令）\r\n${PROMPT}`);
+    }, 60 * (steps.length + 1));
+  }
   const connected = servers.find((s) => s.id === tokenId);
   if (!stall && connected && !connected.os) {
     setTimeout(() => {
@@ -1324,12 +1399,22 @@ function attachShell(ws, url) {
     } else return;
     drawPager();
   };
-  return (data) => {
+  entry.handler = (data) => {
     if (typeof data === 'string' && data.startsWith('{')) {
       try {
         const msg = JSON.parse(data);
         if (msg.type === 'ping') ws.sendJson({ type: 'pong', ...(msg.id ? { id: msg.id } : {}) });
-        if (msg.type === 'resize' && Number(msg.cols) > 0 && Number(msg.rows) > 0) Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
+        if (msg.type === 'resize' && Number(msg.cols) > 0 && Number(msg.rows) > 0) {
+          const changed = term.cols !== Number(msg.cols) || term.rows !== Number(msg.rows);
+          Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
+          // 像远端终端尺寸变了发 SIGWINCH：readline 在当前行重画提示符和没打完的命令（光标回到原来的字上），全屏程序整屏重画
+          if (changed && nano) drawNano();
+          else if (changed && pager) drawPager();
+          else if (changed && !busy) {
+            console.log('窗口变化：重画提示符');
+            write(`\r\x1b[K${PROMPT}${line}${'\b'.repeat(cellWidth([...line].slice(pos).join('')))}`);
+          }
+        }
         if (msg.type === 'agent_start') mockAgentReply(ws, msg);
         if (msg.type === 'agent_reset') mockAgentReset(ws);
         if (msg.type === 'agent_stop') mockAgentStop(ws);
@@ -1399,8 +1484,13 @@ function attachShell(ws, url) {
         const delay = runCommand(line, write, term, ws);
         line = '';
         pos = 0;
-        if (delay) setTimeout(() => write(PROMPT), delay);
-        else write(PROMPT);
+        if (delay) {
+          busy = true;
+          setTimeout(() => {
+            busy = false;
+            write(PROMPT);
+          }, delay);
+        } else write(PROMPT);
       } else if (ch === '\x7f' || ch === '\b') {
         const chars = [...line];
         if (pos > 0) {
@@ -1427,6 +1517,7 @@ function attachShell(ws, url) {
       }
     }
   };
+  return entry.handler;
 }
 
 // SFTP：内存里的小文件系统（所有连接共用），支持列目录、新建目录、上传、下载，够调试拖放上传/拖出下载
@@ -1551,7 +1642,7 @@ http
     let handler = () => {};
     const ws = createSocket(socket, (data) => handler(data));
     if (url.pathname === '/api/ssh/sftp') handler = attachSftp(ws);
-    else if (url.pathname === '/api/ssh') handler = attachShell(ws, url);
+    else if (url.pathname === '/api/ssh') handler = url.searchParams.has('session') ? resumeShell(ws, url) : attachShell(ws, url);
     else ws.close(1008);
   })
   // 端口写 0 时由系统分配，打印实际端口（命令行的测试这样起）

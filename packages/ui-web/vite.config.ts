@@ -225,6 +225,25 @@ const COMMON_HOOKS: Hook[] = [
     anchor: "  private processTerminalInput(\n    data: string,\n    source: 'keyboard' | 'focus-report' = 'keyboard'\n  ): void {\n",
     inject: "    if (!this.sessionReady && source === 'keyboard' && (this as any).__cloudsshReconnectNow?.() === true) return;\n",
   },
+  // 断线后秒级恢复（session_resumed）接上的是断线前那个 Shell：它早把提示符打印过了、不会再打印，而网页版在后面写了
+  // “连接已关闭 / 正在重新连接 / 已成功恢复会话”，光标停在新的空行上，要按一下键才出现提示符。恢复后把宽度减一再改回去：
+  // 远端终端尺寸真的变了才会发窗口变化信号（SIGWINCH），bash / zsh / fish 收到后在当前行重画提示符和没打完的命令，
+  // vim、top 这类全屏程序整屏重画（顺带盖掉写在它们画面上的断线提示）。断线期间暂存的输出在 session_resumed 之后补发，
+  // 重画排在它们后面
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '            this.onSessionReady?.();\n            this.startHeartbeat();\n',
+    inject: [
+      '            {',
+      '              const size = this.getTerminalSize();',
+      '              if (size.cols > 2) {',
+      '                this.sendResize({ ...size, cols: size.cols - 1 });',
+      '                this.sendResize(size);',
+      '              }',
+      '            }',
+      '',
+    ].join('\n'),
+  },
   // 会话正常结束（exit、空闲超时断开、本机没确认输出……服务端以 1000 关闭）后网页版不重连，终端就停在那里。
   // 会话曾经就绪过的才提示“按任意键重新连接”，按键后立即重连（复用上面的输入入口）：
   // 已保存的服务器重新申请一次性令牌，匿名连接用内存里这次的配置，与网页版自动重连同一套路径。
