@@ -60,4 +60,11 @@ describe('normalizeUiSource / normalizeInstance', () => {
     ).toEqual({ id: 'prod', name: '生产', baseUrl: 'https://prod.workers.dev', ui: { kind: 'remote' } });
     expect(() => normalizeInstance({ id: 'Bad ID', baseUrl: DEFAULT_WORKER_URL })).toThrow(InstanceConfigError);
   });
+
+  it('网络路线只认 direct，其余都跟随系统代理（不写这个字段）', () => {
+    expect(normalizeInstance({ id: 'a', baseUrl: DEFAULT_WORKER_URL, proxy: 'direct' }).proxy).toBe('direct');
+    for (const proxy of [undefined, 'system', 'socks5://x', 1]) {
+      expect(normalizeInstance({ id: 'a', baseUrl: DEFAULT_WORKER_URL, proxy })).not.toHaveProperty('proxy');
+    }
+  });
 });

@@ -11,7 +11,7 @@ import {
   type InstanceConfig,
   isSameInstanceOrigin,
 } from '@cloudssh/core';
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type IpcMainEvent, net, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type IpcMainEvent, net, session, shell } from 'electron';
 import { connectionLogData, createCloseBurstDetector } from '../connection-log-data';
 import { logNetworkEnv } from '../network-env';
 import { configStore, type Preferences } from '../config/store';
@@ -23,7 +23,7 @@ import { cliSettings, cliStatus, type CliSettingsPatch, installCli, setCliMcp, u
 import { applyCliSync } from './cli-sync';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
-import { clearInstanceData } from './session';
+import { clearInstanceData, syncInstanceProxy } from './session';
 import { applyGlobalShortcut, isAcceleratorText, shortcutStatus } from './shortcut';
 import { getUpdater } from './updater';
 import {
@@ -74,6 +74,18 @@ function managerState() {
     configPath: configStore.path,
     quickConnect: { status: shortcutStatus() },
   };
+}
+
+let directSession: Promise<Electron.Session> | null = null;
+
+/** “测试连接”选了直连时用的会话：只在内存里、不走任何代理 */
+function directTestSession(): Promise<Electron.Session> {
+  directSession ??= (async () => {
+    const ses = session.fromPartition('cloudssh-test-direct');
+    await ses.setProxy({ mode: 'direct' });
+    return ses;
+  })();
+  return directSession;
 }
 
 function broadcastChanged(): void {
@@ -263,6 +275,7 @@ export function registerIpc(): void {
         configStore.instances.map((item) => item.id)
       );
     const saved = configStore.upsertInstance({ ...input, id });
+    syncInstanceProxy(saved);
     if (existing) {
       if (existing.baseUrl !== saved.baseUrl) {
         // 地址变了：旧窗口的导航守卫绑定的是旧 origin，直接重建窗口
@@ -273,7 +286,7 @@ export function registerIpc(): void {
         reloadInstance(saved.id);
       }
     }
-    log.info('保存实例', saved.id, saved.baseUrl, saved.ui.kind);
+    log.info('保存实例', saved.id, saved.baseUrl, saved.ui.kind, saved.proxy === 'direct' ? '直连' : '跟随系统代理');
     broadcastChanged();
     return saved;
   });
@@ -315,20 +328,26 @@ export function registerIpc(): void {
     reloadInstance(id);
   });
 
-  ipcMain.handle('manager:test-instance', async (event, baseUrl: string) => {
+  ipcMain.handle('manager:test-instance', async (event, baseUrl: string, options?: { direct?: boolean }) => {
     assertManager(event);
+    const direct = options?.direct === true;
+    // 按表单里选的网络路线测：直连用一个不走代理的临时会话，跟随系统代理时顺带报出系统代理解析的结果
+    const ses = direct ? await directTestSession() : null;
+    const route = direct ? 'DIRECT' : await session.defaultSession.resolveProxy(baseUrl).catch(() => 'unknown');
     const started = Date.now();
     try {
       const client = new CloudSSHApiClient({
         baseUrl,
-        transport: { fetch: (input, init) => net.fetch(input, { ...init, credentials: 'omit' }) },
+        transport: {
+          fetch: (input, init) => (ses ? ses.fetch(input, { ...init, credentials: 'omit' }) : net.fetch(input, { ...init, credentials: 'omit' })),
+        },
       });
       const [config, health] = await Promise.all([client.getConfig(), client.health()]);
       const latencyMs = Date.now() - started;
       const oauthRedirectUri = config.githubAuthEnabled ? await probeOAuthRedirectUri(client.baseUrl) : null;
-      return { ok: true, latencyMs, config, health, oauthRedirectUri };
+      return { ok: true, latencyMs, config, health, oauthRedirectUri, route };
     } catch (error) {
-      return { ok: false, latencyMs: Date.now() - started, error: (error as Error).message };
+      return { ok: false, latencyMs: Date.now() - started, error: (error as Error).message, route };
     }
   });
 

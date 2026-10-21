@@ -41,6 +41,11 @@ export interface InstanceConfig {
   baseUrl: string;
   /** UI 来源 */
   ui: UiSource;
+  /**
+   * 网络路线：不填跟随系统代理（Chromium 按系统代理 / PAC 解析）；`direct` 不走系统代理、直连 Worker。
+   * 开着代理软件的 TUN（虚拟网卡）时流量仍会被它接管，要直连得在代理软件的规则里放行
+   */
+  proxy?: 'direct';
 }
 
 export const DEFAULT_UI_SOURCE: UiSource = { kind: 'bundled', id: 'web' };
@@ -160,7 +165,9 @@ export function normalizeInstance(input: unknown): InstanceConfig {
   if (!isValidInstanceId(id)) throw new InstanceConfigError(`非法实例 ID：${id || '(空)'}`);
   const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, 64) : id;
   const baseUrl = normalizeWorkerUrl(typeof value.baseUrl === 'string' ? value.baseUrl : '');
-  return { id, name, baseUrl, ui: normalizeUiSource(value.ui) };
+  const instance: InstanceConfig = { id, name, baseUrl, ui: normalizeUiSource(value.ui) };
+  if (value.proxy === 'direct') instance.proxy = 'direct';
+  return instance;
 }
 
 export function describeUiSource(ui: UiSource): string {

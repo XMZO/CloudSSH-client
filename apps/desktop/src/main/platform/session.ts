@@ -9,7 +9,7 @@ import { app, session, type Session } from 'electron';
 import path from 'node:path';
 import { createLogger } from '../logger';
 import { connectionEndpoint } from '../connection-log-data';
-import { trackInstanceNetwork } from '../network-env';
+import { logNetworkEnv, trackInstanceNetwork } from '../network-env';
 import { resolveUi, type ResolvedUi } from '../ui/providers';
 import { claimDragDownload } from './drag-out';
 import { applyOriginBridge } from './origin-bridge';
@@ -26,6 +26,10 @@ const ALLOWED_PERMISSIONS = new Set([
 ]);
 
 const configured = new WeakSet<Session>();
+/** 已创建的实例会话（按实例 ID）：网络路线改了时对它们立即生效 */
+const instanceSessions = new Map<string, Session>();
+/** 每个会话当前用的网络路线 */
+const appliedProxyMode = new WeakMap<Session, 'system' | 'direct'>();
 const instanceOfSession = new WeakMap<Session, string>();
 const baseUrlOfSession = new WeakMap<Session, string>();
 
@@ -42,11 +46,40 @@ export function getInstanceSession(instance: InstanceConfig): Session {
   instanceOfSession.set(ses, instance.id);
   baseUrlOfSession.set(ses, instance.baseUrl);
   trackInstanceNetwork(instance.id, ses, instance.baseUrl);
+  instanceSessions.set(instance.id, ses);
+  applyProxyMode(ses, instance);
   if (!configured.has(ses)) {
     configureSession(ses);
     configured.add(ses);
   }
   return ses;
+}
+
+/**
+ * 网络路线（实例设置里的“不走系统代理（直连）”）：跟随系统代理是会话的默认；直连用 setProxy({ mode: 'direct' })。
+ * 实例页面的 API 请求（origin bridge 用 ses.fetch 转发）与终端 WebSocket 都走这个会话，一起生效；
+ * 改了以后新的连接按新路线走，已经连着的终端不断开，下次重连时换过去。代理软件的 TUN 不受这里影响
+ */
+function applyProxyMode(ses: Session, instance: InstanceConfig): void {
+  const mode = instance.proxy === 'direct' ? 'direct' : 'system';
+  const previous = appliedProxyMode.get(ses);
+  if (previous === mode) return;
+  appliedProxyMode.set(ses, mode);
+  // 新会话本来就跟随系统代理，不用设置
+  if (!previous && mode === 'system') return;
+  void ses
+    .setProxy({ mode })
+    .then(() => {
+      log.info('网络路线', instance.id, mode === 'direct' ? '直连（不走系统代理）' : '跟随系统代理');
+      void logNetworkEnv('proxy-mode', true);
+    })
+    .catch((error) => log.warn('设置网络路线失败', instance.id, error));
+}
+
+/** 实例设置保存后调用：已经打开过的实例会话立即换成新的网络路线 */
+export function syncInstanceProxy(instance: InstanceConfig): void {
+  const ses = instanceSessions.get(instance.id);
+  if (ses) applyProxyMode(ses, instance);
 }
 
 function isFromInstance(ses: Session, url: string | undefined): boolean {

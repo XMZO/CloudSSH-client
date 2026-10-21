@@ -25,6 +25,8 @@ interface ManagerState {
 interface TestResult {
   ok: boolean;
   latencyMs: number;
+  /** 这次测试走的路线：DIRECT，或系统代理解析出的结果（如 PROXY 127.0.0.1:7890） */
+  route?: string;
   error?: string;
   oauthRedirectUri?: string | null;
   config?: { authMode: string; githubAuthRequired: boolean; sshSharingEnabled: boolean; turnstileEnabled: boolean };
@@ -74,7 +76,7 @@ interface ManagerApi {
   openInstance(id: string, newWindow: boolean): Promise<void>;
   login(id: string): Promise<void>;
   clearData(id: string): Promise<void>;
-  testInstance(baseUrl: string): Promise<TestResult>;
+  testInstance(baseUrl: string, options?: { direct?: boolean }): Promise<TestResult>;
   setPreferences(patch: Partial<ManagerState['preferences']>): Promise<unknown>;
   setShortcutRecording(recording: boolean): Promise<void>;
   pickDirectory(): Promise<string | null>;
@@ -106,6 +108,7 @@ window.addEventListener('scroll', () => {
 });
 const fieldName = $<HTMLInputElement>('field-name');
 const fieldUrl = $<HTMLInputElement>('field-url');
+const fieldDirect = $<HTMLInputElement>('field-direct');
 const fieldBundledId = $<HTMLSelectElement>('field-bundled-id');
 const fieldDirectory = $<HTMLInputElement>('field-directory');
 const fieldDevServer = $<HTMLInputElement>('field-dev-server');
@@ -246,6 +249,11 @@ function renderList(): void {
     name.append(label);
     if (instance.id === state.defaultInstanceId) name.append(badge('默认'));
     if (state.openInstanceIds.includes(instance.id)) name.append(badge('已打开', true));
+    if (instance.proxy === 'direct') {
+      const direct = badge('直连');
+      direct.title = '不走系统代理，直接连 Worker';
+      name.append(direct);
+    }
 
     const url = document.createElement('span');
     url.className = 'instance-url';
@@ -257,6 +265,13 @@ function renderList(): void {
     li.append(button);
     list.append(li);
   }
+}
+
+/** 测试连接走的路线：DIRECT → 直连；PROXY / SOCKS … → 经系统代理（带地址）；解析不出 → 跟随系统代理 */
+function routeText(route: string | undefined): string {
+  if (!route || route === 'unknown') return '跟随系统代理';
+  if (route.trim().toUpperCase() === 'DIRECT') return '直连';
+  return `经系统代理 ${route.split(';')[0].trim()}`;
 }
 
 function hostOf(baseUrl: string): string {
@@ -299,6 +314,7 @@ function fillForm(instance: InstanceConfig | null): void {
   formSubtitle.textContent = instance ? instance.baseUrl : '填写名称和 Worker 地址，保存后即可打开';
   fieldName.value = instance?.name ?? '';
   fieldUrl.value = instance?.baseUrl ?? '';
+  fieldDirect.checked = instance?.proxy === 'direct';
   const ui: UiSource = instance?.ui ?? { kind: 'bundled', id: 'web' };
   uiKindRadios().forEach((radio) => {
     radio.checked = radio.value === ui.kind;
@@ -661,6 +677,7 @@ form.addEventListener('submit', (event) => {
       name: fieldName.value.trim(),
       baseUrl,
       ui: readUiSource(),
+      proxy: fieldDirect.checked ? 'direct' : undefined,
     });
     selectedId = saved.id;
     await refresh();
@@ -674,7 +691,7 @@ $('test-instance').addEventListener('click', () => {
     const baseUrl = normalizeWorkerUrl(fieldUrl.value);
     testResult.className = 'hint';
     testResult.textContent = '正在连接…';
-    const result = await api.testInstance(baseUrl);
+    const result = await api.testInstance(baseUrl, { direct: fieldDirect.checked });
     if (result.ok && result.config) {
       const auth =
         result.config.authMode === 'github'
@@ -683,7 +700,7 @@ $('test-instance').addEventListener('click', () => {
             ? '管理员密码登录'
             : '匿名';
       const lines = [
-        `连接正常（${result.latencyMs} ms）· 认证模式：${auth}${
+        `连接正常（${result.latencyMs} ms，${routeText(result.route)}）· 认证模式：${auth}${
           result.config.githubAuthRequired ? '（强制登录）' : ''
         } · 分享：${result.config.sshSharingEnabled ? '开启' : '关闭'}`,
       ];
@@ -702,7 +719,7 @@ $('test-instance').addEventListener('click', () => {
       testResult.textContent = lines.join('\n');
     } else {
       testResult.className = 'hint bad';
-      testResult.textContent = `连接失败：${result.error ?? '未知错误'}`;
+      testResult.textContent = `连接失败（${routeText(result.route)}）：${result.error ?? '未知错误'}`;
     }
   });
 });

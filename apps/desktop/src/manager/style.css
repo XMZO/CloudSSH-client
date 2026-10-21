@@ -559,6 +559,11 @@ textarea:focus {
   margin-top: 14px;
 }
 
+/* 实例的“不走系统代理（直连）”：放在 Worker 地址下面 */
+.field-switch {
+  margin-top: 8px;
+}
+
 .field > span {
   color: var(--muted);
   font-size: 12px;

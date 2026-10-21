@@ -87,6 +87,15 @@
               </div>
               <small id="test-result" class="hint"></small>
             </label>
+            <label class="switch field-switch">
+              <input type="checkbox" id="field-direct" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"
+                >不走系统代理（直连）<small
+                  >默认跟随系统代理。打开后这个实例直接连 Worker，不经过系统代理；代理软件开着 TUN（虚拟网卡）时仍会被它接管，要直连得在代理软件的规则里给 CloudSSH 设 DIRECT。保存后新的连接生效，已打开的终端下次重连时换过去</small
+                ></span
+              >
+            </label>
           </section>
 
           <section class="card">
