@@ -44,6 +44,10 @@ function isArmed(id: string): boolean {
 export function paintArmed(): void {
   for (const button of document.querySelectorAll<HTMLElement>('[data-cs-close-id]')) {
     const on = isArmed(button.dataset.csCloseId ?? '');
+    // 变红、复原都一下到位：按钮自己有背景色、颜色的过渡（网页版标签的 ×、黑曜的图标按钮），
+    // 复原时 × 先回来、红底还要褪一会儿，看着像闪出一个更大的红色 ×
+    const flipping = button.classList.contains('is-armed') !== on;
+    if (flipping) button.style.transition = 'none';
     button.classList.toggle('is-armed', on);
     let label = button.querySelector<HTMLElement>('.cs-m-close-armed');
     if (on && !label) {
@@ -51,6 +55,10 @@ export function paintArmed(): void {
       button.append(label);
     }
     if (!on) label?.remove();
+    if (flipping) {
+      void button.offsetWidth;
+      button.style.removeProperty('transition');
+    }
   }
 }
 
