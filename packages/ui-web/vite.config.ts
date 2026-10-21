@@ -130,6 +130,29 @@ interface Hook {
  * 锚点找不到时只告警不失败：相关功能会自动降级。
  */
 const COMMON_HOOKS: Hook[] = [
+  // 打开着时跟上别处的改动（overrides/shared/live-sync.ts）：把网页版只在启动时做一次的两个同步交出来，内容变了时再调用。
+  // 主题只取“云端有主题 → 更新并应用”那一段：云端没有主题时网页版会把本机的主题回填上去，别处刚删掉的会被加回来，这里不做；
+  // 本机选的是内置主题时只更新主题库、不切换（与网页版启动时一致）
+  {
+    file: '/upstream/frontend/src/main.ts',
+    anchor: '\ninit();\n',
+    inject: [
+      '(globalThis as any).__cloudsshCloudSync = {',
+      '  async theme(): Promise<void> {',
+      '    if (!(await customThemeStore.fetchFromCloud())) return;',
+      '    const active = customThemeStore.getActiveTheme();',
+      '    if (!active) return;',
+      "    localStorage.setItem('cloudssh_imported_theme', JSON.stringify(active.data));",
+      '    ensureCustomOption();',
+      "    if (localStorage.getItem('cloudssh_theme_selection') !== CUSTOM_THEME_VALUE) return;",
+      '    applyImportedTheme(active.data);',
+      '    syncThemeSelectors(CUSTOM_THEME_VALUE);',
+      '  },',
+      '  mobileShortcuts: () => mobileShortcutsManager.syncFromCloud(),',
+      '};',
+      '',
+    ].join('\n'),
+  },
   // 启动首屏（overrides/shared/boot-core.ts）：网页版决定显示什么时告诉它——登录检查通过显示列表页（user，等列表到了
   // 再完成启动）、匿名连接页（auth）、分享链接落地页（share）、独立终端标签页（terminal）
   ...[

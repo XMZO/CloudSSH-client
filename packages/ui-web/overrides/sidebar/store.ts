@@ -25,17 +25,27 @@ function emit(): void {
   }
 }
 
-/** 列表变化（来自网页版的请求或本地更新，不含 primeServers）时调用：shared/boot.ts 写进缓存 */
-let persist: ((next: ServerConfig[] | null) => void) | null = null;
+/**
+ * 拿到列表（来自网页版的请求、主动拉取或本地更新，不含 primeServers）时调用：shared/boot.ts 写进缓存、记下最近一次拿到的时间。
+ * unchanged：和手上的一模一样（定时刷新多半如此）
+ */
+let persist: ((next: ServerConfig[] | null, unchanged: boolean) => void) | null = null;
 
-function setServers(next: ServerConfig[] | null): void {
+function sameServers(a: ServerConfig[] | null, b: ServerConfig[] | null): boolean {
+  return a !== null && b !== null && a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** 内容没变就不通知（不重画侧栏、列表，不打断选中、滚动、菜单） */
+function setServers(next: ServerConfig[] | null): boolean {
+  const unchanged = sameServers(next, servers) || (next === null && servers === null);
   servers = next;
-  emit();
+  if (!unchanged) emit();
   try {
-    persist?.(next);
+    persist?.(next, unchanged);
   } catch {
     // 写缓存失败不影响列表
   }
+  return !unchanged;
 }
 
 export function getServers(): ServerConfig[] | null {
@@ -54,7 +64,7 @@ export function resetServers(): void {
   if (servers !== null) setServers(null);
 }
 
-export function setServerPersistor(fn: ((next: ServerConfig[] | null) => void) | null): void {
+export function setServerPersistor(fn: ((next: ServerConfig[] | null, unchanged: boolean) => void) | null): void {
   persist = fn;
 }
 
@@ -63,11 +73,17 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-/** 主动拉取（例如侧栏的刷新按钮） */
-export async function reloadServers(): Promise<void> {
-  const response = await nativeFetch('/api/servers', { credentials: 'same-origin' });
-  if (response.status === 401) setServers(null);
-  else if (response.ok) setServers((await response.json()) as ServerConfig[]);
+/** 主动拉取（侧栏的刷新按钮、定时刷新）：changed 拿到了且有变化，same 拿到了但没变，unauthorized 没登录 / 登录失效；网络不通时抛错 */
+export async function reloadServers(): Promise<'changed' | 'same' | 'unauthorized' | 'failed'> {
+  const response = await nativeFetch('/api/servers', { credentials: 'same-origin', cache: 'no-store' });
+  if (response.status === 401) {
+    setServers(null);
+    return 'unauthorized';
+  }
+  if (!response.ok) return 'failed';
+  const data = (await response.json()) as unknown;
+  if (!Array.isArray(data)) return 'failed';
+  return setServers(data as ServerConfig[]) ? 'changed' : 'same';
 }
 
 function requestInfo(input: RequestInfo | URL, init?: RequestInit): { method: string; path: string } | null {

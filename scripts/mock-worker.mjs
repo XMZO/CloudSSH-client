@@ -337,9 +337,37 @@ async function handleHttp(req, res) {
       return json(res, 200, { ok: true });
     }
   }
+  // 自定义主题库、手机快捷键：存在内存里（重启即恢复），够调试“别处改了、这边跟上”
+  if (path === '/api/user/theme') {
+    if (method === 'GET') return json(res, 200, userTheme);
+    if (method === 'PUT') {
+      const body = await readBody(req);
+      userTheme = { themes: Array.isArray(body.themes) ? body.themes : [], activeId: body.activeId ?? null };
+      return json(res, 200, { ok: true });
+    }
+    if (method === 'DELETE') {
+      userTheme = { themes: [], activeId: null };
+      return json(res, 200, { ok: true });
+    }
+  }
+  if (path === '/api/user/mobile-shortcuts') {
+    if (method === 'GET') return json(res, 200, { shortcuts: mobileShortcuts });
+    if (method === 'PUT') {
+      const body = await readBody(req);
+      mobileShortcuts = body.shortcuts ?? null;
+      return json(res, 200, { ok: true, shortcuts: mobileShortcuts });
+    }
+    if (method === 'DELETE') {
+      mobileShortcuts = null;
+      return json(res, 200, { ok: true });
+    }
+  }
   if (uiDir && method === 'GET' && !path.startsWith('/api/')) return serveUi(res, path);
   return json(res, 404, { error: 'not mocked' });
 }
+
+let userTheme = { themes: [], activeId: null };
+let mobileShortcuts = null;
 
 // ---------- 托管界面（--ui） ----------
 

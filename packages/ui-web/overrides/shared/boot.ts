@@ -6,15 +6,13 @@
  * - 启动：有缓存（上次登录着）就先用它填上数据源、直接显示列表页，马上完成启动；登录检查与拉取在后台照常进行，
  *   回来后静默换成最新的。登录失效时网页版照常换成连接页（缓存同时删掉，下次不再先显示）
  * - 没缓存（第一次、刚登录）：等列表到了再完成启动，不露出骨架
- * - 后台同步：用缓存显示后，网页版自己的拉取没成功（离线、网络不好）就隔一会儿再拉，直到拿到最新的；
- *   回到前台、网络恢复时，距上次拿到超过 STALE_MS 也静默拉一次。都不提示
+ * - 用缓存显示后，网页版自己的拉取没成功（离线、网络不好）就隔一会儿再拉，直到拿到最新的，不提示。
+ *   打开着时跟上别处的改动（定时、切回前台时刷新）见 ./live-sync.ts
  */
 import type { ServerConfig } from '@cloudssh/core';
 import { getServers, primeServers, reloadServers, resetServers, setServerPersistor, subscribe } from '../sidebar/store';
 import { bootCore } from './boot-core';
 
-/** 回到前台、网络恢复时，距上次拿到最新列表超过这么久就静默刷新 */
-const STALE_MS = 60_000;
 /** 用缓存显示后，过这么久还没拿到最新列表就自己拉 */
 const FIRST_SYNC_MS = 6000;
 /** 自己拉失败后的重试间隔 */
@@ -52,9 +50,10 @@ export function attachBoot(options: { canShowEarly: () => boolean }): void {
   let lastFresh = 0;
   let writeTimer = 0;
   let pending: ServerConfig[] | null | undefined;
-  setServerPersistor((next) => {
+  setServerPersistor((next, unchanged) => {
     if (next) lastFresh = Date.now();
-    if (!core.write) return;
+    // 和手上的一样（定时刷新多半如此）：缓存里已经是它了
+    if (!core.write || (unchanged && next)) return;
     pending = next;
     window.clearTimeout(writeTimer);
     const flush = () => {
@@ -76,7 +75,7 @@ export function attachBoot(options: { canShowEarly: () => boolean }): void {
   core.onUserShown(finishWhenListed);
   subscribe(finishWhenListed);
 
-  // ---- 后台同步 ----
+  // ---- 用缓存显示后，直到拿到最新列表 ----
   let syncing = false;
   let retry = 0;
   let retryTimer = 0;
@@ -98,11 +97,6 @@ export function attachBoot(options: { canShowEarly: () => boolean }): void {
     }
     retryTimer = window.setTimeout(() => void sync(), RETRY_MS[Math.min(retry++, RETRY_MS.length - 1)]);
   };
-  const syncIfStale = () => {
-    if (document.visibilityState === 'visible' && Date.now() - lastFresh > STALE_MS) void sync();
-  };
-  document.addEventListener('visibilitychange', syncIfStale);
-  window.addEventListener('online', syncIfStale);
 
   // ---- 有缓存：直接显示完整列表 ----
   let primed = false;

@@ -25,6 +25,7 @@ import { installCredentialPresets, openPresetManager, presetText } from '../shar
 import { mountDrawerResizers } from './drawers';
 import { mountHome } from './home';
 import { attachBoot } from '../shared/boot';
+import { installLiveSync } from '../shared/live-sync';
 import { installExternalLinks } from './links';
 import { installDesktopNotifications } from './notifications';
 import { agentOutputText, openStyleEditor } from '../shared/agent-output';
@@ -80,6 +81,8 @@ export async function mountDesktopShell(): Promise<void> {
     // 打开就是完整的服务器列表（../shared/boot.ts）：列表组件装好之后再用缓存显示，不会先露出网页版的卡片骨架；
     // 经典主题用网页版自己的卡片（不读数据源），只等列表到了再显示
     attachBoot({ canShowEarly: () => desktopSkin() === 'workbench' });
+    // 打开着时跟上别处的改动：服务器列表、自定义主题（../shared/live-sync.ts；电脑不用手机快捷键）
+    installLiveSync({ mobileShortcuts: false });
     mountSnippetEnhancements();
     mountDrawerResizers();
     installPalette();
