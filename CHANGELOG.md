@@ -4,6 +4,12 @@
 
 版本号与代号统一由根目录的 `version.json` 管理（见 README“[版本号与版本代号](README.md#版本号与版本代号)”）。代号取自夜空中的亮星：次版本号或主版本号升级时换新代号，修订版沿用原代号。
 
+## [Unreleased]
+
+### 新增
+
+- **远程 MCP 支持固定令牌**（`cloudssh mcp http`）：有的应用添加自定义 MCP 时只能填一个固定的 Bearer 令牌或请求头，不会走 OAuth，也就不会自动刷新 1 小时的访问令牌，接不上。现在可以给它们生成固定令牌：`cloudssh mcp http --new-token --label 名字` 输出两行，第一行令牌（`cssh_mcp_` 开头，256 位随机，只显示这一次），第二行 `名字:SHA-256` 加进环境变量 `CLOUDSSH_MCP_STATIC_TOKENS`（Docker 部署是 `.env` 的 `STATIC_TOKENS`，多个逗号隔开）。服务端只存哈希；不过期，删掉那一项重启即吊销；权限与 `--access` 一样；第一次使用时日志记一行，日志里不出现令牌本身；格式不对时不启动。OAuth 照常可用
+
 ## [0.3.47] - 2026-10-21 · 牛郎 Altair
 
 ### 修复

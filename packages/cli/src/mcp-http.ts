@@ -10,6 +10,8 @@
  * - 授权：/authorize 显示确认页，输入部署时设的口令（只存 scrypt 哈希：CLOUDSSH_MCP_PASSWORD_HASH，用
  *   cloudssh mcp http --hash-password 生成）后发授权码；只支持 PKCE S256，授权码 10 分钟、只能用一次
  * - 令牌：/token（authorization_code、refresh_token；刷新令牌每用一次就换新的），访问令牌 1 小时、刷新令牌 30 天；/revoke 吊销
+ * - 固定令牌（给只能填固定 Bearer、不会走 OAuth 的客户端）：环境变量 CLOUDSSH_MCP_STATIC_TOKENS 里只存令牌的 SHA-256，
+ *   可带名字（名字:哈希，逗号隔开），用 cloudssh mcp http --new-token 生成；不过期，删掉那一项重启即吊销
  * - 口令连续输错 5 次后按指数退避锁定（1 分钟起，最长 15 分钟）；注册每小时最多 30 个客户端
  * - 状态文件 <CLOUDSSH_HOME>/mcp-http.json（权限 600）只存客户端与令牌的 SHA-256，不存令牌本身
  * MCP：POST /mcp 收 JSON-RPC（单条或批量），回 application/json；只有通知时回 202。不推送服务器消息（GET 回 405）、
@@ -37,6 +39,8 @@ export interface HttpOptions {
   access: RemoteAccess;
   /** 不提供的服务器（主机 ID 编号） */
   exclude: Set<number>;
+  /** 固定令牌：SHA-256 → 名字（parseStaticTokens） */
+  staticTokens?: Map<string, string>;
 }
 
 const ACCESS_TTL = 3600_000;
@@ -79,6 +83,29 @@ function verifyPassword(password: string, stored: ReturnType<typeof parsePasswor
       resolve(!error && crypto.timingSafeEqual(derived, stored.hash));
     });
   });
+}
+
+// ---------- 固定令牌 ----------
+
+/** 新的固定令牌：32 字节随机数（256 位），前缀便于认出来 */
+export function newStaticToken(): string {
+  return `cssh_mcp_${randomToken(32)}`;
+}
+
+/** 写进 CLOUDSSH_MCP_STATIC_TOKENS 的一项：名字:SHA-256（只存哈希） */
+export function staticTokenEntry(token: string, label?: string): string {
+  return `${label ? `${label}:` : ''}${sha256(token)}`;
+}
+
+/** 解析 CLOUDSSH_MCP_STATIC_TOKENS：逗号隔开的 名字:SHA-256（名字可省）；格式不对就不启动 */
+export function parseStaticTokens(value: string | undefined): Map<string, string> {
+  const tokens = new Map<string, string>();
+  for (const item of (value ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
+    const match = /^(?:([\w.-]{1,40}):)?([0-9a-f]{64})$/i.exec(item);
+    if (!match) throw new UsageError(`固定令牌格式不对：${item.slice(0, 16)}…（应为 名字:SHA-256，用 cloudssh mcp http --new-token 生成）`);
+    tokens.set(match[2].toLowerCase(), match[1] ?? 'token');
+  }
+  return tokens;
 }
 
 // ---------- 状态 ----------
@@ -352,6 +379,9 @@ export async function serveHttp(options: HttpOptions): Promise<void> {
   const password = parsePasswordHash(options.passwordHash);
   const store = new Store();
   store.load();
+  const staticTokens = options.staticTokens ?? new Map<string, string>();
+  /** 已经用过的固定令牌（每个只在第一次用时记一行） */
+  const staticSeen = new Set<string>();
 
   // 进程里只有一个 MCP 服务器：服务器列表缓存、后台会话在各个请求之间共用；进度通知在 HTTP 上不推送
   const mcp = new McpServer(options.instance, () => undefined, {
@@ -627,8 +657,14 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
   async function mcpPost(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const auth = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '');
     if (!auth) return unauthorized(res, 'missing bearer token');
-    const record = store.state.tokens[sha256(auth[1])];
-    if (!record || record.type !== 'access' || record.expiresAt < Date.now()) return unauthorized(res, 'invalid or expired token');
+    const digest = sha256(auth[1]);
+    const record = store.state.tokens[digest];
+    const staticLabel = staticTokens.get(digest);
+    if (!staticLabel && (!record || record.type !== 'access' || record.expiresAt < Date.now())) return unauthorized(res, 'invalid or expired token');
+    if (staticLabel && !staticSeen.has(staticLabel)) {
+      staticSeen.add(staticLabel);
+      log(`固定令牌 ${staticLabel} 开始使用`);
+    }
     let message: unknown;
     try {
       message = JSON.parse(await readBody(req));
@@ -756,6 +792,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
     // 工具调用时再报
   }
   log(`listening on http://${shown}:${address.port}（对外 ${resource}，权限 ${options.access}，${who}${options.exclude.size ? `，不提供 ${[...options.exclude].map((id) => `srv-${id}`).join(',')}` : ''}）`);
+  if (staticTokens.size) log(`固定令牌 ${staticTokens.size} 个：${[...staticTokens.values()].join('、')}`);
 
   process.on('unhandledRejection', (error) => log(`未处理的异常：${(error as Error)?.stack ?? String(error)}`));
   await new Promise<void>((resolve) => {

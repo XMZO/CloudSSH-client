@@ -3,7 +3,7 @@
 #
 # 目录（例如 /root/cloudssh）里放：
 #   compose.yaml    本文件
-#   .env            PUBLIC_URL、PASSWORD_HASH、ACCESS、EXCLUDE（见 .env.example；权限 600）
+#   .env            PUBLIC_URL、PASSWORD_HASH、ACCESS、EXCLUDE、STATIC_TOKENS（见 .env.example；权限 600）
 #   cloudssh.mjs    打好的命令行（packages/cli/dist/cloudssh.mjs），更新时替换它再 docker compose restart
 #   data/           CloudSSH 的登录与 OAuth 状态（属主 1000:1000，权限 700）
 services:
@@ -23,6 +23,8 @@ services:
       CLOUDSSH_MCP_PASSWORD_HASH: ${PASSWORD_HASH:?在 .env 里设置 PASSWORD_HASH}
       CLOUDSSH_MCP_ACCESS: ${ACCESS:-read-only}
       CLOUDSSH_MCP_EXCLUDE: ${EXCLUDE:-}
+      # 固定令牌（可选）：只存 SHA-256
+      CLOUDSSH_MCP_STATIC_TOKENS: ${STATIC_TOKENS:-}
     volumes:
       - ./cloudssh.mjs:/app/cloudssh.mjs:ro
       - ./data:/data

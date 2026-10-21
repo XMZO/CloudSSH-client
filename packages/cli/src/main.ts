@@ -24,7 +24,7 @@ import { agentStatus, execViaAgent, runAgent, stopAgent } from './agent';
 import { install, installStatus, mcpLaunch, refresh, skillTargets, syncSkills, uninstall } from './install';
 import { login } from './login';
 import { REMOTE_ACCESS, serveStdio, type RemoteAccess } from './mcp';
-import { hashPassword, parsePasswordHash, serveHttp } from './mcp-http';
+import { hashPassword, newStaticToken, parsePasswordHash, parseStaticTokens, serveHttp, staticTokenEntry } from './mcp-http';
 import { MCP_CLIENTS, mcpTargets, parseMcpClients, registerMcp, unregisterMcp, type McpClientTarget } from './mcp-clients';
 import { api, ApiError, installNetwork, instanceOrigin, networkMessage } from './net';
 import { askSecret, confirm, interactive, readCommandFile, readStdin } from './prompt';
@@ -65,6 +65,8 @@ MCP（给 Claude Desktop、Cursor、VS Code 等不支持 skill 的应用）
   mcp http --public-url <https 地址> [--listen 127.0.0.1:8790] [--access full|ask|read-only] [--exclude srv-1,…]
                                 远程 MCP 服务器（给云端 AI，如 Muse 的自定义连接器）：OAuth 授权，口令哈希放在环境变量
                                 CLOUDSSH_MCP_PASSWORD_HASH（mcp http --hash-password 生成）；权限默认 read-only
+  mcp http --new-token [--label 名字]   给只能填固定 Bearer 的客户端生成令牌：第一行令牌，第二行加进
+                                CLOUDSSH_MCP_STATIC_TOKENS（只存 SHA-256，逗号隔开）
 
 目标：srv-12（主机 ID，各设备一样）、名称、别名、tag:标签、all，多个用逗号隔开
 通用选项：--instance/-i <名称或地址> 选实例，--json 输出 JSON，--help
@@ -378,8 +380,17 @@ function hostIdSet(spec: string | undefined): Set<number> {
   return ids;
 }
 
-/** mcp http：远程 MCP 服务器（给云端 AI 用）；--hash-password 生成授权口令的哈希 */
+/** mcp http：远程 MCP 服务器（给云端 AI 用）；--hash-password 生成授权口令的哈希，--new-token 生成固定令牌 */
 async function cmdMcpHttp(parsed: Parsed): Promise<number> {
+  if (bool(parsed, 'new-token')) {
+    // 令牌只在这里出现一次：stdout 第一行是令牌，第二行是写进 CLOUDSSH_MCP_STATIC_TOKENS 的一项（名字:SHA-256）
+    const label = str(parsed, 'label');
+    if (label && !/^[\w.-]{1,40}$/.test(label)) throw new UsageError('--label 只能用字母、数字、下划线、点和连字符，最多 40 个字符');
+    const token = newStaticToken();
+    process.stderr.write('第一行是令牌（只显示这一次，填进客户端的 Authorization: Bearer …）；第二行加进环境变量 CLOUDSSH_MCP_STATIC_TOKENS（多个用逗号隔开）\n');
+    process.stdout.write(`${token}\n${staticTokenEntry(token, label)}\n`);
+    return 0;
+  }
   if (bool(parsed, 'hash-password')) {
     let password: string;
     if (interactive()) {
@@ -406,6 +417,7 @@ async function cmdMcpHttp(parsed: Parsed): Promise<number> {
   const passwordHash = process.env.CLOUDSSH_MCP_PASSWORD_HASH;
   if (!passwordHash) throw new UsageError('缺少授权口令：先用 cloudssh mcp http --hash-password 生成哈希，放进环境变量 CLOUDSSH_MCP_PASSWORD_HASH');
   parsePasswordHash(passwordHash);
+  const staticTokens = parseStaticTokens(process.env.CLOUDSSH_MCP_STATIC_TOKENS);
   const access = (str(parsed, 'access') ?? process.env.CLOUDSSH_MCP_ACCESS ?? 'read-only') as RemoteAccess;
   if (!REMOTE_ACCESS.includes(access)) throw new UsageError(`--access 只能是 ${REMOTE_ACCESS.join('、')}`);
   await serveHttp({
@@ -415,6 +427,7 @@ async function cmdMcpHttp(parsed: Parsed): Promise<number> {
     passwordHash,
     access,
     exclude: hostIdSet(str(parsed, 'exclude') ?? process.env.CLOUDSSH_MCP_EXCLUDE),
+    staticTokens,
   });
   return 0;
 }
@@ -430,6 +443,8 @@ async function cmdMcp(argv: string[]): Promise<number> {
       access: { type: 'string' },
       exclude: { type: 'string' },
       'hash-password': { type: 'boolean' },
+      'new-token': { type: 'boolean' },
+      label: { type: 'string' },
     })
   );
   const [action = 'serve', spec] = parsed.positionals;

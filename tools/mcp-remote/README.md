@@ -6,6 +6,7 @@ Meta Muse 这类云端助手不能安装 skill，也碰不到你电脑上的 `cl
 - **权限**（`ACCESS`）：`full` 与命令行的完全权限一样，危险命令直接执行（`rm -rf /` 这类拦截级仍拒绝）；`ask` 危险命令要 AI 先问你、再带 `confirm: true`；`read-only` 只放行查看类命令（文件、日志、状态、进程、网络、磁盘、容器），写文件、重定向到文件、安装、重启、删除、命令替换、子 Shell、heredoc、解释器一律拒绝。只读判定是尽力而为的护栏，不是沙箱
 - **不提供的服务器**（`EXCLUDE`）：跑这个服务的机器自己。它上面存着 CloudSSH 的登录，能在它上面执行命令就能读到登录
 - **授权**：只认一个人。Muse 添加连接器时打开授权页，输入部署时设的口令（只存 scrypt 哈希）；连续输错 5 次后锁定，1 分钟起、最长 15 分钟。令牌只存 SHA-256，访问令牌 1 小时、刷新令牌 30 天（每用一次换新的）
+- **固定令牌**（可选）：有的应用添加自定义 MCP 时只能填一个固定的 Bearer 令牌或请求头，不会走 OAuth（也就不会自动刷新 1 小时的访问令牌）。给它们生成固定令牌：`.env` 的 `STATIC_TOKENS` 里只存令牌的 SHA-256，可以带名字（`名字:哈希`，多个逗号隔开），不过期，删掉那一项再 `docker compose up -d` 即吊销；权限与 `ACCESS` 一样。令牌本身只在生成时显示一次，在应用里填请求头 `Authorization: Bearer <令牌>`。第一次使用时日志记一行 `固定令牌 名字 开始使用`
 - **审计**：每次执行、拒绝都在容器日志里记一行（工具、主机 ID、命令前 300 字）：`docker compose logs -f`
 
 ## 部署（以 /root/cloudssh 为例）
@@ -29,6 +30,10 @@ Meta Muse 这类云端助手不能安装 skill，也碰不到你电脑上的 `cl
 4. 启动：`docker compose up -d`，`docker compose logs` 里应有 `listening on http://0.0.0.0:8790（对外 …/mcp，权限 full，CloudSSH 实例 …）`
 5. HTTPS：照 `Caddyfile.example` 给域名加一段，DNS 的 A / AAAA 记录直接指向这台服务器（不开 Cloudflare 代理）
 6. 在 Muse 里：设置 → 连接器 → 添加自定义连接器，地址填 `https://你的域名/mcp`，在弹出的授权页输入口令
+7. （可选）只能填固定令牌的应用：生成令牌，把第二行加进 `.env` 的 `STATIC_TOKENS`，`docker compose up -d` 让它生效；第一行（令牌）填进应用，地址同样是 `https://你的域名/mcp`
+   ```bash
+   docker run --rm -v "$PWD/cloudssh.mjs:/app/cloudssh.mjs:ro" node:24-slim node /app/cloudssh.mjs mcp http --new-token --label 名字
+   ```
 
 更新：替换 `cloudssh.mjs` 后 `docker compose restart`。撤销所有授权：删掉 `data/cloudssh/mcp-http.json` 后重启。
 

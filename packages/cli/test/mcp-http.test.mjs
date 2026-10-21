@@ -329,6 +329,32 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.equal(response.status, 200, await response.clone().text());
   });
 
+  test('固定令牌：--new-token 生成令牌与哈希项；带上它直接用 /mcp，错的 401；格式不对不启动', async () => {
+    const made = await spawnSyncInput(['mcp', 'http', '--new-token', '--label', 'hark'], env, '');
+    assert.equal(made.code, 0, made.stderr);
+    const [token, entry] = made.stdout.trim().split(/\r?\n/);
+    assert.match(token, /^cssh_mcp_[\w-]{43}$/);
+    assert.equal(entry, `hark:${crypto.createHash('sha256').update(token).digest('hex')}`);
+    const staticServer = await startHttp({ ...env, CLOUDSSH_MCP_STATIC_TOKENS: `other:${'0'.repeat(64)}, ${entry}` }, ['--access', 'read-only']);
+    try {
+      const init = await rpc(staticServer.base, token, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+      assert.equal(init.status, 200);
+      assert.ok(init.body.result);
+      const tools = await rpc(staticServer.base, token, 'tools/list');
+      assert.equal(tools.status, 200);
+      assert.ok(tools.body.result.tools.some((tool) => tool.name === 'exec'));
+      assert.equal((await rpc(staticServer.base, `${token}x`, 'ping')).status, 401);
+      assert.match(staticServer.stderr, /固定令牌 2 个：other、hark/);
+      assert.match(staticServer.stderr, /固定令牌 hark 开始使用/);
+      assert.ok(!staticServer.stderr.includes(token), '日志里不出现令牌本身');
+    } finally {
+      staticServer.stop();
+    }
+    const broken = runCli(['mcp', 'http', '--public-url', PUBLIC, '--listen', '127.0.0.1:0'], { ...env, CLOUDSSH_MCP_STATIC_TOKENS: 'hark:nothex' });
+    assert.notEqual(broken.code, 0);
+    assert.match(broken.stderr, /固定令牌格式不对/);
+  });
+
   describe('只读模式', () => {
     let readonly;
     let token;
