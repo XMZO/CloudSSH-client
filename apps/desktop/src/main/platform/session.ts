@@ -7,7 +7,8 @@
 import { type InstanceConfig, isSameInstanceOrigin, originOf } from '@cloudssh/core';
 import { app, session, type Session } from 'electron';
 import path from 'node:path';
-import { createLogger, isDebug } from '../logger';
+import { createLogger } from '../logger';
+import { connectionEndpoint } from '../connection-log-data';
 import { resolveUi, type ResolvedUi } from '../ui/providers';
 import { claimDragDownload } from './drag-out';
 import { applyOriginBridge } from './origin-bridge';
@@ -78,15 +79,50 @@ function configureSession(ses: Session): void {
     item.once('done', (_e, state) => log.info('下载结束', item.getFilename(), state, item.getReceivedBytes(), 'bytes'));
   });
 
-  if (isDebug) {
-    // 调试：记录 WebSocket 握手结果（403 = Origin 被拒，401 = 未登录）
-    ses.webRequest.onHeadersReceived((details, callback) => {
-      if (details.resourceType === 'webSocket') {
-        log.debug('WebSocket 握手', details.statusCode, new URL(details.url).pathname);
+  // 安装版默认开启。Electron 的这些事件只覆盖 WS 握手，帧和关闭原因由 UI 补充。
+  // 只注册一组监听器，避免 Electron 同类 webRequest 监听器互相覆盖。
+  // 带上过滤条件：不带时会话里每个请求（脚本、图片、字体、所有 API）都要先绕主进程一趟；
+  // 这几种写法用 Electron 44 实测过，只匹配 WebSocket 握手与健康检查
+  const filter = { urls: ['ws://*/*', 'wss://*/*', '*://*/api/health*'] };
+  const networkLog = createLogger('connection-network');
+  const pending = new Map<number, number>();
+  const tracked = (details: { url: string; resourceType: string }) => {
+    try {
+      const url = new URL(details.url);
+      url.protocol = url.protocol === 'wss:' ? 'https:' : url.protocol === 'ws:' ? 'http:' : url.protocol;
+      return isFromInstance(ses, url.href) &&
+        (details.resourceType === 'webSocket' || url.pathname === '/api/health');
+    } catch { return false; }
+  };
+  const metadata = (details: { id: number; url: string; webContentsId?: number; timestamp: number }) => ({
+    instance: instanceOfSession.get(ses), window: details.webContentsId, requestId: details.id,
+    ...connectionEndpoint(details.url),
+    durationMs: pending.has(details.id) ? Math.max(0, details.timestamp - pending.get(details.id)!) : undefined,
+  });
+  ses.webRequest.onBeforeRequest(filter, (details, callback) => {
+    try {
+      if (tracked(details)) {
+        if (pending.size >= 512) pending.delete(pending.keys().next().value!);
+        pending.set(details.id, details.timestamp);
+        networkLog.info('request-start', metadata(details));
       }
-      callback({});
-    });
-  }
+    } finally { callback({}); }
+  });
+  ses.webRequest.onHeadersReceived(filter, (details, callback) => {
+    try {
+      if (tracked(details)) networkLog.info('response-headers', { ...metadata(details), status: details.statusCode });
+    } finally { callback({}); }
+  });
+  ses.webRequest.onCompleted(filter, (details) => {
+    if (!tracked(details)) return;
+    networkLog.info('request-completed', { ...metadata(details), status: details.statusCode, fromCache: details.fromCache });
+    pending.delete(details.id);
+  });
+  ses.webRequest.onErrorOccurred(filter, (details) => {
+    if (!tracked(details)) return;
+    networkLog.warn('request-failed', { ...metadata(details), error: details.error });
+    pending.delete(details.id);
+  });
 }
 
 export interface PreparedSession {

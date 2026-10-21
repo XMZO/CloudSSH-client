@@ -10,6 +10,8 @@ interface CloudSSHDesktopBridgeInfo {
 
 interface Window {
   cloudsshDesktop?: {
+    /** 连接诊断元数据（旧版客户端没有）。 */
+    connectionLog?(entry: unknown): void;
     info(): Promise<CloudSSHDesktopBridgeInfo>;
     /** view 为 'cli' 时直接打开“命令行与 Skill”设置页（旧版客户端忽略参数，只打开实例管理） */
     openInstanceManager?(view?: 'cli'): Promise<void>;

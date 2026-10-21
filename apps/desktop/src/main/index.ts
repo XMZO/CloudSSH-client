@@ -7,7 +7,7 @@
  *
  * 命令行参数：--instance=<id> 启动时打开指定实例
  */
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, net, powerMonitor } from 'electron';
 import path from 'node:path';
 import { configStore } from './config/store';
 import { createLogger } from './logger';
@@ -64,6 +64,16 @@ if (!app.requestSingleInstanceLock()) {
     configStore.load();
     log.info(`启动 CloudSSH 桌面客户端 ${versionLabel()}（Electron ${process.versions.electron}）`);
     log.info('配置文件', configStore.path);
+    log.info('连接诊断已启用；日志每份 2 MiB，当前文件 + 4 份归档，总计最多 10 MiB');
+    // 逐个注册：powerMonitor.on 是按事件名重载的，传联合类型时 TypeScript 选不出重载
+    const logSystemState = (event: string) => () => log.info('system-state', { event, online: net.isOnline() });
+    powerMonitor.on('suspend', logSystemState('suspend'));
+    powerMonitor.on('resume', logSystemState('resume'));
+    powerMonitor.on('lock-screen', logSystemState('lock-screen'));
+    powerMonitor.on('unlock-screen', logSystemState('unlock-screen'));
+    app.on('child-process-gone', (_event, details) => {
+      log.warn('child-process-gone', { type: details.type, reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName });
+    });
 
     registerIpc();
     registerVaultIpc();

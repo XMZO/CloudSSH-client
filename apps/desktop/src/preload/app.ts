@@ -5,6 +5,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('cloudsshDesktop', {
+  /** 仅诊断元数据，主进程再次筛选字段并限流。 */
+  connectionLog: (entry: unknown) => ipcRenderer.send('desktop:connection-log', entry),
   /** { platform, appVersion, instance: { id, name, baseUrl } } */
   info: () => ipcRenderer.invoke('desktop:info'),
   /** view 为 'cli' 时直接打开“命令行与 Skill”设置页 */

@@ -65,8 +65,8 @@ const zhCN = {
   'note.b-level-debug': '日志级别 DEBUG',
   editorMouseHint: '这个编辑器没开鼠标支持，点不到光标位置：vim 输入 :set mouse=a，nano 按 Alt+M（或在 ~/.nanorc 加一行 set mouse）。开了以后点哪光标就到哪，滚动也照常',
   nanoMouseOn: '已为 nano 打开鼠标支持：点哪光标到哪，滚动照常（Alt+M 可以关掉，关掉后这次不再自动打开）',
-  resumeGone: '原会话已无法恢复（服务器上已经关闭），改为重新连接，新会话会从头开始',
-  resumeTimeout: '断线超过 60 秒，服务器已关闭原会话，改为重新连接，新会话会从头开始',
+  resumeGone: '恢复原会话失败，改为重新连接，新会话会从头开始',
+  resumeTimeout: '恢复原会话的等待时间已用完，改为重新连接，新会话会从头开始',
 };
 
 type Key = keyof typeof zhCN;
@@ -133,8 +133,8 @@ const dictionaries: Record<string, Record<Key, string>> = {
     'note.b-level-debug': '記錄層級 DEBUG',
     editorMouseHint: '這個編輯器沒開滑鼠支援，點不到游標位置：vim 輸入 :set mouse=a，nano 按 Alt+M（或在 ~/.nanorc 加一行 set mouse）。開啟後點哪游標就到哪，捲動也照常',
     nanoMouseOn: '已為 nano 開啟滑鼠支援：點哪游標到哪，捲動照常（Alt+M 可以關閉，關閉後這次不再自動開啟）',
-    resumeGone: '原會話已無法恢復（伺服器上已經關閉），改為重新連線，新會話會從頭開始',
-    resumeTimeout: '中斷超過 60 秒，伺服器已關閉原會話，改為重新連線，新會話會從頭開始',
+    resumeGone: '恢復原會話失敗，改為重新連線，新會話會從頭開始',
+    resumeTimeout: '恢復原會話的等待時間已用完，改為重新連線，新會話會從頭開始',
   },
   'en-US': {
     reconnectNow: '(press any key to reconnect now)',
@@ -200,8 +200,8 @@ const dictionaries: Record<string, Record<Key, string>> = {
     'note.b-level-debug': 'Log level DEBUG',
     editorMouseHint: 'This editor has mouse support off, so clicking cannot place the cursor. In vim type :set mouse=a; in nano press Alt+M (or add “set mouse” to ~/.nanorc). Then clicking places the cursor and scrolling works as usual',
     nanoMouseOn: 'Turned on mouse support in nano: click to place the cursor, scrolling works as usual (Alt+M turns it off; it will not be turned on again this time)',
-    resumeGone: 'The original session can no longer be resumed (it was closed on the server); reconnecting with a new session that starts from scratch',
-    resumeTimeout: 'Disconnected for more than 60 seconds, so the server closed the original session; reconnecting with a new session that starts from scratch',
+    resumeGone: 'Could not resume the original session; reconnecting with a new session that starts from scratch',
+    resumeTimeout: 'The session recovery window has elapsed; reconnecting with a new session that starts from scratch',
   },
 };
 

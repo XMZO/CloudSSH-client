@@ -11,7 +11,8 @@ import {
   type InstanceConfig,
   isSameInstanceOrigin,
 } from '@cloudssh/core';
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, net, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type IpcMainEvent, net, shell } from 'electron';
+import { connectionLogData } from '../connection-log-data';
 import { configStore, type Preferences } from '../config/store';
 import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
@@ -46,7 +47,7 @@ function assertManager(event: IpcMainInvokeEvent): void {
   }
 }
 
-function senderInstance(event: IpcMainInvokeEvent): InstanceConfig {
+function senderInstance(event: IpcMainInvokeEvent | IpcMainEvent): InstanceConfig {
   const id = instanceIdOfWebContents(event.sender.id);
   const instance = id ? configStore.getInstance(id) : undefined;
   const frameUrl = event.senderFrame?.url ?? '';
@@ -80,6 +81,24 @@ function broadcastChanged(): void {
 }
 
 export function registerIpc(): void {
+  const connectionLog = createLogger('connection');
+  const budgets = new WeakMap<Electron.WebContents, { start: number; count: number; dropped: number }>();
+  ipcMain.on('desktop:connection-log', (event, input: unknown) => {
+    try {
+      const instance = senderInstance(event);
+      if (event.senderFrame !== event.sender.mainFrame) return;
+      const now = Date.now();
+      let budget = budgets.get(event.sender);
+      if (!budget || now - budget.start >= 60_000) {
+        if (budget?.dropped) connectionLog.warn('diagnostics-rate-limited', { instance: instance.id, window: event.sender.id, dropped: budget.dropped });
+        budget = { start: now, count: 0, dropped: 0 };
+        budgets.set(event.sender, budget);
+      }
+      if (++budget.count > 600) { budget.dropped++; return; }
+      const data = connectionLogData(input);
+      if (data) connectionLog.info({ instance: instance.id, window: event.sender.id, ...data });
+    } catch { /* 非实例页面或已销毁窗口的诊断不影响会话。 */ }
+  });
   // ---------- 实例页面 ----------
   ipcMain.handle('desktop:info', (event) => {
     const instance = senderInstance(event);

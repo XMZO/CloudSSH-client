@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
+import { CONNECTION_DIAGNOSTIC_HOOKS } from './connection-diagnostic-hooks';
 
 const packageDir = path.dirname(fileURLToPath(import.meta.url));
 const upstreamFrontend = path.join(packageDir, 'upstream', 'frontend');
@@ -130,6 +131,7 @@ interface Hook {
  * 锚点找不到时只告警不失败：相关功能会自动降级。
  */
 const COMMON_HOOKS: Hook[] = [
+  ...CONNECTION_DIAGNOSTIC_HOOKS,
   // 打开着时跟上别处的改动（overrides/shared/live-sync.ts）：把网页版只在启动时做一次的两个同步交出来，内容变了时再调用。
   // 主题只取“云端有主题 → 更新并应用”那一段：云端没有主题时网页版会把本机的主题回填上去，别处刚删掉的会被加回来，这里不做；
   // 本机选的是内置主题时只更新主题库、不切换（与网页版启动时一致）

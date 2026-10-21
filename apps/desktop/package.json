@@ -15,7 +15,8 @@
     "release:win": "node ../../scripts/version.mjs check && pnpm run clean:release && node build.mjs && electron-builder --win --config electron-builder.yml --publish always",
     "dist:dir": "pnpm run clean:release && node build.mjs && electron-builder --win --dir --config electron-builder.yml --publish never",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.renderer.json",
-    "test": "node --test test/update-cache.test.mjs",
+    "test": "node --test test/update-cache.test.mjs test/connection-diagnostics.test.mjs",
+    "test:diagnostics": "node --test test/connection-diagnostics.test.mjs",
     "clean:release": "node scripts/clean-release.mjs"
   },
   "devDependencies": {

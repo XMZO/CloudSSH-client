@@ -6,7 +6,13 @@
 
 ## [Unreleased]
 
-### 变更
+### 新增
+
+- **电脑端默认保存连接诊断日志**（“帮助 → 打开日志”，Windows 在 `%APPDATA%\CloudSSH\logs\`）：排查“连不上 / 突然断线”不用再开调试模式。
+  - **记什么**：每条连接的终端 / 连接编号、WebSocket 握手状态码与耗时、Chromium 网络错误、关闭码与是否正常关闭、Worker 报的事件名、最后收到数据 / 心跳距断线多久、收到的消息数与字节数（近似）、恢复尝试与等待、健康检查结果、放弃恢复的原因；以及网络在线状态、前后台切换、系统睡眠 / 唤醒 / 锁屏、子进程崩溃。普通心跳每条连接每分钟汇总一条，异常逐次记录
+  - **不记什么**：命令、终端输出、密码、私钥、Cookie、查询参数（恢复令牌只记“有没有”）、服务端消息正文、关闭原因正文（只记长度）。界面经 `desktop:connection-log` 只能发白名单里的事件与字段（`connection-log-data.ts`），主进程再筛一遍；每个窗口每分钟最多 600 条，超出的丢弃并在下一分钟报告数量
+  - **容量**：按大小轮转，每份最多 2 MiB，保留当前文件和 4 份归档，最多 10 MiB；单条最多 16 KiB；旧版留下的超大文件只保留末尾
+  - 实现：主进程 `rotating-log.ts`、`connection-log-data.ts`，会话的 `webRequest` 只监听 WebSocket 握手与 `/api/health`（带 URL 过滤，其他请求不经过主进程）；界面 `shared/terminal/connection-diagnostics.ts`，网页版终端里的 9 个诊断钩子在 `connection-diagnostic-hooks.ts`（源码级测试校验每个锚点在当前上游里唯一）；恢复重试的提示不再断言“服务器已关闭原会话”，改为说“恢复失败 / 等待时间已用完”
 
 - **内置网页版同步到 CloudSSH v2.7.2（含 Agent 兼容 Claude 的修复）**：原来是 v2.6.8。上游这几版带来：服务器认证方式新增“无认证（none）”（不发送密码或私钥）、密码可留空；AI 配置里可以填模型的上下文窗口与输出上限（token 预算）；Agent 回复的错误说明更细、模型策略与回复诊断。同一次 Worker 修复：发给模型的工具定义去掉了数字参数的 minimum / maximum（Claude 等的严格工具模式不支持，整个请求会被拒：`tools.0.custom: For 'number' type, properties maximum, minimum are not supported`），范围改在 Worker 本地校验——要配合已部署的新 Worker
   - 客户端跟着支持无认证：`@cloudssh/core` 的 `auth_method` 加上 `none`；电脑端工作台列表“用户”列显示 `NONE`（与网页版卡片一致）；服务器表单选了无认证时点“存为预设”只提示不用存（原来会读到隐藏着的密码框，把切换前填的密码存成预设）

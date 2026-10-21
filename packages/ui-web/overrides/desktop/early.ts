@@ -6,7 +6,10 @@
  * 样式在 ./boot.css（藏着连接页与列表页直到启动完成）。
  */
 import { installAuthRetry, installBootCore, skipBoot } from '../shared/boot-core';
+import { installConnectionDiagnostics } from '../shared/terminal/connection-diagnostics';
 import './boot.css';
+
+installConnectionDiagnostics();
 
 const cache = window.cloudsshDesktop?.uiCache;
 if (cache) {
