@@ -36,6 +36,7 @@ import { installSftpDragDrop } from './sftp-drop';
 import { mountSnippetEnhancements } from './snippets';
 import { desktopSkin, SKIN_CHANGED_EVENT, trackView } from './state';
 import { mountTitlebar } from './titlebar';
+import { installThemeShare } from './theme-share';
 import './workbench.css';
 import './classic.css';
 import './snippets.css';
@@ -83,6 +84,8 @@ export async function mountDesktopShell(): Promise<void> {
     attachBoot({ canShowEarly: () => desktopSkin() === 'workbench' });
     // 打开着时跟上别处的改动：服务器列表、自定义主题（../shared/live-sync.ts；电脑不用手机快捷键）
     installLiveSync({ mobileShortcuts: false });
+    // 把当前配色报给主进程，实例管理窗口跟随主题（./theme-share.ts）
+    installThemeShare();
     mountSnippetEnhancements();
     mountDrawerResizers();
     installPalette();

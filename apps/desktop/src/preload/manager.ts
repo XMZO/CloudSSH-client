@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('managerApi', {
   onShowView: (listener: (view: string) => void) => {
     ipcRenderer.on('manager:show-view', (_event, view: unknown) => listener(String(view)));
   },
+  /** 跟随主题：当前配色（还没有实例页面报过时为 null），以及之后的变化 */
+  palette: () => ipcRenderer.invoke('manager:palette'),
+  onPalette: (listener: (palette: unknown) => void) => {
+    ipcRenderer.on('manager:palette', (_event, palette: unknown) => listener(palette));
+  },
   onChanged: (listener: (state: unknown) => void) => {
     const handler = (_event: unknown, state: unknown) => listener(state);
     ipcRenderer.on('manager:changed', handler);

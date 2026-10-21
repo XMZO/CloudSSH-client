@@ -90,6 +90,23 @@ interface ManagerApi {
   setCliMcp(id: string, on: boolean): Promise<CliStatus>;
   /** 应用里点了“命令行与 Skill”（旧版 preload 没有） */
   onShowView?(listener: (view: string) => void): void;
+  /** 跟随主题：实例页面报来的配色（还没有时为 null）与之后的变化 */
+  palette?(): Promise<Palette | null>;
+  onPalette?(listener: (palette: Palette) => void): void;
+}
+
+/** 主进程转来的配色（十六进制颜色），对应 style.css 里 :root 的变量 */
+interface Palette {
+  bg: string;
+  surface: string;
+  elevated: string;
+  border: string;
+  borderStrong: string;
+  text: string;
+  muted: string;
+  accent: string;
+  onAccent: string;
+  danger: string;
 }
 
 const api = (window as unknown as { managerApi: ManagerApi }).managerApi;
@@ -211,6 +228,7 @@ function selectedUiKind(): UiSource['kind'] {
 
 function syncUiSubFields(): void {
   const kind = selectedUiKind();
+  $('ui-kind-desc').textContent = uiKindRadios().find((radio) => radio.checked)?.dataset.desc ?? '';
   document.querySelectorAll<HTMLElement>('.sub').forEach((el) => {
     el.classList.toggle('visible', el.dataset.for === kind);
   });
@@ -335,11 +353,7 @@ function fillForm(instance: InstanceConfig | null): void {
 }
 
 function select(id: string | null): void {
-  if (!cliView.hidden) {
-    cliView.hidden = true;
-    form.hidden = false;
-    actionbar.hidden = false;
-  }
+  if (form.hidden) showView('form');
   selectedId = id;
   renderList();
   fillForm(id && state ? state.instances.find((instance) => instance.id === id) ?? null : null);
@@ -365,8 +379,8 @@ async function refresh(keepForm = false): Promise<void> {
 
 // ---------- 命令行与 Claude Code ----------
 
+/** 侧栏“命令行与 Skill”后面的短状态（完整说明在设置页里） */
 const cliStatusEl = $('cli-status');
-const cliInstallBtn = $<HTMLButtonElement>('cli-install');
 const cliViewStatus = $('cli-view-status');
 const cliViewInstall = $<HTMLButtonElement>('cli-view-install');
 const cliViewUninstall = $<HTMLButtonElement>('cli-view-uninstall');
@@ -416,14 +430,13 @@ function renderCli(status: CliStatus): void {
     if (mcp.length) lines.push(`MCP 已登记：${mcp.map((item) => item.name).join('、')}`);
     if (mcpOld.length) lines.push(`MCP 登记指向的不是这个程序（点“重新安装”更新）：${mcpOld.join('、')}`);
   }
-  for (const el of [cliStatusEl, cliViewStatus]) {
-    el.textContent = lines.join('\n');
-    el.classList.toggle('is-warning', warning);
-  }
-  for (const button of [cliInstallBtn, cliViewInstall]) {
-    button.disabled = !status.available;
-    button.textContent = status.installed ? '重新安装' : '安装';
-  }
+  cliViewStatus.textContent = lines.join('\n');
+  cliViewStatus.classList.toggle('is-warning', warning);
+  cliStatusEl.textContent = !status.available ? '不可用' : !status.installed ? '未安装' : warning ? '需处理' : '已安装';
+  cliStatusEl.title = lines.join('\n');
+  cliStatusEl.classList.toggle('is-warning', warning);
+  cliViewInstall.disabled = !status.available;
+  cliViewInstall.textContent = status.installed ? '重新安装' : '安装';
   cliViewUninstall.disabled =
     !status.installed && !(status.skills ?? []).some((item) => item.installed) && !(status.mcp ?? []).some((item) => item.registered);
 }
@@ -431,20 +444,20 @@ function renderCli(status: CliStatus): void {
 const remoteMessage = (error: unknown) => (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 async function cliAction(action: () => Promise<CliStatus>): Promise<void> {
-  cliInstallBtn.disabled = cliViewInstall.disabled = cliViewUninstall.disabled = true;
+  cliViewInstall.disabled = cliViewUninstall.disabled = true;
   try {
     renderCli(await action());
     if (!cliView.hidden) await loadCliSettings();
   } catch (error) {
-    for (const el of [cliStatusEl, cliViewStatus]) {
-      el.textContent = remoteMessage(error);
-      el.classList.add('is-warning');
-    }
-    cliInstallBtn.disabled = cliViewInstall.disabled = cliViewUninstall.disabled = false;
+    cliViewStatus.textContent = remoteMessage(error);
+    cliViewStatus.classList.add('is-warning');
+    cliStatusEl.textContent = '出错';
+    cliStatusEl.title = remoteMessage(error);
+    cliStatusEl.classList.add('is-warning');
+    cliViewInstall.disabled = cliViewUninstall.disabled = false;
   }
 }
 
-cliInstallBtn.addEventListener('click', () => void cliAction(() => api.cliInstall()));
 cliViewInstall.addEventListener('click', () => void cliAction(() => api.cliInstall()));
 cliViewUninstall.addEventListener('click', () => {
   if (confirm('卸载命令行 cloudssh、所有 AI 的 skill 与 MCP 登记？（~/.cloudssh 里的配置与登录保留）')) void cliAction(() => api.cliUninstall());
@@ -465,15 +478,26 @@ const cliAliasTarget = $<HTMLInputElement>('cli-alias-target');
 const cliNotes = $<HTMLTextAreaElement>('cli-notes');
 const cliNotesState = $('cli-notes-state');
 
+const prefsView = $('prefs-view');
+const navPrefs = $<HTMLButtonElement>('nav-prefs');
+const navCli = $<HTMLButtonElement>('cli-open-settings');
+
+/** 右侧显示哪一页：实例表单（带底部按钮栏）、偏好设置、命令行与 Skill */
+function showView(view: 'form' | 'prefs' | 'cli'): void {
+  form.hidden = view !== 'form';
+  actionbar.hidden = view !== 'form';
+  prefsView.hidden = view !== 'prefs';
+  cliView.hidden = view !== 'cli';
+  navPrefs.setAttribute('aria-current', String(view === 'prefs'));
+  navCli.setAttribute('aria-current', String(view === 'cli'));
+  if (view === 'form') return;
+  selectedId = null;
+  renderList();
+  if (view === 'cli') void loadCliSettings();
+}
+
 function showCliView(show: boolean): void {
-  cliView.hidden = !show;
-  form.hidden = show;
-  actionbar.hidden = show;
-  if (show) {
-    selectedId = null;
-    renderList();
-    void loadCliSettings();
-  }
+  showView(show ? 'cli' : 'form');
 }
 
 function switchRow(id: string, title: string, hint: string, checked: boolean, onChange: (on: boolean) => void): HTMLLabelElement {
@@ -613,7 +637,8 @@ async function saveMcp(id: string, on: boolean): Promise<void> {
   }
 }
 
-$('cli-open-settings').addEventListener('click', () => showCliView(true));
+navCli.addEventListener('click', () => showCliView(true));
+navPrefs.addEventListener('click', () => showView('prefs'));
 api.onShowView?.((view) => {
   if (view === 'cli') showCliView(true);
 });
@@ -785,6 +810,38 @@ prefQuickConnectToggle.addEventListener('click', () =>
 
 $('open-config').addEventListener('click', () => void api.openPath('config'));
 $('open-logs').addEventListener('click', () => void api.openPath('logs'));
+
+// ---------- 跟随主题 ----------
+
+const PALETTE_VARS: [keyof Palette, string][] = [
+  ['bg', '--bg'],
+  ['surface', '--surface'],
+  ['elevated', '--elevated'],
+  ['border', '--border'],
+  ['borderStrong', '--border-strong'],
+  ['text', '--text'],
+  ['muted', '--muted'],
+  ['accent', '--accent'],
+  ['onAccent', '--on-accent'],
+  ['danger', '--danger'],
+];
+
+/** 把实例页面的配色写到 :root 上；表单控件、滚动条按背景深浅选 color-scheme */
+function applyPalette(palette: Palette | null): void {
+  const root = document.documentElement;
+  if (!palette) return;
+  for (const [key, name] of PALETTE_VARS) {
+    if (/^#[0-9a-f]{6}$/i.test(palette[key] ?? '')) root.style.setProperty(name, palette[key]);
+  }
+  const [r, g, b] = [1, 3, 5].map((index) => parseInt(palette.bg.slice(index, index + 2), 16) / 255);
+  const dark = 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
+  root.dataset.palette = '';
+  root.dataset.scheme = dark ? 'dark' : 'light';
+  root.style.colorScheme = dark ? 'dark' : 'light';
+}
+
+void api.palette?.().then(applyPalette).catch(() => undefined);
+api.onPalette?.(applyPalette);
 
 api.onChanged((next) => applyState(next));
 void refresh().then(() => {

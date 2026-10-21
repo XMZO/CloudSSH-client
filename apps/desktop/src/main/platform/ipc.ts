@@ -17,13 +17,14 @@ import { logNetworkEnv } from '../network-env';
 import { configStore, type Preferences } from '../config/store';
 import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
-import { isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
+import { applyManagerPalette, isManagerWebContents, notifyManager, openManagerWindow } from './manager-window';
 import { refreshMenus } from './menus';
 import { cliSettings, cliStatus, type CliSettingsPatch, installCli, setCliMcp, uninstallCli, updateCliSettings } from './cli-install';
 import { applyCliSync } from './cli-sync';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
 import { clearInstanceData, syncInstanceProxy } from './session';
+import { currentPalette, normalizePalette, setPalette } from './ui-palette';
 import { applyGlobalShortcut, isAcceleratorText, shortcutStatus } from './shortcut';
 import { getUpdater } from './updater';
 import {
@@ -166,6 +167,21 @@ export function registerIpc(): void {
     markQuitting();
     getUpdater().quitAndInstall();
     return true;
+  });
+  // 实例页面的配色：实例管理窗口跟随主题（只收主框架报来的、格式正确的十六进制颜色）
+  ipcMain.on('desktop:ui-palette', (event, input: unknown) => {
+    try {
+      senderInstance(event);
+      if (event.senderFrame !== event.sender.mainFrame) return;
+      const palette = normalizePalette(input);
+      if (palette && setPalette(palette)) applyManagerPalette(palette);
+    } catch {
+      // 非实例页面不理会
+    }
+  });
+  ipcMain.handle('manager:palette', (event) => {
+    assertManager(event);
+    return currentPalette();
   });
   // 自绘标题栏：系统窗口按钮的配色跟随页面主题
   ipcMain.handle('desktop:titlebar', (event, colors: unknown) => {

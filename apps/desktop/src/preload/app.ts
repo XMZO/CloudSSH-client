@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('cloudsshDesktop', {
   openInstanceManager: (view?: 'cli') => ipcRenderer.invoke('desktop:open-manager', view),
   /** 自绘标题栏：系统窗口按钮的背景色与图标色（#rrggbb） */
   setTitleBarColors: (color: string, symbolColor: string) => ipcRenderer.invoke('desktop:titlebar', { color, symbolColor }),
+  /** 当前配色：实例管理窗口照着它配色（主进程只收固定几项十六进制颜色） */
+  setUiPalette: (palette: unknown) => ipcRenderer.send('desktop:ui-palette', palette),
   /** 自绘标题栏的应用菜单、实例菜单：{ instances: [{ id, name, host }], currentId, version, fullscreen } */
   menuState: () => ipcRenderer.invoke('desktop:menu-state'),
   /** 菜单命令：switch-instance / new-window（参数为实例 id）、login、manager、cli-settings、reload、force-reload、devtools、

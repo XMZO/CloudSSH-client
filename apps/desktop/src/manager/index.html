@@ -21,41 +21,21 @@
       <aside class="sidebar">
         <div class="sidebar-head">
           <h1>实例</h1>
-          <button id="add-instance" class="btn btn-small" type="button">＋ 新增</button>
+          <button id="add-instance" class="icon-btn" type="button" title="新增实例" aria-label="新增实例">＋</button>
         </div>
         <ul id="instance-list" class="instance-list" aria-label="实例列表"></ul>
 
-        <section class="prefs" aria-labelledby="prefs-title">
-          <h2 id="prefs-title">偏好设置</h2>
-          <label class="switch">
-            <input type="checkbox" id="pref-close-to-tray" />
-            <span class="switch-track" aria-hidden="true"></span>
-            <span class="switch-text">关闭窗口时最小化到托盘</span>
-          </label>
-          <label class="switch">
-            <input type="checkbox" id="pref-show-menubar" />
-            <span class="switch-track" aria-hidden="true"></span>
-            <span class="switch-text">显示菜单栏<small>只对“跟随 Worker”的窗口有效，内置 UI 的菜单在标题栏左上角</small></span>
-          </label>
-          <div class="shortcut-pref">
-            <span class="switch-text"
-              >快速连接的全局快捷键<small id="pref-quick-connect-hint">在任何程序里按下：叫出窗口并打开命令面板</small></span
-            >
-            <div class="shortcut-row">
-              <button type="button" id="pref-quick-connect" class="shortcut-key" title="点一下，再按下新的组合键">Ctrl+Alt+T</button>
-              <button type="button" id="pref-quick-connect-toggle" class="link">关闭</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="prefs cli-section" aria-labelledby="cli-title">
-          <h2 id="cli-title">命令行与 Skill</h2>
-          <p id="cli-status" class="cli-status muted" role="status">检查中…</p>
-          <div class="cli-actions">
-            <button id="cli-install" class="btn btn-small btn-primary" type="button">安装</button>
-            <button id="cli-open-settings" class="btn btn-small" type="button" aria-controls="cli-view">设置…</button>
-          </div>
-        </section>
+        <nav class="side-nav" aria-label="设置">
+          <button id="nav-prefs" class="nav-item" type="button" aria-controls="prefs-view">
+            <span class="nav-icon" aria-hidden="true">⚙</span>
+            <span class="nav-text">偏好设置</span>
+          </button>
+          <button id="cli-open-settings" class="nav-item" type="button" aria-controls="cli-view">
+            <span class="nav-icon nav-icon-mono" aria-hidden="true">&gt;_</span>
+            <span class="nav-text">命令行与 Skill</span>
+            <span id="cli-status" class="nav-state" role="status">检查中…</span>
+          </button>
+        </nav>
 
         <footer class="sidebar-footer">
           <div id="app-meta" class="muted"></div>
@@ -75,24 +55,26 @@
 
           <section class="card">
             <h3>连接</h3>
-            <label class="field">
-              <span>名称</span>
-              <input id="field-name" type="text" maxlength="64" required placeholder="例如：我的 CloudSSH" />
-            </label>
-            <label class="field">
-              <span>Worker 地址</span>
-              <div class="row">
-                <input id="field-url" type="text" required placeholder="https://xxx.workers.dev" />
-                <button id="test-instance" class="btn" type="button">测试连接</button>
-              </div>
-              <small id="test-result" class="hint"></small>
-            </label>
+            <div class="field-pair">
+              <label class="field">
+                <span>名称</span>
+                <input id="field-name" type="text" maxlength="64" required placeholder="例如：我的 CloudSSH" />
+              </label>
+              <label class="field">
+                <span>Worker 地址</span>
+                <div class="row">
+                  <input id="field-url" type="text" required placeholder="https://xxx.workers.dev" />
+                  <button id="test-instance" class="btn" type="button">测试连接</button>
+                </div>
+              </label>
+            </div>
+            <small id="test-result" class="hint"></small>
             <label class="switch field-switch">
               <input type="checkbox" id="field-direct" />
               <span class="switch-track" aria-hidden="true"></span>
               <span class="switch-text"
                 >不走系统代理（直连）<small
-                  >默认跟随系统代理。打开后这个实例直接连 Worker，不经过系统代理；代理软件开着 TUN（虚拟网卡）时仍会被它接管，要直连得在代理软件的规则里给 CloudSSH 设 DIRECT。保存后新的连接生效，已打开的终端下次重连时换过去</small
+                  >只对系统代理有效；代理软件开着 TUN（虚拟网卡）时，要在它的规则里给 CloudSSH 设 DIRECT。保存后新的连接生效，已打开的终端重连时换过去</small
                 ></span
               >
             </label>
@@ -100,28 +82,25 @@
 
           <section class="card">
             <h3>界面来源</h3>
-            <div class="choices" role="radiogroup" aria-label="界面来源">
-              <label class="choice">
-                <input type="radio" name="ui-kind" value="bundled" />
-                <span class="choice-title">内置 UI</span>
-                <span class="choice-desc">网页版前端副本，带桌面端的标题栏、表格与侧栏（推荐）</span>
+            <div class="segmented" role="radiogroup" aria-label="界面来源">
+              <label class="seg">
+                <input type="radio" name="ui-kind" value="bundled" data-desc="网页版前端副本，带桌面端的标题栏、表格与侧栏（推荐）" />
+                <span>内置 UI</span>
               </label>
-              <label class="choice">
-                <input type="radio" name="ui-kind" value="remote" />
-                <span class="choice-title">跟随 Worker</span>
-                <span class="choice-desc">直接使用 Worker 返回的页面，始终与服务端同版本</span>
+              <label class="seg">
+                <input type="radio" name="ui-kind" value="remote" data-desc="直接使用 Worker 返回的页面，始终与服务端同版本" />
+                <span>跟随 Worker</span>
               </label>
-              <label class="choice">
-                <input type="radio" name="ui-kind" value="directory" />
-                <span class="choice-title">本地目录</span>
-                <span class="choice-desc">自研 UI 的构建产物，入口 index.html</span>
+              <label class="seg">
+                <input type="radio" name="ui-kind" value="directory" data-desc="自研 UI 的构建产物，入口 index.html" />
+                <span>本地目录</span>
               </label>
-              <label class="choice">
-                <input type="radio" name="ui-kind" value="dev-server" />
-                <span class="choice-title">开发服务器</span>
-                <span class="choice-desc">UI 热更新调试（例如 Vite）</span>
+              <label class="seg">
+                <input type="radio" name="ui-kind" value="dev-server" data-desc="UI 热更新调试（例如 Vite）" />
+                <span>开发服务器</span>
               </label>
             </div>
+            <small id="ui-kind-desc" class="hint"></small>
             <div class="sub" data-for="bundled">
               <select id="field-bundled-id"></select>
               <small id="bundled-meta" class="hint"></small>
@@ -137,24 +116,45 @@
 
           <p id="form-error" class="error" role="alert"></p>
 
-          <section class="card card-danger">
-            <h3>数据</h3>
-            <div class="danger-row">
-              <div>
-                <strong>清除登录数据</strong>
-                <small>退出这个实例的登录，并清除它的网页数据（Cookie、本地存储、缓存）</small>
+          <section class="card card-data">
+            <div class="data-row">
+              <div class="data-text">
+                <strong>数据</strong>
+                <small>清除：退出登录并清掉这个实例的 Cookie、本地存储与缓存。删除：只删客户端里这条配置，不影响 Worker 上的数据</small>
               </div>
-              <button id="clear-data" class="btn btn-warn" type="button">清除</button>
-            </div>
-            <div class="danger-row">
-              <div>
-                <strong>删除实例</strong>
-                <small>只删除客户端里的这条配置，不影响 Worker 上的服务器与数据</small>
-              </div>
-              <button id="delete-instance" class="btn btn-danger" type="button">删除</button>
+              <button id="clear-data" class="btn btn-small btn-warn" type="button">清除登录数据</button>
+              <button id="delete-instance" class="btn btn-small btn-danger" type="button">删除实例</button>
             </div>
           </section>
         </form>
+
+        <div id="prefs-view" class="detail-scroll" hidden>
+          <div class="detail-head">
+            <h2 class="view-title">偏好设置</h2>
+            <p class="muted view-subtitle">对所有实例窗口生效</p>
+          </div>
+          <section class="card">
+            <label class="switch">
+              <input type="checkbox" id="pref-close-to-tray" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text">关闭窗口时最小化到托盘</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="pref-show-menubar" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text">显示菜单栏<small>只对“跟随 Worker”的窗口有效，内置 UI 的菜单在标题栏左上角</small></span>
+            </label>
+            <div class="shortcut-pref">
+              <span class="switch-text"
+                >快速连接的全局快捷键<small id="pref-quick-connect-hint">在任何程序里按下：叫出窗口并打开命令面板</small></span
+              >
+              <div class="shortcut-row">
+                <button type="button" id="pref-quick-connect" class="shortcut-key" title="点一下，再按下新的组合键">Ctrl+Alt+T</button>
+                <button type="button" id="pref-quick-connect-toggle" class="link">关闭</button>
+              </div>
+            </div>
+          </section>
+        </div>
 
         <div id="cli-view" class="detail-scroll" hidden>
           <div class="detail-head">
@@ -243,7 +243,7 @@
           <section class="card">
             <h3>给 AI 的补充说明</h3>
             <p class="hint">写进 skill，AI 用 cloudssh 时会照着做，例如“tag:prod 只做只读操作”“改 nginx 配置前先 nginx -t”</p>
-            <textarea id="cli-notes" rows="5" maxlength="4000" spellcheck="false"></textarea>
+            <textarea id="cli-notes" rows="4" maxlength="4000" spellcheck="false"></textarea>
             <div class="cli-actions">
               <button id="cli-notes-save" class="btn" type="button">保存说明</button>
               <small id="cli-notes-state" class="hint"></small>
