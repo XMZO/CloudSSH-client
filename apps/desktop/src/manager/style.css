@@ -706,20 +706,18 @@ textarea:focus {
   outline-offset: 1px;
 }
 
-/* 分段选择右边一行说明当前这一项，放不下时省略（全文在悬停提示里） */
-.seg-row {
+/* 界面来源：分段选择放在卡片标题那一行的右边，下面一整行写当前这一项的说明（写全，不省略） */
+.card-head {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   align-items: center;
-  min-width: 0;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 
-.seg-desc {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.card-head h3 {
+  margin: 0;
 }
 
 .sub {

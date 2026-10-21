@@ -228,9 +228,7 @@ function selectedUiKind(): UiSource['kind'] {
 
 function syncUiSubFields(): void {
   const kind = selectedUiKind();
-  const desc = uiKindRadios().find((radio) => radio.checked)?.dataset.desc ?? '';
-  $('ui-kind-desc').textContent = desc;
-  $('ui-kind-desc').title = desc;
+  $('ui-kind-desc').textContent = uiKindRadios().find((radio) => radio.checked)?.dataset.desc ?? '';
   document.querySelectorAll<HTMLElement>('.sub').forEach((el) => {
     el.classList.toggle('visible', el.dataset.for === kind);
   });
