@@ -228,7 +228,9 @@ function selectedUiKind(): UiSource['kind'] {
 
 function syncUiSubFields(): void {
   const kind = selectedUiKind();
-  $('ui-kind-desc').textContent = uiKindRadios().find((radio) => radio.checked)?.dataset.desc ?? '';
+  const desc = uiKindRadios().find((radio) => radio.checked)?.dataset.desc ?? '';
+  $('ui-kind-desc').textContent = desc;
+  $('ui-kind-desc').title = desc;
   document.querySelectorAll<HTMLElement>('.sub').forEach((el) => {
     el.classList.toggle('visible', el.dataset.for === kind);
   });
@@ -266,7 +268,11 @@ function renderList(): void {
     label.textContent = instance.name;
     name.append(label);
     if (instance.id === state.defaultInstanceId) name.append(badge('默认'));
-    if (state.openInstanceIds.includes(instance.id)) name.append(badge('已打开', true));
+    // 已打开：头像右下角一个绿点（侧栏窄，名字留给名字）
+    if (state.openInstanceIds.includes(instance.id)) {
+      avatar.classList.add('is-open');
+      avatar.title = '已打开';
+    }
     if (instance.proxy === 'direct') {
       const direct = badge('直连');
       direct.title = '不走系统代理，直接连 Worker';
@@ -289,7 +295,17 @@ function renderList(): void {
 function routeText(route: string | undefined): string {
   if (!route || route === 'unknown') return '跟随系统代理';
   if (route.trim().toUpperCase() === 'DIRECT') return '直连';
-  return `经系统代理 ${route.split(';')[0].trim()}`;
+  return `经系统代理 ${route.split(';')[0].trim().replace(/^PROXY\s+/i, '')}`;
+}
+
+const saveState = $('save-state');
+let saveStateTimer = 0;
+
+/** 保存成功：在保存按钮旁边显示一会儿“已保存” */
+function showSaved(): void {
+  window.clearTimeout(saveStateTimer);
+  saveState.textContent = '已保存';
+  saveStateTimer = window.setTimeout(() => (saveState.textContent = ''), 2500);
 }
 
 function hostOf(baseUrl: string): string {
@@ -706,8 +722,7 @@ form.addEventListener('submit', (event) => {
     });
     selectedId = saved.id;
     await refresh();
-    testResult.textContent = '已保存';
-    testResult.className = 'hint ok';
+    showSaved();
   });
 });
 
@@ -724,16 +739,15 @@ $('test-instance').addEventListener('click', () => {
           : result.config.authMode === 'password'
             ? '管理员密码登录'
             : '匿名';
+      // 写得紧凑些：窗口不宽，一项一行就够
       const lines = [
-        `连接正常（${result.latencyMs} ms，${routeText(result.route)}）· 认证模式：${auth}${
-          result.config.githubAuthRequired ? '（强制登录）' : ''
-        } · 分享：${result.config.sshSharingEnabled ? '开启' : '关闭'}`,
+        `连接正常 · ${result.latencyMs} ms · ${routeText(result.route)} · ${auth}${
+          result.config.githubAuthRequired ? '（强制）' : ''
+        } · 分享${result.config.sshSharingEnabled ? '开启' : '关闭'}`,
       ];
       let warn = false;
       if (result.oauthRedirectUri) {
-        lines.push(
-          `OAuth 回调地址：${result.oauthRedirectUri}（必须与 GitHub OAuth App 登记的回调一致，否则授权页会提示 redirect_uri 不匹配）`
-        );
+        lines.push(`OAuth 回调：${result.oauthRedirectUri}（须与 GitHub OAuth App 登记的一致）`);
         const callbackOrigin = new URL(result.oauthRedirectUri).origin;
         if (callbackOrigin !== baseUrl) {
           warn = true;

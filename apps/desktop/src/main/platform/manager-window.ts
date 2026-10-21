@@ -55,9 +55,9 @@ export function openManagerWindow(parent?: BrowserWindow, view?: 'cli'): Browser
     return managerWindow;
   }
   managerWindow = new BrowserWindow({
-    width: 840,
+    width: 760,
     height: 560,
-    minWidth: 700,
+    minWidth: 660,
     minHeight: 480,
     parent,
     show: false,

@@ -69,19 +69,19 @@
               </label>
             </div>
             <small id="test-result" class="hint"></small>
-            <label class="switch field-switch">
+            <label
+              class="switch field-switch"
+              title="这个实例的页面请求与终端都直接连 Worker，不经过系统代理。代理软件开着 TUN（虚拟网卡）时流量仍会被它接管，要直连得在它的规则里给 CloudSSH 设 DIRECT。保存后新的连接生效，已打开的终端重连时换过去"
+            >
               <input type="checkbox" id="field-direct" />
               <span class="switch-track" aria-hidden="true"></span>
-              <span class="switch-text"
-                >不走系统代理（直连）<small
-                  >只对系统代理有效；代理软件开着 TUN（虚拟网卡）时，要在它的规则里给 CloudSSH 设 DIRECT。保存后新的连接生效，已打开的终端重连时换过去</small
-                ></span
-              >
+              <span class="switch-text">不走系统代理（直连）<small>只对系统代理有效；开着 TUN 时要在代理软件里给 CloudSSH 设 DIRECT</small></span>
             </label>
           </section>
 
           <section class="card">
             <h3>界面来源</h3>
+            <div class="seg-row">
             <div class="segmented" role="radiogroup" aria-label="界面来源">
               <label class="seg">
                 <input type="radio" name="ui-kind" value="bundled" data-desc="网页版前端副本，带桌面端的标题栏、表格与侧栏（推荐）" />
@@ -100,7 +100,8 @@
                 <span>开发服务器</span>
               </label>
             </div>
-            <small id="ui-kind-desc" class="hint"></small>
+            <small id="ui-kind-desc" class="hint seg-desc"></small>
+            </div>
             <div class="sub" data-for="bundled">
               <select id="field-bundled-id"></select>
               <small id="bundled-meta" class="hint"></small>
@@ -120,7 +121,7 @@
             <div class="data-row">
               <div class="data-text">
                 <strong>数据</strong>
-                <small>清除：退出登录并清掉这个实例的 Cookie、本地存储与缓存。删除：只删客户端里这条配置，不影响 Worker 上的数据</small>
+                <small title="清除登录数据：退出登录并清掉这个实例的 Cookie、本地存储与缓存。删除实例：只删客户端里这条配置，不影响 Worker 上的服务器与数据">退出登录，或删掉这条配置（不影响 Worker 上的数据）</small>
               </div>
               <button id="clear-data" class="btn btn-small btn-warn" type="button">清除登录数据</button>
               <button id="delete-instance" class="btn btn-small btn-danger" type="button">删除实例</button>
@@ -255,6 +256,7 @@
 
         <div class="actionbar">
           <button id="save-instance" class="btn btn-primary" type="submit" form="instance-form">保存</button>
+          <span id="save-state" class="save-state" role="status"></span>
           <span class="spacer"></span>
           <button id="open-here" class="btn" type="button">打开</button>
           <button id="open-new" class="btn" type="button">新窗口打开</button>
