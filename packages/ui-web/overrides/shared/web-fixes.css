@@ -78,3 +78,9 @@ dialog.app-dialog::backdrop,
 dialog.auth-challenge-dialog::backdrop {
   background: var(--modal-overlay, rgba(0, 0, 0, 0.72));
 }
+
+/* 复选框、单选框的焦点环只给键盘用：网页版的表单样式（@tailwindcss/forms）在 :focus 上画一圈蓝色焦点环，
+   鼠标点一下勾选后焦点留在框上，环一直挂着，要点别处才消失。改成只在键盘聚焦（:focus-visible）时显示 */
+input:where([type='checkbox'], [type='radio']):focus:not(:focus-visible) {
+  box-shadow: none;
+}
