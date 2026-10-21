@@ -67,6 +67,10 @@ const zhCN = {
   nanoMouseOn: '已为 nano 打开鼠标支持：点哪光标到哪，滚动照常（Alt+M 可以关掉，关掉后这次不再自动打开）',
   resumeGone: '恢复原会话失败，改为重新连接，新会话会从头开始',
   resumeTimeout: '恢复原会话的等待时间已用完，改为重新连接，新会话会从头开始',
+  idleTitle: '即将因无操作断开',
+  idleBody: '「{name}」{seconds} 秒内没有操作就会断开（节省服务器资源）。点“继续”续期，不会往终端里输入任何东西',
+  idleContinue: '继续',
+  idleRenewed: '已续期，空闲计时重新开始',
 };
 
 type Key = keyof typeof zhCN;
@@ -135,6 +139,10 @@ const dictionaries: Record<string, Record<Key, string>> = {
     nanoMouseOn: '已為 nano 開啟滑鼠支援：點哪游標到哪，捲動照常（Alt+M 可以關閉，關閉後這次不再自動開啟）',
     resumeGone: '恢復原會話失敗，改為重新連線，新會話會從頭開始',
     resumeTimeout: '恢復原會話的等待時間已用完，改為重新連線，新會話會從頭開始',
+    idleTitle: '即將因無操作中斷',
+    idleBody: '「{name}」{seconds} 秒內沒有操作就會中斷（節省伺服器資源）。點「繼續」續期，不會往終端機裡輸入任何東西',
+    idleContinue: '繼續',
+    idleRenewed: '已續期，閒置計時重新開始',
   },
   'en-US': {
     reconnectNow: '(press any key to reconnect now)',
@@ -202,6 +210,10 @@ const dictionaries: Record<string, Record<Key, string>> = {
     nanoMouseOn: 'Turned on mouse support in nano: click to place the cursor, scrolling works as usual (Alt+M turns it off; it will not be turned on again this time)',
     resumeGone: 'Could not resume the original session; reconnecting with a new session that starts from scratch',
     resumeTimeout: 'The session recovery window has elapsed; reconnecting with a new session that starts from scratch',
+    idleTitle: 'Disconnecting soon due to inactivity',
+    idleBody: '"{name}" disconnects in {seconds}s without activity (to save server resources). Continue keeps it open without typing anything into the terminal',
+    idleContinue: 'Continue',
+    idleRenewed: 'Kept open; the idle timer restarted',
   },
 };
 

@@ -13,6 +13,7 @@ import { HIGHLIGHT_CHANGED_EVENT, loadSettings } from './highlight-rules';
 import { ht } from './i18n';
 import { startReconnectCountdown } from './reconnect-countdown';
 import { installResumeRetry } from './resume-retry';
+import { installIdleReminder } from './idle-reminder';
 import { installSessionEnd } from '../session-end';
 import './terminal.css';
 
@@ -145,6 +146,8 @@ export function installTerminalEnhancements(): void {
   installSessionEnd();
   // 断线后在服务器的 60 秒保持期内持续尝试秒级恢复，恢复不了才完整重连（./resume-retry.ts）
   installResumeRetry();
+  // 快空闲断开时弹提醒，点“继续”续期（./idle-reminder.ts）
+  installIdleReminder();
   // 等待自动重连时：构建钩子在网页版写出“x 秒后重连”之后调用，把那一行换成精确到毫秒的实时倒计时并附上按键提示
   (globalThis as { __cloudsshReconnectCountdown?: typeof startReconnectCountdown }).__cloudsshReconnectCountdown =
     startReconnectCountdown;

@@ -220,6 +220,22 @@ async function handleHttp(req, res) {
   }
   // 调试：不经过键盘、由服务器这边结束所有 Shell（像自动登出、闲置连接被掐、远程主机无响应），测断开后标签留不留
   // ?event=session_ended（1000）| remote_closed | keepalive_timeout | idle_timeout（1011）
+  // 像 Worker 在空闲超时前 60 秒那样发 session_idle_warning（不断开）；/__mock/activity 看这之后有没有算活动的消息
+  if (path === '/__mock/idle-warning') {
+    let count = 0;
+    for (const entry of shellSessions.values()) {
+      if (entry.link.pending) continue;
+      entry.idleWarnedAt = Date.now();
+      entry.lastActivity = null;
+      entry.link.ws.sendJson({ type: 'status', message: '会话长时间无操作，即将自动断开以节省资源（敲击任意键继续）', event: 'session_idle_warning' });
+      count++;
+    }
+    console.log(`发出空闲预警 ${count} 个`);
+    return json(res, 200, { warned: count });
+  }
+  if (path === '/__mock/activity') {
+    return json(res, 200, [...shellSessions.values()].filter((entry) => entry.idleWarnedAt).map((entry) => ({ warnedAt: entry.idleWarnedAt, lastActivity: entry.lastActivity ?? null })));
+  }
   if (path === '/__mock/end') {
     const event = url.searchParams.get('event') ?? 'session_ended';
     const ended = event === 'session_ended';
@@ -1465,6 +1481,19 @@ function attachShell(rawWs, url) {
     drawPager();
   };
   entry.handler = (data) => {
+    // 与 Worker 一样：心跳与输出确认不算用户活动，其余（输入、调整大小、AI 消息）都算
+    let kind = 'input';
+    if (typeof data === 'string' && data.startsWith('{')) {
+      try {
+        kind = JSON.parse(data).type ?? 'input';
+      } catch {
+        // 普通输入
+      }
+    }
+    if (kind !== 'ping' && kind !== 'terminal_output_ack') {
+      entry.lastActivity = { at: Date.now(), kind };
+      if (entry.idleWarnedAt) console.log(`空闲预警后的活动：${kind}`);
+    }
     if (typeof data === 'string' && data.startsWith('{')) {
       try {
         const msg = JSON.parse(data);
