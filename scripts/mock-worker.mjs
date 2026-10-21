@@ -199,15 +199,28 @@ async function handleHttp(req, res) {
   console.log(method, path);
 
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });
-  // 调试：从外面断开所有 Shell 连接（像网络抖了一下，不发关闭帧），在 pager、nano 里或打了半行命令时也能测断线恢复
+  // 调试：从外面断开所有 Shell 连接（像网络抖了一下，不发关闭帧），在 pager、nano 里或打了半行命令时也能测断线恢复。
+  // ?offline=秒：之后这么久“断网”（HTTP 与 WebSocket 都连不上，/__mock 除外）；?forget=1：同时丢掉保持中的会话（恢复会被拒绝）
   if (path === '/__mock/drop') {
     let count = 0;
-    for (const entry of shellSessions.values()) {
-      if (entry.link.pending) continue;
-      entry.link.ws.destroy();
-      count++;
+    for (const [id, entry] of shellSessions) {
+      if (!entry.link.pending) {
+        entry.link.ws.destroy();
+        count++;
+      }
+      if (url.searchParams.get('forget') === '1') {
+        clearTimeout(entry.timer);
+        shellSessions.delete(id);
+      }
     }
-    return json(res, 200, { dropped: count });
+    const offline = Number(url.searchParams.get('offline')) || 0;
+    offlineUntil = offline > 0 ? Date.now() + offline * 1000 : 0;
+    console.log(`断开 ${count} 条 Shell 连接${offline ? `，断网 ${offline} 秒` : ''}${url.searchParams.get('forget') === '1' ? '，丢掉保持中的会话' : ''}`);
+    return json(res, 200, { dropped: count, offline });
+  }
+  if (Date.now() < offlineUntil) {
+    req.socket.destroy();
+    return;
   }
   if (anonymous && handleMockOauth(req, res, url)) return;
   if (path === '/api/auth/me') {
@@ -1232,6 +1245,14 @@ function mockRemoteLine(line, write) {
  */
 const shellSessions = new Map();
 const SHELL_GRACE_MS = 60_000;
+/** /__mock/drop?offline=秒 模拟的断网截止时间：之前 HTTP 与 WebSocket 都连不上 */
+let offlineUntil = 0;
+
+/** 能不能恢复：会话还在保持期、令牌对得上（与 Worker 一样，不能恢复时在握手前就以 404 拒绝） */
+function resumable(url) {
+  const entry = shellSessions.get(url.searchParams.get('session') ?? '');
+  return !!entry && !!entry.link.pending && url.searchParams.get('resume_token') === entry.resumeToken;
+}
 
 function watchShellSocket(sessionId, socketApi) {
   socketApi.onClose(() => {
@@ -1638,6 +1659,15 @@ http
   .on('upgrade', (req, socket) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     console.log('WS', url.pathname);
+    if (Date.now() < offlineUntil) {
+      socket.destroy();
+      return;
+    }
+    if (url.pathname === '/api/ssh' && url.searchParams.has('session') && !resumable(url)) {
+      console.log('恢复被拒：会话不存在、已过期或令牌不对（握手前回 404）');
+      socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      return;
+    }
     socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${acceptKey(req.headers['sec-websocket-key'])}`, '', ''].join('\r\n'));
     let handler = () => {};
     const ws = createSocket(socket, (data) => handler(data));

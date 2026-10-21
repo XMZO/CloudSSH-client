@@ -220,6 +220,14 @@ const COMMON_HOOKS: Hook[] = [
       ].join('\n'),
     })
   ),
+  // 普通会话断线后：网页版只在第一次重连时立刻试一次秒级恢复，没接上就完整重连（新 Shell）。改为先问
+  // overrides/shared/terminal/resume-retry.ts：在服务器的 60 秒保持期内持续尝试恢复，确定恢复不了才交回这里完整重连。
+  // 分享会话（resumeOnlyMode）照旧走网页版自己的恢复循环
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '    if (this.resumeOnlyMode) {\n      this.scheduleShareResume();\n      return;\n    }\n',
+    inject: '    if ((globalThis as any).__cloudsshResumeRetry?.(this) === true) return;\n',
+  },
   {
     file: '/upstream/frontend/src/terminal.ts',
     anchor: "  private processTerminalInput(\n    data: string,\n    source: 'keyboard' | 'focus-report' = 'keyboard'\n  ): void {\n",
@@ -234,6 +242,9 @@ const COMMON_HOOKS: Hook[] = [
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '            this.onSessionReady?.();\n            this.startHeartbeat();\n',
     inject: [
+      // 恢复成功：结束 overrides/shared/terminal/resume-retry.ts 的这一轮重试
+      '            (this as any).__cloudsshResumeCycle?.line?.dispose?.();',
+      '            (this as any).__cloudsshResumeCycle = undefined;',
       '            {',
       '              const size = this.getTerminalSize();',
       '              if (size.cols > 2) {',
