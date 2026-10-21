@@ -8,6 +8,12 @@
 
 ### 变更
 
+- **内置网页版同步到 CloudSSH v2.7.2（含 Agent 兼容 Claude 的修复）**：原来是 v2.6.8。上游这几版带来：服务器认证方式新增“无认证（none）”（不发送密码或私钥）、密码可留空；AI 配置里可以填模型的上下文窗口与输出上限（token 预算）；Agent 回复的错误说明更细、模型策略与回复诊断。同一次 Worker 修复：发给模型的工具定义去掉了数字参数的 minimum / maximum（Claude 等的严格工具模式不支持，整个请求会被拒：`tools.0.custom: For 'number' type, properties maximum, minimum are not supported`），范围改在 Worker 本地校验——要配合已部署的新 Worker
+  - 客户端跟着支持无认证：`@cloudssh/core` 的 `auth_method` 加上 `none`；电脑端工作台列表“用户”列显示 `NONE`（与网页版卡片一致）；服务器表单选了无认证时点“存为预设”只提示不用存（原来会读到隐藏着的密码框，把切换前填的密码存成预设）
+  - 同步脚本（`scripts/sync-web-ui.mjs`）不再删掉客户端自己加的依赖：原来只保留 `workspace:` 依赖，这次会把扫码同步用的 `jsqr`、`qrcode-generator` 和手机端的 `@tauri-apps/api` 当成“上游已移除”删掉。现在同步前先读上一次同步来的上游 `package.json`，不在里面的都算客户端自己的，保留
+  - 假 Worker：换成无认证时不再要求同时给新凭据（与 Worker v2.7 一致）
+  - 验证：电脑、手机构建所有扩展钩子锚点都找到；加载、打开服务器表单（五个页签、凭据预设、无认证说明）与 AI 配置弹窗（token 预算）都没有报错；无认证服务器显示 `NONE`
+
 - **“服务器端断开时自动关闭标签”拆成两个开关：“退出会话时”与“服务器重启或关机时”**（电脑设置面板“关闭标签”一行，手机“设置 → 终端”两行；拆分前开着的升级后两个都开着）：
   - **退出会话**：exit、logout、Ctrl+D 等让这个会话的 Shell 结束，服务器本身还在运行
   - **服务器重启或关机**：reboot、init 6、shutdown、poweroff、systemctl reboot 等，以及 SSH 服务被停止、被踢下线这类服务器端断开连接

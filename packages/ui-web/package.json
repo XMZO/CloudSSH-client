@@ -1,6 +1,6 @@
 {
   "name": "@cloudssh/ui-web",
-  "version": "2.6.8",
+  "version": "2.7.2",
   "private": true,
   "description": "内置 UI 包：CloudSSH 网页版前端的同步副本（upstream/ 由 scripts/sync-web-ui.mjs 生成，勿手改）",
   "type": "module",
@@ -32,20 +32,20 @@
     "@xterm/addon-webgl": "0.19.0",
     "@xterm/xterm": "6.0.0",
     "dompurify": "3.4.13",
-    "jsqr": "1.4.0",
     "marked": "18.0.5",
-    "qrcode-generator": "1.4.4",
-    "trzsz": "1.1.6"
+    "trzsz": "1.1.6",
+    "jsqr": "1.4.0",
+    "qrcode-generator": "1.4.4"
   },
   "devDependencies": {
-    "@cloudssh/core": "workspace:*",
     "@tailwindcss/container-queries": "0.1.1",
     "@tailwindcss/forms": "0.5.11",
-    "@tauri-apps/api": "^2.12.1",
     "autoprefixer": "10.5.4",
     "postcss": "8.5.23",
     "tailwindcss": "3.4.19",
     "typescript": "5.7.2",
-    "vite": "6.4.3"
+    "vite": "6.4.3",
+    "@cloudssh/core": "workspace:*",
+    "@tauri-apps/api": "^2.12.1"
   }
 }

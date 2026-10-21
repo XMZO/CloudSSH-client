@@ -1,12 +1,14 @@
 {
-  "version": "2.6.8",
-  "commit": "9078c91f86caf669c1c15af18b10e1a2153ea7f1",
-  "describe": "9078c91 release: 发布 v2.6.8 语言切换按钮美化与爱发电赞助渠道版本 (#167)",
+  "version": "2.7.2",
+  "commit": "0fb37eb158f588a3d8f8cd0d482ec50720509648",
+  "describe": "0fb37eb fix: Agent 工具定义去掉数字范围，兼容 Claude 严格工具模式",
   "remote": "https://github.com/XMZO/CloudSSH.git",
   "dirty": false,
-  "syncedAt": "2026-10-16T11:46:09.095Z",
+  "syncedAt": "2026-10-21T11:52:10.445Z",
   "sharedFiles": [
+    "src/agent-response-diagnostics.ts",
     "src/ai-endpoint.ts",
+    "src/ai-model-policy.ts",
     "src/mobile-shortcuts-schema.ts",
     "src/server-memory-schema.ts",
     "src/sftp-upload-policy.ts",

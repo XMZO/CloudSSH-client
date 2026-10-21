@@ -63,7 +63,8 @@ export interface ServerConfig {
   host: string;
   port: number;
   username: string;
-  auth_method: 'password' | 'publickey';
+  /** none：服务器不要求认证（RFC 4252 的 none 方法，Worker v2.7 起支持） */
+  auth_method: 'password' | 'publickey' | 'none';
   region?: string | null;
   inferred_hint?: string | null;
   tags: string[];

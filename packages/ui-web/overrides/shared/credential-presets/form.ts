@@ -30,6 +30,11 @@ function keyMode(): boolean {
   return !!document.getElementById('modal-auth-tab-key')?.classList.contains('auth-tab-active');
 }
 
+/** 网页版 v2.7 起的“无认证（none）”：不用凭据 */
+function noneMode(): boolean {
+  return !!document.getElementById('modal-auth-tab-none')?.classList.contains('auth-tab-active');
+}
+
 /** 本次打开对话框时填入的预设（用于保存成功后记下关联） */
 let filled: { preset: CredentialPreset; secret: string } | null = null;
 
@@ -136,6 +141,11 @@ export function installPresetPicker(): void {
   });
 
   saveAs.addEventListener('click', async () => {
+    // 不然会读到隐藏着的密码框，把切换前填的密码存成预设
+    if (noneMode()) {
+      notify(pt('noneNoSecret'), { variant: 'info' });
+      return;
+    }
     const method = keyMode() ? 'publickey' : 'password';
     const field = input(method === 'publickey' ? 'server-private-key' : 'server-password');
     const secret = method === 'publickey' ? (field?.value.trim() ?? '') : (field?.value ?? '');

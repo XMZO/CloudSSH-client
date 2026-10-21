@@ -290,9 +290,9 @@ async function handleHttp(req, res) {
     const target = servers.find((s) => s.id === Number(serverPath[1]));
     if (!target) return json(res, 404, { error: 'Server not found' });
     const body = await readBody(req);
-    // 与 Worker 一致：凭据不能是空串；换认证方式时必须同时给新凭据
+    // 与 Worker 一致：凭据不能是空串；换认证方式时必须同时给新凭据（v2.7 起换成无认证 none 不用）
     if (body.credential !== undefined && !body.credential) return json(res, 400, { error: '认证凭据不能为空' });
-    if (body.auth_method !== undefined && body.auth_method !== target.auth_method && !body.credential) {
+    if (body.auth_method !== undefined && body.auth_method !== target.auth_method && body.auth_method !== 'none' && !body.credential) {
       return json(res, 400, { error: '切换认证方式时必须同时提供对应凭据' });
     }
     if (body.credential) console.log('  新凭据', body.auth_method ?? target.auth_method, `${body.credential.length} 字符`);

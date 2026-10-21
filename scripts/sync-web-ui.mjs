@@ -147,6 +147,9 @@ function gitInfo() {
 // ---------- 执行 ----------
 
 console.log(`[sync-web-ui] 源仓库：${source}`);
+// 上一次同步来的上游依赖：删掉 upstream/ 之前先记下，用来区分“上游移除的”和“客户端自己加的”
+const previousUpstreamPkgPath = path.join(upstreamDir, 'frontend', 'package.json');
+const previousUpstreamPkg = fs.existsSync(previousUpstreamPkgPath) ? JSON.parse(fs.readFileSync(previousUpstreamPkgPath, 'utf8')) : null;
 fs.rmSync(upstreamDir, { recursive: true, force: true });
 copyDir(sourceFrontend, path.join(upstreamDir, 'frontend'));
 // Apache-2.0：保留上游许可与署名（NOTICE 要求再分发时保留）
@@ -176,8 +179,10 @@ for (const section of ['dependencies', 'devDependencies']) {
   }
   for (const [name, range] of Object.entries(uiPkg[section] ?? {})) {
     if (name in next) continue;
-    // 客户端自己的 workspace 依赖（如 @cloudssh/core，供 overrides 使用）不属于上游，保留
-    if (String(range).startsWith('workspace:')) next[name] = range;
+    // 客户端自己的依赖不属于上游，保留：workspace 依赖（如 @cloudssh/core），以及上一次同步的上游里没有的
+    // （overrides 自己用的，如扫码同步的 jsqr、qrcode-generator，手机端的 @tauri-apps/api）
+    const fromUpstream = previousUpstreamPkg ? name in (previousUpstreamPkg[section] ?? {}) : false;
+    if (String(range).startsWith('workspace:') || !fromUpstream) next[name] = range;
     else changes.push(`${section}.${name}: 已从上游移除`);
   }
   uiPkg[section] = next;

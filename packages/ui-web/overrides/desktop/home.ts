@@ -285,7 +285,7 @@ function renderRow(server: ServerConfig, sessions: number): HTMLTableRowElement 
   host.append(hostButton);
 
   const user = el('td', 'col-user');
-  user.append(el('span', '', server.username), el('span', 'cs-auth', server.auth_method === 'publickey' ? 'KEY' : 'PWD'));
+  user.append(el('span', '', server.username), el('span', 'cs-auth', server.auth_method === 'none' ? 'NONE' : server.auth_method === 'publickey' ? 'KEY' : 'PWD'));
 
   const region = el('td', 'col-region');
   const regionInfo = regionText(server);
