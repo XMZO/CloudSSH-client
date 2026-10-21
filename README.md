@@ -465,6 +465,7 @@ cloudssh mcp add cursor / cloudssh mcp remove codex
 - **取消与进度**：收到 `notifications/cancelled` 不再回复，并关掉这次用到的服务器的后台会话（远端命令随之结束）；带 `progressToken` 的调用发 `notifications/progress`（传文件进度，命令执行中每 5 秒报一次）
 - **登记**：只在明确要求时写应用的配置（`install --mcp`、`mcp add`、桌面端开关），写前把原文件备份成 `<文件>.cloudssh-backup-<时间>`，只动名为 `cloudssh` 的一项。配置位置：Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`、Cursor `~/.cursor/mcp.json`、VS Code `%APPDATA%\Code\User\mcp.json`（允许注释，写回时注释保留在备份里）、Windsurf `~/.codeium/windsurf/mcp_config.json`、Codex `~/.codex/config.toml`（`[mcp_servers.cloudssh]`）；macOS / Linux 换成对应的应用配置目录。登记的是“运行时 + 程序 + `mcp`”（不经 `.cmd`，Windows 上很多应用起不了批处理），与命令指向同一个程序；在登记项里自己加的参数（如 `--instance 名称`）与环境变量更新时保留。重新安装时更新已登记的，`uninstall` 移除。改完重启那个应用生效
 - **桌面客户端**：实例管理 → 命令行与 Skill → 设置… 的“MCP”卡片，这台电脑上有的应用每个一个开关（打开即登记、关掉即移除）；客户端换了位置时启动后随命令一起更新
+- **还没有**：读取桌面客户端里已打开标签的终端内容（外部 AI 看不到你终端里刚才的输出，只能自己再跑命令），见[计划清单](docs/roadmap.md)
 - **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、各工具、危险命令、64KB 上限、取消与进度；`mcp-files.test.mjs` 测文件读写改、确认规则与后台任务）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
 
 ### 远程 MCP（给云端 AI，如 Meta Muse 的自定义连接器）
