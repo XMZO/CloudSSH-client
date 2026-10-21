@@ -5,7 +5,7 @@
  * - 鼠标：在整行上按住并移动超过几像素就开始拖（不必对准手柄）；只是点击、双击、右键时行为不变
  * - 触摸/触控笔：只从 `[data-drag-handle]` 手柄开始，行上的滑动仍是滚动列表
  * - 拖动中按 Esc、切走窗口或指针丢失都会取消，动画回到原位，顺序不变
- * - 行里的按钮（连接、会话圆点等）上按下不会开始拖动
+ * - 行里的按钮（连接、会话圆点等）与带 `data-no-drag` 的区域（例如可选择的文字）上按下不会开始拖动
  * 列表会整体重绘，所以只在根元素上委托监听一次；拖动期间调用方应暂停重绘（onDragState）。
  */
 import { beginReorder, type ReorderSession } from './reorder';
@@ -37,7 +37,7 @@ export function installSortable(options: SortableOptions): void {
     const handle = target?.closest<HTMLElement>('[data-drag-handle]') ?? null;
     if (event.pointerType !== 'mouse' && !handle) return;
     // 按钮、输入框上按下不拖（手柄本身除外）
-    if (!handle && target?.closest('button, input, textarea, select, a[href]')) return;
+    if (!handle && target?.closest('button, input, textarea, select, a[href], [data-no-drag]')) return;
     const item = target?.closest<HTMLElement>('[data-sort-key]');
     const container = item?.parentElement;
     const scope = container?.dataset.sortScope;
@@ -59,7 +59,7 @@ export function installSortable(options: SortableOptions): void {
       window.removeEventListener('pointercancel', onCancel, true);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('blur', onCancel);
-      root.removeEventListener('lostpointercapture', onCancel);
+      root.removeEventListener('lostpointercapture', onLostCapture);
     };
 
     const activate = (y: number) => {
@@ -145,6 +145,11 @@ export function installSortable(options: SortableOptions): void {
     function onCancel(): void {
       finish(false);
     }
+    // 只认列表自己丢了捕获：触摸按下时浏览器先把指针隐式捕获到手柄上，开始拖动改由列表捕获时，
+    // 手柄的 lostpointercapture 会冒泡上来，不能当成取消
+    function onLostCapture(event: PointerEvent): void {
+      if (event.target === root && event.pointerId === pointerId) finish(false);
+    }
     function onKey(key: KeyboardEvent): void {
       if (key.key !== 'Escape' || !session) return;
       key.preventDefault();
@@ -157,7 +162,7 @@ export function installSortable(options: SortableOptions): void {
     window.addEventListener('pointercancel', onCancel, true);
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('blur', onCancel);
-    root.addEventListener('lostpointercapture', onCancel);
+    root.addEventListener('lostpointercapture', onLostCapture);
   });
 
   // 拖动之后紧跟的那次 click 不算点击（不会误触发选中、折叠分组）

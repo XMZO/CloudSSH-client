@@ -18,6 +18,7 @@ import { installLanguagePicker, type LanguageMenu } from '../shared/language-pic
 import { installAgentOutput } from '../shared/agent-output';
 import { installCompactServerForm } from '../shared/server-form';
 import { installTagPicker } from '../shared/server-tags';
+import { installSnippetSort } from '../shared/snippet-sort';
 import { installTerminalEnhancements } from '../shared/terminal';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
@@ -236,6 +237,8 @@ if (isTauri()) {
       ['tag picker', installTagPicker],
       ['server form', installCompactServerForm],
       ['agent output', installAgentOutput],
+      // 命令面板里按住片段的拖动手柄调整顺序（存在本地，不改 Worker）
+      ['snippet sort', () => installSnippetSort({ touchHandles: true })],
       ['terminal touch', installTerminalTouch],
       ['key repeat', installKeyRepeat],
       // 要排在 terminal touch 后面：缩放、拖选时它先把事件拦下

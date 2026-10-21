@@ -13,6 +13,7 @@
  * - shared/terminal/：内置终端字体与关键词高亮、单击定位光标（与手机端共用）
  * - desktop/：界面主题（工作台 / 经典）：自绘标题栏、表格化服务器列表、终端占满窗口
  * - shared/server-tags.ts：添加服务器时点选已有标签，标签重命名、复制（与手机端共用）
+ * - shared/snippet-sort.ts：命令片段拖动调整顺序，顺序存在本地（与手机端共用）
  */
 import './desktop.css';
 import './shared/web-fixes.css';
@@ -20,6 +21,7 @@ import { installLanguagePicker, popoverLanguageMenu } from './shared/language-pi
 import { installAgentOutput } from './shared/agent-output';
 import { installCompactServerForm } from './shared/server-form';
 import { installTagPicker } from './shared/server-tags';
+import { installSnippetSort } from './shared/snippet-sort';
 import { installTerminalEnhancements, terminalFor } from './shared/terminal';
 import { installMouseClickCursor } from './shared/terminal/click-cursor';
 import { mountDesktopShell } from './desktop';
@@ -44,6 +46,8 @@ mountSidebar();
 // AI 助手回复的配色、状态高亮与回复风格提示
 installAgentOutput();
 installLanguagePicker(popoverLanguageMenu);
+// 命令片段面板里按住一条拖动调整顺序（存在本地，不改 Worker）
+installSnippetSort({ touchHandles: false });
 // 添加 / 编辑服务器：点选已有标签、紧凑排版（一屏放下，不加宽）
 const installServerForm = () => {
   installTagPicker();

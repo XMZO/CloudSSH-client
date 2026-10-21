@@ -58,6 +58,8 @@ export interface SyncPayload {
   source: { origin: string; userId: number | null; name: string };
   order?: SyncOrder;
   presets?: { items: SyncPreset[]; links: Record<string, number[]> };
+  /** 云端命令片段的手动顺序（片段 id 先后；片段本身随账号同步）。旧版手机不认识这一项，会直接忽略 */
+  snippets?: { order: string[] };
 }
 
 // ---------- 验证码 ----------

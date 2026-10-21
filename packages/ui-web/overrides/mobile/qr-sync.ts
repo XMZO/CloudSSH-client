@@ -3,11 +3,13 @@
  *   - 识别：系统有 BarcodeDetector 就用它（快），没有就用内置的 jsQR（纯 JavaScript，不依赖谷歌服务）
  *   - 分组排序：只有电脑和手机登录的是同一个实例、同一个账号时才能导入（服务器 id 只在那个账号里有效）
  *   - 凭据预设：密码 / 私钥用手机的 Keystore 重新加密保存；不同账号时只导入预设本身，不导入和服务器的对应关系
+ *   - 命令片段顺序：同样只有同一个实例、同一个账号时才能导入（片段 id 只在那个账号里有效）
  * 协议与加密见 shared/qr-sync/protocol.ts。
  */
 import jsQR from 'jsqr';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { importPresets, presetIds, presetsAvailable } from '../shared/credential-presets';
+import { replaceCloudSnippetOrder } from '../shared/snippet-order';
 import { qt, sortLabel } from '../shared/qr-sync/i18n';
 import { FrameCollector, normalizeCode, openPayload, type SyncPayload, WrongCodeError } from '../shared/qr-sync/protocol';
 import { nodeOrder, type NodeSortMode, notifyOrderChanged, setNodeSortMode } from './node-groups';
@@ -327,8 +329,9 @@ async function showPreview(root: HTMLElement, stage: HTMLElement, payload: SyncP
   const card = el('div', 'cs-qsm-card is-wide');
   card.append(el('p', 'cs-qsm-heading', qt('previewTitle')));
   card.append(el('p', 'cs-qsm-source', qt('previewSource', { name: payload.source.name, host: hostOf(payload.source.origin) })));
-  const picked = { order: false, presets: false };
-  const option = (key: 'order' | 'presets', title: string, lines: string[], enabled: boolean) => {
+  const picked = { order: false, presets: false, snippets: false };
+  const nothingPicked = () => !picked.order && !picked.presets && !picked.snippets;
+  const option = (key: keyof typeof picked, title: string, lines: string[], enabled: boolean) => {
     const row = el('label', `cs-qsm-option${enabled ? '' : ' is-disabled'}`);
     const box = el('input');
     box.type = 'checkbox';
@@ -337,7 +340,7 @@ async function showPreview(root: HTMLElement, stage: HTMLElement, payload: SyncP
     picked[key] = enabled;
     box.addEventListener('change', () => {
       picked[key] = box.checked;
-      go.disabled = !picked.order && !picked.presets;
+      go.disabled = nothingPicked();
     });
     const text = el('span', 'cs-qsm-option-text');
     text.append(el('span', 'cs-qsm-option-title', title));
@@ -369,12 +372,17 @@ async function showPreview(root: HTMLElement, stage: HTMLElement, payload: SyncP
     if (vaultOk && !sameAccount) lines.push(qt('presetsLinksDropped'));
     card.append(option('presets', qt('presetsTitle'), lines, vaultOk && items.length > 0));
   }
+  // 命令片段顺序：片段 id 只在同一个实例的同一个账号里对得上
+  if (payload.snippets?.order?.length) {
+    card.append(option('snippets', qt('snippetsTitle'), [qt(sameAccount ? 'snippetsImport' : 'snippetsMismatch')], sameAccount));
+  }
   // 只说明这次真的会替换 / 覆盖的部分
   const notes: string[] = [];
   if (picked.order) notes.push(qt('replaceOrderNote'));
   if (picked.presets && payload.presets?.items.some((item) => existing.has(item.id))) notes.push(qt('replacePresetsNote'));
+  if (picked.snippets) notes.push(qt('replaceSnippetsNote'));
   if (notes.length) card.append(el('p', 'cs-qsm-note', notes.join(qt('partSep'))));
-  go.disabled = !picked.order && !picked.presets;
+  go.disabled = nothingPicked();
   const cancel = el('button', 'cs-qsm-btn', qt('cancel'));
   cancel.type = 'button';
   cancel.addEventListener('click', closeQrScanner);
@@ -399,6 +407,10 @@ async function showPreview(root: HTMLElement, stage: HTMLElement, payload: SyncP
       if (picked.presets && payload.presets) {
         const result = await importPresets(payload.presets.items, sameAccount ? payload.presets.links : null);
         parts.push(qt('importedPresets', result));
+      }
+      if (picked.snippets && payload.snippets) {
+        replaceCloudSnippetOrder(payload.snippets.order);
+        parts.push(qt('importedSnippets'));
       }
       closeQrScanner();
       notify(parts.join(qt('partSep')), { title: qt('imported'), variant: 'success' });

@@ -27,6 +27,7 @@ import {
   switchToTab,
 } from '../sidebar/hooks';
 import { getServers } from '../sidebar/store';
+import { sortSnippets } from '../shared/snippet-order';
 import { el, icon } from './dom';
 import { dt } from './i18n';
 import { clickById, currentView, desktopSkin, setDesktopSkin } from './state';
@@ -62,6 +63,7 @@ interface Snippet {
 
 interface SnippetManagerLike {
   store?: { list?: () => Promise<Snippet[]> };
+  deps?: { isAuthenticated?: () => boolean };
   insertSnippet?: (snippet: Snippet, run: boolean) => Promise<void>;
 }
 
@@ -540,7 +542,8 @@ export async function openPalette(initial = ''): Promise<void> {
     try {
       const snippets = await manager.store.list();
       if (state !== current) return;
-      current.snippets = snippets;
+      // 与命令片段面板一致：按手动调整过的顺序
+      current.snippets = sortSnippets(snippets, manager.deps?.isAuthenticated?.() === true);
       if (input.value.trim()) render();
     } catch {
       // 拉取失败时只是搜不到片段

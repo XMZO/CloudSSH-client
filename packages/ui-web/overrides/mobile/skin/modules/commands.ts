@@ -3,12 +3,14 @@
  * - 点一下：填入终端（不回车）；命令里有 {{参数}} 时先弹出参数表单
  * - 长按：填入 / 填入并执行 / 复制 / 管理
  * - 按键栏最左侧的 ⚡ 显示或收起这一排，选择会被记住
+ * 顺序与命令面板里拖动排好的一致（../../../shared/snippet-order.ts）。
  * 分享会话里网页版会隐藏命令入口，这里跟着隐藏。命令面板关闭（可能增删改过）后自动刷新。
  */
 import { copyTextToClipboard } from '../../../../upstream/frontend/src/clipboard';
 import { LocalSnippetStore, RemoteSnippetStore, type CommandSnippet } from '../../../../upstream/frontend/src/snippet-store';
 import { extractSnippetVariables, resolveSnippetVariables } from '../../../../upstream/frontend/src/snippet-variables';
 import { notify } from '../../../../upstream/frontend/src/ui-feedback';
+import { SNIPPET_ORDER_EVENT, sortSnippets } from '../../../shared/snippet-order';
 import { activeTab } from '../../../sidebar/hooks';
 import { getServers, subscribe } from '../../../sidebar/store';
 import { closeSheet, openSheet, showActions } from '../../sheet';
@@ -175,7 +177,7 @@ export const commandsModule: SkinModule = {
         const store = remote ? new RemoteSnippetStore() : new LocalSnippetStore();
         const list = await store.list();
         if (token !== loadToken) return;
-        snippets = list;
+        snippets = sortSnippets(list, remote);
         status = 'ready';
         loadedAuthenticated = remote;
       } catch {
@@ -220,6 +222,13 @@ export const commandsModule: SkinModule = {
       }
       const snippet = snippetOf(event.target);
       if (snippet) void insertCommand(snippet, false);
+    });
+
+    // 在命令面板里拖动调整了顺序（或扫码导入了电脑上的顺序）：按新顺序重排
+    disposer.listen(window, SNIPPET_ORDER_EVENT, () => {
+      if (loadedAuthenticated === null) return;
+      snippets = sortSnippets(snippets, loadedAuthenticated);
+      render();
     });
 
     disposer.listen(toggle, 'click', () => {

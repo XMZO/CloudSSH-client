@@ -1,5 +1,5 @@
 /**
- * 电脑端“同步到手机”：勾选要传的内容（分组与排序、凭据预设）→ 加密后切成多张二维码循环播放，
+ * 电脑端“同步到手机”：勾选要传的内容（分组与排序、凭据预设、命令片段顺序）→ 加密后切成多张二维码循环播放，
  * 旁边显示本次的 6 位验证码。手机 App 扫齐后输入验证码、确认再导入（协议见 shared/qr-sync/protocol.ts）。
  * 关闭窗口后二维码与验证码即作废（只存在内存里）。
  */
@@ -7,6 +7,7 @@ import qrcode from 'qrcode-generator';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { exportPresets, listPresets, presetsAvailable } from '../shared/credential-presets';
 import { qt, sortLabel } from '../shared/qr-sync/i18n';
+import { cloudSnippetOrder } from '../shared/snippet-order';
 import { CHUNK_CHARS, formatCode, newCode, sealPayload, type SyncOrder, type SyncPayload, toFrames } from '../shared/qr-sync/protocol';
 import { el, icon, iconButton } from './dom';
 import './qr-sync.css';
@@ -155,7 +156,10 @@ export async function openQrSync(): Promise<void> {
   const order = currentOrder();
   const vaultOk = await presetsAvailable();
   const presets = vaultOk ? await listPresets() : [];
-  const picked = { order: true, presets: presets.length > 0 };
+  // 命令片段顺序只传登录账号的（云端片段两边一样；匿名时的本机片段两边各是各的）
+  const snippetOrder = (await currentUserId()) !== null ? cloudSnippetOrder() : [];
+  const picked = { order: true, presets: presets.length > 0, snippets: snippetOrder.length > 0 };
+  const nothingPicked = () => !picked.order && !picked.presets && !picked.snippets;
 
   // ---------- 第一步：勾选 ----------
   const showPick = () => {
@@ -164,7 +168,7 @@ export async function openQrSync(): Promise<void> {
     body.replaceChildren();
     foot.replaceChildren();
     body.append(el('p', 'cs-qs-intro', qt('intro')));
-    const option = (key: 'order' | 'presets', title: string, lines: string[], enabled: boolean) => {
+    const option = (key: keyof typeof picked, title: string, lines: string[], enabled: boolean) => {
       const row = el('label', `cs-qs-option${enabled ? '' : ' is-disabled'}`);
       const box = el('input');
       box.type = 'checkbox';
@@ -172,7 +176,7 @@ export async function openQrSync(): Promise<void> {
       box.disabled = !enabled;
       box.addEventListener('change', () => {
         picked[key] = box.checked;
-        generate.disabled = !picked.order && !picked.presets;
+        generate.disabled = nothingPicked();
       });
       const text = el('span', 'cs-qs-option-text');
       text.append(el('span', 'cs-qs-option-title', title));
@@ -188,14 +192,15 @@ export async function openQrSync(): Promise<void> {
         qt('presetsTitle'),
         !vaultOk ? [qt('presetsUnavailable')] : presets.length ? [qt('presetsDetail', { n: presets.length, names }), qt('presetsSecret')] : [qt('presetsNone')],
         vaultOk && presets.length > 0
-      )
+      ),
+      option('snippets', qt('snippetsTitle'), [qt(snippetOrder.length ? 'snippetsDetail' : 'snippetsNone')], snippetOrder.length > 0)
     );
     const generate = el('button', 'cs-qs-btn is-primary');
     generate.type = 'button';
     generate.append(icon('qr_code_2'), el('span', '', qt('generate')));
-    generate.disabled = !picked.order && !picked.presets;
+    generate.disabled = nothingPicked();
     generate.addEventListener('click', async () => {
-      if (!picked.order && !picked.presets) {
+      if (nothingPicked()) {
         notify(qt('nothingPicked'), { variant: 'warning' });
         return;
       }
@@ -222,6 +227,7 @@ export async function openQrSync(): Promise<void> {
     };
     if (picked.order) payload.order = currentOrder();
     if (picked.presets) payload.presets = await exportPresets();
+    if (picked.snippets && snippetOrder.length) payload.snippets = { order: snippetOrder };
     const code = newCode();
     const sealed = await sealPayload(payload, code);
     const frames = toFrames(sealed);

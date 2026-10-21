@@ -436,6 +436,19 @@ const COMMON_HOOKS: Hook[] = [
     inject: '    (globalThis as any).__cloudsshSnippetManager = this;\n',
   },
   {
+    // 命令片段的手动顺序（overrides/shared/snippet-sort.ts，存在本地、不改 Worker）：网页版每次画列表前按它排好片段数组
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: "    listEl.textContent = '';\n    listEl.removeAttribute('aria-busy');\n",
+    inject:
+      '    this.snippets = (globalThis as any).__cloudsshSortSnippets?.(this.snippets, this.deps.isAuthenticated()) ?? this.snippets;\n',
+  },
+  {
+    // 同上：画好每张片段卡片时补上拖动排序的标记（手机上还有拖动手柄）
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: "    codeBlock.style.whiteSpace = 'pre-wrap';\n",
+    inject: '    (globalThis as any).__cloudsshSnippetCard?.(card, codeBlock, actions);\n',
+  },
+  {
     // 连接后识别出系统：网页版只改自己的列表，这里同时通知侧栏、服务器表格、手机节点页立即换上系统图标
     file: '/upstream/frontend/src/server-list.ts',
     anchor: '  updateServerOS(serverId: number, os: string | null): void {\n',
