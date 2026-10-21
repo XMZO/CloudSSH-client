@@ -44,3 +44,18 @@ html:not(.cs-booted)::after {
     animation: cs-boot-show 0.2s ease-out 0.6s forwards;
   }
 }
+
+/*
+ * 列表页、连接页的进场只淡入、不上浮（与网页版的终端页一样）：网页版的 view-enter 从下方 10px 浮上来，
+ * 工作台里列表页正好一屏高，动画那 0.1 秒多出几像素让整页冒出滚动条、结束时又消失，表格宽度跟着变，
+ * 列会左右跳一下（启动时、从终端回到列表时都会）
+ */
+html :is(#auth-section, #user-space-section) {
+  animation-name: view-enter-fade;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html :is(#auth-section, #user-space-section) {
+    animation: none;
+  }
+}
