@@ -218,6 +218,22 @@ async function handleHttp(req, res) {
     console.log(`断开 ${count} 条 Shell 连接${offline ? `，断网 ${offline} 秒` : ''}${url.searchParams.get('forget') === '1' ? '，丢掉保持中的会话' : ''}`);
     return json(res, 200, { dropped: count, offline });
   }
+  // 调试：不经过键盘、由服务器这边结束所有 Shell（像自动登出、闲置连接被掐、远程主机无响应），测断开后标签留不留
+  // ?event=session_ended（1000）| remote_closed | keepalive_timeout | idle_timeout（1011）
+  if (path === '/__mock/end') {
+    const event = url.searchParams.get('event') ?? 'session_ended';
+    const ended = event === 'session_ended';
+    let count = 0;
+    for (const entry of shellSessions.values()) {
+      if (entry.link.pending) continue;
+      const socket = entry.link.ws;
+      socket.sendJson({ type: ended ? 'status' : 'error', message: ended ? '会话已结束' : `模拟 ${event}`, event });
+      setTimeout(() => socket.close(ended ? 1000 : 1011), 50);
+      count++;
+    }
+    console.log(`由服务器这边结束 ${count} 个 Shell（${event}）`);
+    return json(res, 200, { ended: count, event });
+  }
   if (Date.now() < offlineUntil) {
     req.socket.destroy();
     return;
