@@ -5,6 +5,7 @@
  *
  * 排版：不折叠、不分页，窄而不高——顶部一行是用户与退出登录；中间一栏，每项的标题与选项同一行（标题对齐成一列，
  * 选项多时在右侧换行），后台通知的分项开关排成一行；底部的功能按钮每行三个。
+ * 各语言同一个宽度、同样的行数（较长的名字用短名，全名悬停可见），切换语言时面板原地换上新文字、布局不动。
  */
 import { getLocale, setLocale } from '../../upstream/frontend/src/i18n';
 import { LANGUAGE_CHOICES } from '../shared/language-picker';
@@ -23,7 +24,7 @@ import { closeOnServerEnd, serverEndText, setCloseOnServerEnd } from '../shared/
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
 import { el, icon } from './dom';
-import { dt } from './i18n';
+import { dt, onLocaleChange } from './i18n';
 import { closePopover, isPopoverOpenFor, openPopover } from './popover';
 import { clickById, desktopSkin, setDesktopSkin, type DesktopSkin } from './state';
 
@@ -101,128 +102,143 @@ function userCard(): HTMLElement | null {
   return card;
 }
 
+function buildSettings(panel: HTMLElement): void {
+  // 顶部：用户 + 退出登录（同一行）
+  const user = userCard();
+  const canLogout = loggedIn() && !!document.getElementById('logout-btn');
+  if (user || canLogout) {
+    const head = el('div', 'cs-dk-set-head');
+    if (user) head.append(user);
+    if (canLogout) head.append(action('logout', dt('logout'), () => clickById('logout-btn'), true));
+    panel.append(head);
+  }
+  const list = el('div', 'cs-dk-set-list');
+
+  list.append(
+    section(
+      dt('skin'),
+      choiceRow<DesktopSkin>(
+        [
+          { value: 'workbench', label: dt('skinWorkbench'), hint: dt('skinWorkbenchDesc') },
+          { value: 'classic', label: dt('skinClassic'), hint: dt('skinClassicDesc') },
+        ],
+        desktopSkin(),
+        (value) => {
+          closePopover();
+          setDesktopSkin(value);
+        }
+      )
+    )
+  );
+
+  const select = themeSelect();
+  if (select) {
+    list.append(
+      section(
+        dt('colors'),
+        choiceRow(
+          [...select.options].map((option) => ({ value: option.value, label: option.textContent?.trim() || option.value })),
+          select.value,
+          (value) => {
+            select.value = value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        )
+      )
+    );
+  }
+
+  const languages = choiceRow(
+    LANGUAGE_CHOICES.map((choice) => ({ value: choice.locale, label: choice.name })),
+    getLocale(),
+    (locale) => {
+      if (locale !== getLocale()) setLocale(locale);
+    }
+  );
+  languages.classList.add('cs-dk-languages');
+  list.append(section(dt('language'), languages));
+
+  // 后台通知：总开关 + 三个分项（分项排成一行，总开关关掉时变灰）
+  const kinds = el('div', 'cs-dk-checks');
+  const syncKinds = () => {
+    const off = !notificationsEnabled();
+    kinds.classList.toggle('is-off', off);
+    kinds.querySelectorAll('input').forEach((box) => (box.disabled = off));
+  };
+  const noticeSwitch = choiceRow(
+    [
+      { value: 'on', label: dt('notificationsOn'), hint: dt('notificationsHint') },
+      { value: 'off', label: dt('notificationsOff') },
+    ],
+    notificationsEnabled() ? 'on' : 'off',
+    (value) => {
+      setNotificationsEnabled(value === 'on');
+      syncKinds();
+    }
+  );
+  for (const kind of NOTICE_KINDS) {
+    const { title, short, hint } = noticeKindText(kind);
+    const row = el('label', 'cs-dk-check');
+    row.title = `${title}\n${hint}`;
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = noticeKindEnabled(kind);
+    box.addEventListener('change', () => setNoticeKindEnabled(kind, box.checked));
+    row.append(box, el('span', '', short));
+    kinds.append(row);
+  }
+  syncKinds();
+  const notices = section(dt('notifications'), noticeSwitch, kinds);
+  notices.title = dt('notificationsHint');
+  list.append(notices);
+
+  // 会话：服务器端断开时自动关闭标签
+  const ending = serverEndText();
+  const endRow = el('label', 'cs-dk-check');
+  endRow.title = `${ending.title}\n${ending.hint}`;
+  const endBox = el('input');
+  endBox.type = 'checkbox';
+  endBox.checked = closeOnServerEnd();
+  endBox.addEventListener('change', () => setCloseOnServerEnd(endBox.checked));
+  endRow.append(endBox, el('span', '', ending.short));
+  list.append(section(dt('sessionSection'), endRow));
+  panel.append(list);
+
+  // 功能按钮：排成网格
+  const actions = el('div', 'cs-dk-actions');
+  const ai = document.getElementById('ai-config-btn');
+  if (ai && loggedIn()) actions.append(action('psychology', dt('aiSettings'), () => ai.click()));
+  const bridge = window.cloudsshDesktop;
+  if (bridge?.openInstanceManager) {
+    actions.append(action('terminal', dt('cliSkill'), () => void bridge.openInstanceManager?.('cli'), false, dt('cliSkillHint')));
+  }
+  actions.append(action('format_color_text', dt('actHighlight'), () => openHighlightEditor(), false, ht('title')));
+  actions.append(action('key', dt('actPresets'), () => void openPresetManager(), false, presetText('title')));
+  actions.append(action('qr_code_2', qt('title'), () => void openQrSync()));
+  if (bridge?.openInstanceManager) actions.append(action('dns', dt('instanceManager'), () => void bridge.openInstanceManager?.()));
+  panel.append(actions);
+}
+
+let localeHooked = false;
+
+/** 开着时换了语言：原地换上新文字（宽度各语言一样，位置不动），焦点留在语言选项上 */
+function rebuildOnLocaleChange(): void {
+  const panel = document.querySelector<HTMLElement>('.cs-dk-popover.cs-dk-settings');
+  if (!panel) return;
+  const focused = panel.contains(document.activeElement);
+  panel.replaceChildren();
+  buildSettings(panel);
+  if (focused) panel.querySelector<HTMLElement>('.cs-dk-languages .is-on')?.focus();
+}
+
 export function toggleSettings(anchor: HTMLElement): void {
   if (isPopoverOpenFor(anchor)) {
     closePopover();
     return;
   }
-  openPopover(anchor, 'cs-dk-settings', (panel) => {
-    // 顶部：用户 + 退出登录（同一行）
-    const user = userCard();
-    const canLogout = loggedIn() && !!document.getElementById('logout-btn');
-    if (user || canLogout) {
-      const head = el('div', 'cs-dk-set-head');
-      if (user) head.append(user);
-      if (canLogout) head.append(action('logout', dt('logout'), () => clickById('logout-btn'), true));
-      panel.append(head);
-    }
-    const list = el('div', 'cs-dk-set-list');
-
-    list.append(
-      section(
-        dt('skin'),
-        choiceRow<DesktopSkin>(
-          [
-            { value: 'workbench', label: dt('skinWorkbench'), hint: dt('skinWorkbenchDesc') },
-            { value: 'classic', label: dt('skinClassic'), hint: dt('skinClassicDesc') },
-          ],
-          desktopSkin(),
-          (value) => {
-            closePopover();
-            setDesktopSkin(value);
-          }
-        )
-      )
-    );
-
-    const select = themeSelect();
-    if (select) {
-      list.append(
-        section(
-          dt('colors'),
-          choiceRow(
-            [...select.options].map((option) => ({ value: option.value, label: option.textContent?.trim() || option.value })),
-            select.value,
-            (value) => {
-              select.value = value;
-              select.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-          )
-        )
-      );
-    }
-
-    list.append(
-      section(
-        dt('language'),
-        choiceRow(
-          LANGUAGE_CHOICES.map((choice) => ({ value: choice.locale, label: choice.name })),
-          getLocale(),
-          (locale) => {
-            if (locale !== getLocale()) setLocale(locale);
-          }
-        )
-      )
-    );
-
-    // 后台通知：总开关 + 三个分项（分项排成一行，总开关关掉时变灰）
-    const kinds = el('div', 'cs-dk-checks');
-    const syncKinds = () => {
-      const off = !notificationsEnabled();
-      kinds.classList.toggle('is-off', off);
-      kinds.querySelectorAll('input').forEach((box) => (box.disabled = off));
-    };
-    const noticeSwitch = choiceRow(
-      [
-        { value: 'on', label: dt('notificationsOn'), hint: dt('notificationsHint') },
-        { value: 'off', label: dt('notificationsOff') },
-      ],
-      notificationsEnabled() ? 'on' : 'off',
-      (value) => {
-        setNotificationsEnabled(value === 'on');
-        syncKinds();
-      }
-    );
-    for (const kind of NOTICE_KINDS) {
-      const { title, hint } = noticeKindText(kind);
-      const row = el('label', 'cs-dk-check');
-      row.title = hint;
-      const box = el('input');
-      box.type = 'checkbox';
-      box.checked = noticeKindEnabled(kind);
-      box.addEventListener('change', () => setNoticeKindEnabled(kind, box.checked));
-      row.append(box, el('span', '', title));
-      kinds.append(row);
-    }
-    syncKinds();
-    const notices = section(dt('notifications'), noticeSwitch, kinds);
-    notices.title = dt('notificationsHint');
-    list.append(notices);
-
-    // 会话：服务器端断开时自动关闭标签
-    const ending = serverEndText();
-    const endRow = el('label', 'cs-dk-check');
-    endRow.title = ending.hint;
-    const endBox = el('input');
-    endBox.type = 'checkbox';
-    endBox.checked = closeOnServerEnd();
-    endBox.addEventListener('change', () => setCloseOnServerEnd(endBox.checked));
-    endRow.append(endBox, el('span', '', ending.title));
-    list.append(section(dt('sessionSection'), endRow));
-    panel.append(list);
-
-    // 功能按钮：排成网格
-    const actions = el('div', 'cs-dk-actions');
-    const ai = document.getElementById('ai-config-btn');
-    if (ai && loggedIn()) actions.append(action('psychology', dt('aiSettings'), () => ai.click()));
-    const bridge = window.cloudsshDesktop;
-    if (bridge?.openInstanceManager) {
-      actions.append(action('terminal', dt('cliSkill'), () => void bridge.openInstanceManager?.('cli'), false, dt('cliSkillHint')));
-    }
-    actions.append(action('format_color_text', ht('title'), () => openHighlightEditor()));
-    actions.append(action('key', presetText('title'), () => void openPresetManager()));
-    actions.append(action('qr_code_2', qt('title'), () => void openQrSync()));
-    if (bridge?.openInstanceManager) actions.append(action('dns', dt('instanceManager'), () => void bridge.openInstanceManager?.()));
-    panel.append(actions);
-  });
+  if (!localeHooked) {
+    localeHooked = true;
+    onLocaleChange(rebuildOnLocaleChange);
+  }
+  openPopover(anchor, 'cs-dk-settings', buildSettings);
 }

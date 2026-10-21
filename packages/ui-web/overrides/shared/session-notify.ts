@@ -51,6 +51,9 @@ const texts = {
     kindBellHint: '终端响铃，以及程序用 OSC 9 / 777 发的通知',
     kindConnection: '断线与重连',
     kindConnectionHint: '会话断开超过 3 秒，以及之后重新连上',
+    kindCommandShort: '长命令完成',
+    kindBellShort: '响铃与提醒',
+    kindConnectionShort: '断线与重连',
   },
   'zh-TW': {
     done: '指令已完成：{cmd}',
@@ -67,6 +70,9 @@ const texts = {
     kindBellHint: '終端機響鈴，以及程式用 OSC 9 / 777 發的通知',
     kindConnection: '中斷與重新連線',
     kindConnectionHint: '工作階段中斷超過 3 秒，以及之後重新連上',
+    kindCommandShort: '長指令完成',
+    kindBellShort: '響鈴與提醒',
+    kindConnectionShort: '中斷與重連',
   },
   'en-US': {
     done: 'Command finished: {cmd}',
@@ -83,6 +89,9 @@ const texts = {
     kindBellHint: 'Terminal bells and OSC 9 / 777 notifications sent by programs',
     kindConnection: 'Disconnects and reconnects',
     kindConnectionHint: 'A session drops for more than 3 seconds, and when it comes back',
+    kindCommandShort: 'Long commands',
+    kindBellShort: 'Bells',
+    kindConnectionShort: 'Disconnects',
   },
 };
 
@@ -135,10 +144,10 @@ export function setNoticeKindEnabled(kind: NoticeKind, enabled: boolean): void {
   }
 }
 
-/** 设置界面用的名称与说明 */
-export function noticeKindText(kind: NoticeKind): { title: string; hint: string } {
+/** 设置界面用的名称与说明；short 是电脑端设置面板里排成一行用的短名 */
+export function noticeKindText(kind: NoticeKind): { title: string; hint: string; short: string } {
   const key = kind === 'command' ? 'kindCommand' : kind === 'bell' ? 'kindBell' : 'kindConnection';
-  return { title: nt(key), hint: nt(`${key}Hint`) };
+  return { title: nt(key), hint: nt(`${key}Hint`), short: nt(`${key}Short`) };
 }
 
 function shouldNotify(kind: NoticeKind): boolean {

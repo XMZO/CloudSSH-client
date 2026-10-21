@@ -21,9 +21,10 @@ import { closeTabById } from '../sidebar/hooks';
 
 const STORAGE_KEY = 'cloudssh_close_on_server_end';
 
-const TEXT: Record<string, { title: string; hint: string; ended: string; broken: string; closed: string }> = {
+const TEXT: Record<string, { title: string; short: string; hint: string; ended: string; broken: string; closed: string }> = {
   'zh-CN': {
     title: '服务器端断开时自动关闭标签',
+    short: '服务器端断开时自动关闭标签',
     hint: '你刚操作过（1 分钟内），随后会话结束或远程主机断开（exit 退出、重启服务器等）时，直接关闭它的标签；太久没操作被断开（自动登出、空闲超时）、远程主机无响应、本机断网 / 省电 / 待机，以及在后台时的断开都不关，照常自动重连或按任意键重连',
     ended: '会话已结束',
     broken: '服务器端断开了连接',
@@ -31,6 +32,7 @@ const TEXT: Record<string, { title: string; hint: string; ended: string; broken:
   },
   'zh-TW': {
     title: '伺服器端中斷時自動關閉標籤',
+    short: '伺服器端中斷時自動關閉標籤',
     hint: '你剛操作過（1 分鐘內），隨後會話結束或遠端主機中斷（exit 退出、重新開機伺服器等）時，直接關閉它的標籤；太久沒操作被中斷（自動登出、閒置逾時）、遠端主機無回應、本機斷網 / 省電 / 待機，以及在背景時的中斷都不關，照常自動重新連線或按任意鍵重新連線',
     ended: '會話已結束',
     broken: '伺服器端中斷了連線',
@@ -38,6 +40,7 @@ const TEXT: Record<string, { title: string; hint: string; ended: string; broken:
   },
   'en-US': {
     title: 'Close the tab when the server ends the session',
+    short: 'Close tab when the server ends it',
     hint: 'If you used the tab within the last minute and the session then ends or the remote host disconnects (exit, rebooting the server…), the tab closes right away; drops after long inactivity (auto logout, idle timeout), an unresponsive remote host, network loss / power saving / sleep on this device, and drops while in the background keep the tab and reconnect automatically or on a key press',
     ended: 'session ended',
     broken: 'the server closed the connection',
@@ -49,9 +52,10 @@ function text() {
   return TEXT[getLocale()] ?? TEXT['zh-CN'];
 }
 
-export function serverEndText(): { title: string; hint: string } {
-  const { title, hint } = text();
-  return { title, hint };
+/** short 是电脑端设置面板用的短名 */
+export function serverEndText(): { title: string; short: string; hint: string } {
+  const { title, short, hint } = text();
+  return { title, short, hint };
 }
 
 export function closeOnServerEnd(): boolean {
