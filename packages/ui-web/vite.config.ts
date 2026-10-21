@@ -440,6 +440,20 @@ const MOBILE_HOOKS: Hook[] = [
     anchor: "    document.body.classList.add('agent-panel-open');\n",
     inject: '    if ((globalThis as any).__cloudsshNoAgentAutofocus !== true)\n',
   },
+  // 启动首屏（overrides/mobile/early.ts 的 watchBoot）：网页版决定显示什么时告诉它“启动完成”——登录检查后显示
+  // 服务器列表或匿名连接页、分享链接落地页、独立终端标签页。完成前 mobile.css 藏着匿名连接页，已登录的不会先闪一下
+  ...[
+    '  deactivateTerminalView();\n  isLoggedIn = true;\n',
+    "function showAuthSection(): void {\n  deactivateTerminalView();\n",
+    '  if (shareToken) {\n',
+    '  if (isTerminalTab()) {\n    initTerminalTab();\n',
+  ].map(
+    (anchor): Hook => ({
+      file: '/upstream/frontend/src/main.ts',
+      anchor,
+      inject: '  (globalThis as any).__cloudsshBootDone?.();\n',
+    })
+  ),
 ];
 
 function extensionHooks(target: Target): Plugin {

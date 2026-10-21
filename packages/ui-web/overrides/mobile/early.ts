@@ -25,6 +25,29 @@ function installSkinEarly(): void {
   applySkinAttributes(loadSkinState());
 }
 
+/** 不管怎样，启动这么久后都算完成（不会一直空白） */
+const BOOT_TIMEOUT_MS = 8000;
+
+/**
+ * 启动首屏：网页版的 HTML 默认显示匿名连接页（#auth-section），要等登录检查（/api/auth/me）回来才换成服务器列表，
+ * 已登录的实例启动时会先闪一下连接页（最近任务里的快照也常停在这一帧）。mobile.css 在启动完成（html.cs-m-booted）之前
+ * 藏着连接页（等久了中间转个圈），这里决定什么时候算完成：
+ * - 当前实例没登录过（或读不到状态）：马上完成，连接页照常出现
+ * - 网页版决定显示什么了（服务器列表、匿名连接页、分享落地页、独立终端标签页；构建钩子调用 __cloudsshBootDone）
+ * - 兜底 BOOT_TIMEOUT_MS
+ */
+function watchBoot(ready: Promise<MobileState>): void {
+  const root = document.documentElement;
+  let timer = 0;
+  const finish = () => {
+    window.clearTimeout(timer);
+    root.classList.add('cs-m-booted');
+  };
+  timer = window.setTimeout(finish, BOOT_TIMEOUT_MS);
+  (globalThis as { __cloudsshBootDone?: () => void }).__cloudsshBootDone = finish;
+  ready.then((state) => !state.loggedIn && finish()).catch(finish);
+}
+
 function install(): void {
   document.documentElement.dataset.cloudsshClient = 'mobile';
   installSkinEarly();
@@ -33,6 +56,7 @@ function install(): void {
   const mobile: { ready: Promise<MobileState>; state: MobileState | null } = { ready: native.state(), state: null };
   mobile.ready.then((state) => (mobile.state = state)).catch((e) => console.error('[cloudssh] state', e));
   window.__cloudsshMobile = mobile;
+  watchBoot(mobile.ready);
 
   const instanceHost = () => (mobile.state ? new URL(mobile.state.current.baseUrl).host : null);
   const isApiSocket = (url: URL) =>
@@ -275,3 +299,5 @@ function install(): void {
 }
 
 if (isTauri()) install();
+// 不在客户端里（浏览器直接打开手机版构建）：没有登录状态可判断，连接页照常显示
+else document.documentElement.classList.add('cs-m-booted');

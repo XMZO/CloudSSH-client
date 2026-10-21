@@ -16,6 +16,52 @@ html.cs-nodes-on #user-space-section .user-space-main {
   line-height: 1;
 }
 
+/* ---------- 启动首屏（early.ts 的 watchBoot） ---------- */
+
+/* 启动完成前藏着匿名连接页：已登录的实例要等登录检查回来才显示服务器列表，不先闪一下连接页 */
+html:not(.cs-m-booted) #auth-section {
+  visibility: hidden;
+}
+
+/* 等得久了（慢网络）中间转个圈，免得像卡住；0.6 秒内完成的看不到。body::after 网页版的噪点效果在用，这里挂在 html 上 */
+html:not(.cs-m-booted)::after {
+  content: '';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  box-sizing: border-box;
+  border: 3px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  animation:
+    cs-m-boot-spin 0.9s linear infinite,
+    cs-m-boot-show 0.2s ease-out 0.6s forwards;
+}
+
+@keyframes cs-m-boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cs-m-boot-show {
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.cs-m-booted)::after {
+    animation: cs-m-boot-show 0.2s ease-out 0.6s forwards;
+  }
+}
+
 /* ---------- 节点首页 ---------- */
 
 .cs-m-nodes {
