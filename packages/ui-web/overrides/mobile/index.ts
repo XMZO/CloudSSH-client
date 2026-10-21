@@ -21,6 +21,7 @@ import { installTagPicker } from '../shared/server-tags';
 import { installTerminalEnhancements } from '../shared/terminal';
 import { tabCount, terminalVisible } from '../sidebar/hooks';
 import { installFetchObserver } from '../sidebar/store';
+import { attachBoot } from '../shared/boot';
 import { mountAuthSettings } from './auth-entry';
 import { installGithubLogin } from './github-login';
 import { mt } from './i18n';
@@ -216,6 +217,8 @@ installTerminalEnhancements();
 
 if (isTauri()) {
   installFetchObserver();
+  // 打开就是完整的服务器列表（../shared/boot.ts）：节点页在下面同步装好，缓存读出来时已经在了
+  attachBoot({ canShowEarly: () => true });
   const start = () => {
     // 返回键最先注册：没注册上时系统会直接结束 Activity（原生层已兜底改为退到后台）。
     // 其余各项互不影响，某一项出错不能让后面的都装不上

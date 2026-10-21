@@ -3,6 +3,7 @@
  * 这些都是上游的私有实现细节：每个调用都做存在性检查，找不到就返回 false 让侧栏降级。
  */
 import { t } from '../../upstream/frontend/src/i18n';
+import { bootCore } from '../shared/boot-core';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 
 interface TerminalLike {
@@ -97,10 +98,36 @@ async function findListedServer(
   return server;
 }
 
+/**
+ * 启动时用缓存显示了列表（shared/boot.ts）、网页版的服务器列表还没建好（登录检查还没回来，断网时还在重试）：
+ * 点了连接、添加、编辑先记着，建好后再执行（只记最后一次）；网页版改成显示连接页（登录失效）就作废。
+ * 返回 false 表示不是这种情况（网页版钩子确实不可用）
+ */
+let queued: (() => void) | null = null;
+let queueTimer = 0;
+
+function whenListReady(action: () => void): boolean {
+  const core = bootCore();
+  if (!core || core.userShown || core.settled) return false;
+  queued = action;
+  if (queueTimer) return true;
+  queueTimer = window.setInterval(() => {
+    const ready = typeof serverList()?.connectServer === 'function';
+    const state = bootCore();
+    if (!ready && state && !state.settled) return;
+    window.clearInterval(queueTimer);
+    queueTimer = 0;
+    const run = ready ? queued : null;
+    queued = null;
+    run?.();
+  }, 150);
+  return true;
+}
+
 /** 走网页版自己的连接流程（申请一次性 token → 新建终端标签）；返回 false 表示网页版钩子不可用 */
 export function connectServer(id: number): boolean {
   const list = serverList();
-  if (typeof list?.connectServer !== 'function') return false;
+  if (typeof list?.connectServer !== 'function') return whenListReady(() => connectServer(id));
   const connect = list.connectServer.bind(list);
   void findListedServer(list, id).then((server) => server && connect(id));
   return true;
@@ -108,7 +135,7 @@ export function connectServer(id: number): boolean {
 
 export function openServerModal(mode: 'add' | 'edit' | 'clone', id?: number): boolean {
   const list = serverList();
-  if (typeof list?.showModal !== 'function') return false;
+  if (typeof list?.showModal !== 'function') return whenListReady(() => openServerModal(mode, id));
   if (mode === 'add') {
     list.showModal('add');
     return true;

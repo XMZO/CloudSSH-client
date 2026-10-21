@@ -24,6 +24,7 @@ import { getActiveTerminalTheme, onTerminalThemeChange } from '../../upstream/fr
 import { installCredentialPresets, openPresetManager, presetText } from '../shared/credential-presets';
 import { mountDrawerResizers } from './drawers';
 import { mountHome } from './home';
+import { attachBoot } from '../shared/boot';
 import { installExternalLinks } from './links';
 import { installDesktopNotifications } from './notifications';
 import { agentOutputText, openStyleEditor } from '../shared/agent-output';
@@ -76,6 +77,9 @@ export async function mountDesktopShell(): Promise<void> {
       requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     });
     mountHome();
+    // 打开就是完整的服务器列表（../shared/boot.ts）：列表组件装好之后再用缓存显示，不会先露出网页版的卡片骨架；
+    // 经典主题用网页版自己的卡片（不读数据源），只等列表到了再显示
+    attachBoot({ canShowEarly: () => desktopSkin() === 'workbench' });
     mountSnippetEnhancements();
     mountDrawerResizers();
     installPalette();

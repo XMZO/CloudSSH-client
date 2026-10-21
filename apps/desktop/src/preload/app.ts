@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('cloudsshDesktop', {
     encrypt: (text: string) => ipcRenderer.invoke('desktop:vault', 'encrypt', text),
     decrypt: (data: string) => ipcRenderer.invoke('desktop:vault', 'decrypt', data),
   },
+  /** 界面缓存（仅内置界面可用）：服务器列表等，启动时先用它显示；value 为 null 时删除 */
+  uiCache: {
+    read: (key: string) => ipcRenderer.invoke('desktop:ui-cache', 'read', key),
+    write: (key: string, value: string | null) => ipcRenderer.invoke('desktop:ui-cache', 'write', key, value),
+  },
   /** 把 SFTP 文件拖到桌面：登记 → 网页版照常下载（主进程存进临时目录）→ 准备好后开始系统拖放 */
   dragOut: {
     prepare: (token: string, names: string[]) => ipcRenderer.invoke('desktop:drag-prepare', token, names),

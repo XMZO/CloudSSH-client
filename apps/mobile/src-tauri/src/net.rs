@@ -130,6 +130,48 @@ impl Net {
         self.settings.read().unwrap().current().clone()
     }
 
+    // ---------- 界面缓存（服务器列表等，启动时先用它显示） ----------
+    // 存在应用数据目录的 ui-cache/ 下、按实例分开：不在缓存目录里，“清除缓存”与系统清理缓存都不会删；
+    // 删除实例、清除登录时一起删（clear_ui_cache）
+
+    fn ui_cache_dir(&self) -> PathBuf {
+        self.data_dir.join("ui-cache")
+    }
+
+    fn ui_cache_path(&self, id: &str, key: &str) -> PathBuf {
+        self.ui_cache_dir().join(format!("{id}-{key}.json"))
+    }
+
+    /// 当前实例的一项界面缓存；没有就是 None
+    pub fn ui_cache_read(&self, key: &str) -> Option<String> {
+        std::fs::read_to_string(self.ui_cache_path(&self.current().id, key)).ok()
+    }
+
+    /// 写入当前实例的一项界面缓存（先写临时文件再改名，不会留下写了一半的文件）；None 删除
+    pub fn ui_cache_write(&self, key: &str, value: Option<&str>) -> Result<(), String> {
+        let path = self.ui_cache_path(&self.current().id, key);
+        let Some(value) = value else {
+            let _ = std::fs::remove_file(&path);
+            return Ok(());
+        };
+        std::fs::create_dir_all(self.ui_cache_dir()).map_err(|e| format!("创建缓存目录失败：{e}"))?;
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, value).map_err(|e| format!("写入缓存失败：{e}"))?;
+        std::fs::rename(&temp, &path).map_err(|e| format!("写入缓存失败：{e}"))
+    }
+
+    /// 删除某个实例的全部界面缓存
+    pub fn clear_ui_cache(&self, id: &str) {
+        let prefix = format!("{id}-");
+        if let Ok(entries) = std::fs::read_dir(self.ui_cache_dir()) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
     // ---------- Cookie ----------
 
     fn cookie_path(&self, id: &str) -> PathBuf {

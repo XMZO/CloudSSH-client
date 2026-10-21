@@ -51,6 +51,14 @@
 
   window.cloudsshDesktop = {
     info: async () => ({ platform: 'win32', appVersion, instance, customChrome: false }),
+    // 界面缓存（客户端里存在应用数据目录）：这里放进浏览器的 localStorage，刷新页面后还在
+    uiCache: {
+      read: async (key) => localStorage.getItem(`__mock_ui_cache_${key}`),
+      write: async (key, value) => {
+        if (value == null) localStorage.removeItem(`__mock_ui_cache_${key}`);
+        else localStorage.setItem(`__mock_ui_cache_${key}`, value);
+      },
+    },
     update: {
       status: async () => status,
       check: async () => (status.state === 'idle' || status.state === 'not-available' || status.state === 'error' ? simulate() : status),

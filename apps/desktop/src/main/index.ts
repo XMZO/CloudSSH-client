@@ -20,6 +20,7 @@ import { buildAppMenu, buildTray, refreshMenus } from './platform/menus';
 import { installGlobalShortcut } from './platform/shortcut';
 import { startUpdates } from './platform/updater';
 import { registerVaultIpc } from './platform/vault';
+import { registerUiCacheIpc } from './platform/ui-cache';
 import { versionLabel } from './platform/version';
 import {
   instanceWindows,
@@ -66,6 +67,7 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpc();
     registerVaultIpc();
+    registerUiCacheIpc();
     registerDragOutIpc();
     installGlobalShortcut();
     setOpenManagerHandler(() => openManagerWindow());

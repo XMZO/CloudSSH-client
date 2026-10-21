@@ -11,6 +11,7 @@ import { createLogger, isDebug } from '../logger';
 import { resolveUi, type ResolvedUi } from '../ui/providers';
 import { claimDragDownload } from './drag-out';
 import { applyOriginBridge } from './origin-bridge';
+import { clearUiCache } from './ui-cache';
 
 const log = createLogger('session');
 
@@ -108,6 +109,7 @@ export async function clearInstanceData(instance: InstanceConfig): Promise<void>
   const ses = getInstanceSession(instance);
   await ses.clearStorageData();
   await ses.clearCache();
+  clearUiCache(instance.id);
   await session.fromPartition(oauthPartition(instance.id)).clearStorageData();
   log.info('已清除实例数据', instance.id, originOf(instance.baseUrl));
 }

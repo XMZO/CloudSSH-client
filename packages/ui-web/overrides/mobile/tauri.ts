@@ -48,6 +48,9 @@ export const native = {
   selectInstance: (id: string) => invoke<void>('select_instance', { id }),
   setProxy: (proxy: string | null) => invoke<string | null>('set_proxy', { proxy }),
   clearLogin: (id: string) => invoke<void>('clear_login', { id }),
+  /** 当前实例的界面缓存（应用数据目录，不受“清除缓存”影响；见 overrides/shared/boot.ts） */
+  uiCacheRead: (key: string) => invoke<string | null>('ui_cache_read', { key }),
+  uiCacheWrite: (key: string, value: string | null) => invoke<void>('ui_cache_write', { key, value }),
   testInstance: (baseUrl: string) => invoke<ProbeResult>('test_instance', { baseUrl }),
   http: (request: { method: string; path: string; headers: [string, string][]; body: string | null; bodyBase64: boolean }) =>
     invoke<HttpResult>('http_request', { request }),

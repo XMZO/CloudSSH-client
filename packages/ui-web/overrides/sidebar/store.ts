@@ -25,13 +25,37 @@ function emit(): void {
   }
 }
 
+/** 列表变化（来自网页版的请求或本地更新，不含 primeServers）时调用：shared/boot.ts 写进缓存 */
+let persist: ((next: ServerConfig[] | null) => void) | null = null;
+
 function setServers(next: ServerConfig[] | null): void {
   servers = next;
   emit();
+  try {
+    persist?.(next);
+  } catch {
+    // 写缓存失败不影响列表
+  }
 }
 
 export function getServers(): ServerConfig[] | null {
   return servers;
+}
+
+/** 启动时用缓存的列表先填上（还没有列表时才填，不触发写缓存）；之后网页版的请求照常覆盖 */
+export function primeServers(cached: ServerConfig[]): void {
+  if (servers !== null) return;
+  servers = cached;
+  emit();
+}
+
+/** 清空列表（启动时用缓存填上、随后发现没登录或登录失效时） */
+export function resetServers(): void {
+  if (servers !== null) setServers(null);
+}
+
+export function setServerPersistor(fn: ((next: ServerConfig[] | null) => void) | null): void {
+  persist = fn;
 }
 
 export function subscribe(listener: Listener): () => void {

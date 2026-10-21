@@ -64,6 +64,12 @@
     open_external: ({ url }) => void window.open(url, '_blank', 'noopener'),
     battery_status: () => null,
     storage_info: () => null,
+    // 界面缓存（真机上存在 Rust 侧的应用数据目录）：这里放进浏览器的 localStorage，刷新页面后还在
+    ui_cache_read: ({ key }) => localStorage.getItem(`__mock_ui_cache_${key}`),
+    ui_cache_write: ({ key, value }) => {
+      if (value == null) localStorage.removeItem(`__mock_ui_cache_${key}`);
+      else localStorage.setItem(`__mock_ui_cache_${key}`, value);
+    },
   };
 
   window.__TAURI_INTERNALS__ = {

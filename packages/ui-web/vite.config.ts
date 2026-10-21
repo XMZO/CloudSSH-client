@@ -39,6 +39,8 @@ function injectionsFor(target: Target): Injection[] {
     ];
   }
   return [
+    // 启动首屏（overrides/shared/boot-core.ts）：要在网页版脚本之前装上
+    { id: '/@cloudssh/desktop-early.ts', file: path.join(packageDir, 'overrides', 'desktop', 'early.ts'), injectTo: 'head-prepend' },
     { id: '/@cloudssh/overrides.ts', file: path.join(packageDir, 'overrides', 'index.ts'), injectTo: 'body' },
   ];
 }
@@ -128,6 +130,20 @@ interface Hook {
  * 锚点找不到时只告警不失败：相关功能会自动降级。
  */
 const COMMON_HOOKS: Hook[] = [
+  // 启动首屏（overrides/shared/boot-core.ts）：网页版决定显示什么时告诉它——登录检查通过显示列表页（user，等列表到了
+  // 再完成启动）、匿名连接页（auth）、分享链接落地页（share）、独立终端标签页（terminal）
+  ...[
+    { anchor: '  deactivateTerminalView();\n  isLoggedIn = true;\n', kind: 'user' },
+    { anchor: 'function showAuthSection(): void {\n  deactivateTerminalView();\n', kind: 'auth' },
+    { anchor: '  if (shareToken) {\n', kind: 'share' },
+    { anchor: '  if (isTerminalTab()) {\n    initTerminalTab();\n', kind: 'terminal' },
+  ].map(
+    ({ anchor, kind }): Hook => ({
+      file: '/upstream/frontend/src/main.ts',
+      anchor,
+      inject: `  (globalThis as any).__cloudsshBootDone?.('${kind}');\n`,
+    })
+  ),
   {
     file: '/upstream/frontend/src/server-list.ts',
     anchor: '    this.onConnect = onConnect;\n',
@@ -440,20 +456,6 @@ const MOBILE_HOOKS: Hook[] = [
     anchor: "    document.body.classList.add('agent-panel-open');\n",
     inject: '    if ((globalThis as any).__cloudsshNoAgentAutofocus !== true)\n',
   },
-  // 启动首屏（overrides/mobile/early.ts 的 watchBoot）：网页版决定显示什么时告诉它“启动完成”——登录检查后显示
-  // 服务器列表或匿名连接页、分享链接落地页、独立终端标签页。完成前 mobile.css 藏着匿名连接页，已登录的不会先闪一下
-  ...[
-    '  deactivateTerminalView();\n  isLoggedIn = true;\n',
-    "function showAuthSection(): void {\n  deactivateTerminalView();\n",
-    '  if (shareToken) {\n',
-    '  if (isTerminalTab()) {\n    initTerminalTab();\n',
-  ].map(
-    (anchor): Hook => ({
-      file: '/upstream/frontend/src/main.ts',
-      anchor,
-      inject: '  (globalThis as any).__cloudsshBootDone?.();\n',
-    })
-  ),
 ];
 
 function extensionHooks(target: Target): Plugin {

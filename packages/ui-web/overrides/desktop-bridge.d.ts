@@ -33,6 +33,11 @@ interface Window {
       encrypt(text: string): Promise<string>;
       decrypt(data: string): Promise<string>;
     };
+    /** 界面缓存（服务器列表等，启动时先用它显示；旧版客户端没有）。value 为 null 时删除 */
+    uiCache?: {
+      read(key: string): Promise<string | null>;
+      write(key: string, value: string | null): Promise<void>;
+    };
     dragOut?: {
       prepare(token: string, names: string[]): Promise<void>;
       start(token: string): void;

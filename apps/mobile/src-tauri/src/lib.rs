@@ -88,6 +88,7 @@ fn delete_instance(net: State<'_, Net>, id: String) -> Result<(), String> {
         Ok(())
     })?;
     net.clear_cookies(&id);
+    net.clear_ui_cache(&id);
     Ok(())
 }
 
@@ -114,6 +115,35 @@ fn set_proxy(net: State<'_, Net>, proxy: Option<String>) -> Result<Option<String
 #[tauri::command]
 fn clear_login(net: State<'_, Net>, id: String) {
     net.clear_cookies(&id);
+    net.clear_ui_cache(&id);
+}
+
+/// 界面缓存的键：小写字母、数字、短横线，不超过 32 个字符（拼进文件名）
+fn valid_ui_cache_key(key: &str) -> Result<(), String> {
+    if key.is_empty() || key.len() > 32 || !key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        return Err(format!("缓存键不合法：{key}"));
+    }
+    Ok(())
+}
+
+/// 界面缓存单项上限（几百台服务器的列表也远小于这个数）
+const UI_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// 读当前实例的界面缓存（启动时先用它显示服务器列表，见 overrides/shared/boot.ts）
+#[tauri::command]
+fn ui_cache_read(net: State<'_, Net>, key: String) -> Result<Option<String>, String> {
+    valid_ui_cache_key(&key)?;
+    Ok(net.ui_cache_read(&key))
+}
+
+/// 写入（value 为 null 时删除）当前实例的界面缓存
+#[tauri::command]
+fn ui_cache_write(net: State<'_, Net>, key: String, value: Option<String>) -> Result<(), String> {
+    valid_ui_cache_key(&key)?;
+    if value.as_ref().is_some_and(|v| v.len() > UI_CACHE_MAX_BYTES) {
+        return Err("缓存内容太大".into());
+    }
+    net.ui_cache_write(&key, value.as_deref())
 }
 
 #[derive(Serialize)]
@@ -391,6 +421,8 @@ pub fn run() {
             select_instance,
             set_proxy,
             clear_login,
+            ui_cache_read,
+            ui_cache_write,
             test_instance,
             http_request,
             ws_open,
