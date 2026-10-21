@@ -770,6 +770,53 @@ html.cs-nodes-on .cs-m-nodes {
   font-size: 20px;
 }
 
+/*
+ * 两步关闭（tabs.ts）：要确认时第一次点把 × 变成红色的“关闭”，3 秒内再点才关。
+ * 标签栏的 ×、会话列表的 ×、“关闭已断开的会话”共用：只显示提示文字，原来的图标与文字先藏起来
+ */
+[data-cs-close-id].is-armed > :not(.cs-m-close-armed) {
+  display: none;
+}
+
+.cs-m-close-armed {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+#tab-bar .tab-close.is-armed,
+.cs-m-session-close.is-armed {
+  width: auto;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--error);
+  color: #fff;
+  opacity: 1;
+}
+
+#tab-bar .tab-close.is-armed {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 8px;
+}
+
+.cs-m-session-close.is-armed {
+  height: 30px;
+  margin: 0 7px;
+}
+
+.cs-m-close-dead.is-armed {
+  border-color: var(--error);
+  background: var(--error);
+  color: #fff;
+}
+
+.cs-m-close-dead.is-armed .cs-m-close-armed {
+  font-size: inherit;
+}
+
 .cs-m-sessions .cs-m-btn {
   display: flex;
   align-items: center;

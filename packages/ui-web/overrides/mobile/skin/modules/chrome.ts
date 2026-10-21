@@ -20,7 +20,7 @@ import { mt } from '../../i18n';
 import { openSettings } from '../../settings';
 import { openHighlightEditor } from '../../../shared/terminal';
 import { ht } from '../../../shared/terminal/i18n';
-import { closeSheet, confirmSheet, openSheet } from '../../sheet';
+import { closeSheet, openSheet } from '../../sheet';
 import { openSessionList } from '../../tabs';
 import { clickById, Disposer, h, icon, iconButton, prefersReducedMotion, rafThrottle, upstreamButtonAvailable } from '../dom';
 import { isModuleActive } from '../engine';
@@ -156,22 +156,35 @@ function openMoreSheet(): void {
   if (tab) {
     const disconnect = h('button', 'cs-ob-more-danger');
     disconnect.type = 'button';
-    disconnect.append(icon('power_settings_new'), h('span', '', st('actDisconnect')));
-    disconnect.addEventListener('click', async () => {
+    const label = h('span', '', st('actDisconnect'));
+    disconnect.append(icon('power_settings_new'), label);
+    // 按“关闭会话前确认”设置（默认只有真正连着的会话才确认）：不再弹确认面板，第一次点变成“再点一次断开”，3 秒内再点才断开
+    let armedFor: string | null = null;
+    let armTimer = 0;
+    const disarm = () => {
+      armedFor = null;
+      window.clearTimeout(armTimer);
+      disconnect.classList.remove('is-armed');
+      label.textContent = st('actDisconnect');
+    };
+    disconnect.addEventListener('click', () => {
       const current = activeTab();
       if (!current) {
         closeSheet();
         return;
       }
-      // 按“关闭会话前确认”设置：默认只有真正连着的会话才确认
-      if (!shouldConfirmClose(current)) {
-        closeSheet();
-        clickById('disconnect-btn');
+      if (shouldConfirmClose(current) && armedFor !== current.id) {
+        armedFor = current.id;
+        disconnect.classList.add('is-armed');
+        label.textContent = st('actDisconnectAgain');
+        window.clearTimeout(armTimer);
+        armTimer = window.setTimeout(disarm, 3000);
         return;
       }
-      const ok = await confirmSheet(mt('closeSessionConfirm', { name: current.label ?? '' }), mt('closeSession'), mt('cancel'), true);
-      // 确认期间可能已切换会话：只断开发起时的那个
-      if (ok && activeTabId() === current.id) clickById('disconnect-btn');
+      disarm();
+      closeSheet();
+      // 只断开发起时的那个会话
+      if (activeTabId() === current.id) clickById('disconnect-btn');
     });
     body.append(disconnect);
   }

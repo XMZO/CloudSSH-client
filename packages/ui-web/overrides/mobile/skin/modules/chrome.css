@@ -228,6 +228,12 @@ html.mobile-keyboard-open .cs-ob-iconbtn {
   font-weight: 600;
 }
 
+/* 第一次点之后：等再点一次 */
+.cs-ob-more-danger.is-armed {
+  background: var(--error);
+  color: #fff;
+}
+
 /* ---------- 字号调节 ---------- */
 
 .cs-ob-font {
