@@ -299,16 +299,23 @@ const COMMON_HOOKS: Hook[] = [
   // 已保存的服务器重新申请一次性令牌，匿名连接用内存里这次的配置，与网页版自动重连同一套路径。
   // 从没连上（认证失败、主机指纹变化待确认）、分享会话（只允许秒级恢复）不提示。
   // 关闭前是否就绪用实例属性传过去：任一锚点失效时条件不成立，行为与网页版一致。
-  // 在这之前先问 overrides/shared/session-end.ts：开了“服务器端断开时自动关闭标签”、Worker 关闭前报的原因是会话结束或
-  // 远程主机断开、且你刚在这个标签里操作过时，它安排关闭标签并返回 true，这里直接结束，不再排定重连、不提示按键重连。
+  // 在这之前先问 overrides/shared/session-end.ts：Worker 关闭前报的原因是会话结束或远程主机断开、你刚在这个标签里操作过，
+  // 且对应的开关（“退出会话时”或“服务器重启或关机时”自动关闭标签）开着时，它安排关闭标签并返回 true，这里直接结束，不再排定重连、不提示按键重连。
   // 原因靠下面记下的“这条连接最后一个带 event 的 status / error 消息”：关闭码本身分不清——本机省电冻结没确认输出、
   // 待机太久空闲超时，Worker 同样以 1000 关闭。没记到原因（锚点失效、Worker 没报）时一律不关
   // 用户最后一次往这个会话里输入的时间（键盘、粘贴、手机快捷键栏都经过 sendToServer；xterm 在获得 / 失去焦点时
-  // 自动发的焦点报告不算）：session-end.ts 只在“刚操作过、随后会话结束”时才当成你自己结束的，长时间没操作被断开的不关标签
+  // 自动发的焦点报告不算）：session-end.ts 只在“刚操作过、随后会话结束”时才当成你自己结束的，长时间没操作被断开的不关标签。
+  // 同时交给 session-end.ts 记下回车执行的命令（exit 还是 reboot，决定归“退出会话”还是“服务器重启或关机”）
   {
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '      sendToServer: (data: string | Uint8Array) => {\n        if (this.sessionReady && this.ws?.readyState === WebSocket.OPEN) {\n',
-    inject: "          if (data !== '\\x1b[I' && data !== '\\x1b[O') (this as any).__cloudsshLastInputAt = Date.now();\n",
+    inject: [
+      "          if (data !== '\\x1b[I' && data !== '\\x1b[O') {",
+      '            (this as any).__cloudsshLastInputAt = Date.now();',
+      '            (globalThis as any).__cloudsshNoteInput?.(this, data);',
+      '          }',
+      '',
+    ].join('\n'),
   },
   {
     file: '/upstream/frontend/src/terminal.ts',

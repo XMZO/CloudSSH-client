@@ -12,7 +12,7 @@ import { fontSizeControl } from './skin/font-size';
 import { st } from './skin/i18n';
 import { tabCount } from '../sidebar/hooks';
 import { CLOSE_CONFIRM_MODES, closeConfirmMode, setCloseConfirmMode, type CloseConfirmMode } from './close-confirm';
-import { closeOnServerEnd, serverEndText, setCloseOnServerEnd } from '../shared/session-end';
+import { closeOnEnd, END_KINDS, serverEndText, setCloseOnEnd } from '../shared/session-end';
 import { openHighlightEditor } from '../shared/terminal';
 import { loadSettings as loadHighlight, saveSettings as saveHighlight } from '../shared/terminal/highlight-rules';
 import { ht } from '../shared/terminal/i18n';
@@ -249,9 +249,11 @@ function terminalGroup(): HTMLElement {
       openStyleEditor();
     },
   });
-  const ending = serverEndText();
-  const endRow = toggleRow({ title: ending.title, sub: ending.hint, checked: closeOnServerEnd(), onChange: setCloseOnServerEnd });
-  return settingsGroup('terminal', mt('grpTerminal'), [fontRow, highlightRow, aiStyleRow, closeRow, endRow]);
+  const endRows = END_KINDS.map((kind) => {
+    const { title, hint } = serverEndText(kind);
+    return toggleRow({ title, sub: hint, checked: closeOnEnd(kind), onChange: (on) => setCloseOnEnd(kind, on) });
+  });
+  return settingsGroup('terminal', mt('grpTerminal'), [fontRow, highlightRow, aiStyleRow, closeRow, ...endRows]);
 }
 
 // ---------- 连接 ----------

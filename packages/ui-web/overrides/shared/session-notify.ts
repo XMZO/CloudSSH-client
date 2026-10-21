@@ -171,7 +171,7 @@ export function formatDuration(ms: number, locale = getLocale()): string {
 }
 
 /** 第 row 行所在的逻辑行（含折行）；给了 endColumn 时只取到该列为止（光标左边） */
-function logicalLine(term: Terminal, row: number, endColumn?: number): string {
+export function logicalLine(term: Terminal, row: number, endColumn?: number): string {
   const buffer = term.buffer.active;
   let text = buffer.getLine(row)?.translateToString(endColumn === undefined, 0, endColumn) ?? '';
   for (let prev = row; prev > 0 && buffer.getLine(prev)?.isWrapped; prev--) {

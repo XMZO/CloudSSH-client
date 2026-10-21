@@ -1,6 +1,6 @@
 /**
  * 标题栏右侧的“设置”面板（工作台主题）：网页版顶栏收起后，原来顶栏上的东西都在这里——
- * 界面主题（工作台 / 经典）、配色、语言、后台通知、会话，以及 AI 设置、命令行与 Skill、关键词高亮、凭据预设、
+ * 界面主题（工作台 / 经典）、配色、语言、后台通知、自动关闭标签，以及 AI 设置、命令行与 Skill、关键词高亮、凭据预设、
  * 同步到手机、实例管理、退出登录。配色与 AI 设置、退出登录直接操作网页版自己的控件，行为与网页版一致。
  *
  * 排版：不折叠、不分页，窄而不高——顶部一行是用户与退出登录；中间一栏，每项的标题与选项同一行（标题对齐成一列，
@@ -20,7 +20,7 @@ import {
 import { openPresetManager, presetText } from '../shared/credential-presets';
 import { qt } from '../shared/qr-sync/i18n';
 import { openQrSync } from './qr-sync';
-import { closeOnServerEnd, serverEndText, setCloseOnServerEnd } from '../shared/session-end';
+import { closeOnEnd, END_KINDS, serverEndText, setCloseOnEnd } from '../shared/session-end';
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
 import { el, icon } from './dom';
@@ -192,16 +192,20 @@ function buildSettings(panel: HTMLElement): void {
   notices.title = dt('notificationsHint');
   list.append(notices);
 
-  // 会话：服务器端断开时自动关闭标签
-  const ending = serverEndText();
-  const endRow = el('label', 'cs-dk-check');
-  endRow.title = `${ending.title}\n${ending.hint}`;
-  const endBox = el('input');
-  endBox.type = 'checkbox';
-  endBox.checked = closeOnServerEnd();
-  endBox.addEventListener('change', () => setCloseOnServerEnd(endBox.checked));
-  endRow.append(endBox, el('span', '', ending.short));
-  list.append(section(dt('sessionSection'), endRow));
+  // 关闭标签：退出会话时、服务器重启或关机时自动关闭（两个开关排成一行）
+  const endings = el('div', 'cs-dk-checks');
+  for (const kind of END_KINDS) {
+    const { title, short, hint } = serverEndText(kind);
+    const row = el('label', 'cs-dk-check');
+    row.title = `${title}\n${hint}`;
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = closeOnEnd(kind);
+    box.addEventListener('change', () => setCloseOnEnd(kind, box.checked));
+    row.append(box, el('span', '', short));
+    endings.append(row);
+  }
+  list.append(section(dt('sessionSection'), endings));
   panel.append(list);
 
   // 功能按钮：排成网格
