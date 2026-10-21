@@ -11,6 +11,7 @@ import { app, BrowserWindow, net, powerMonitor } from 'electron';
 import path from 'node:path';
 import { configStore } from './config/store';
 import { createLogger } from './logger';
+import { logNetworkEnv, watchNetworkEnv } from './network-env';
 import { refreshCliInstall } from './platform/cli-install';
 import { applyCliSync } from './platform/cli-sync';
 import { registerDragOutIpc } from './platform/drag-out';
@@ -68,7 +69,10 @@ if (!app.requestSingleInstanceLock()) {
     // 逐个注册：powerMonitor.on 是按事件名重载的，传联合类型时 TypeScript 选不出重载
     const logSystemState = (event: string) => () => log.info('system-state', { event, online: net.isOnline() });
     powerMonitor.on('suspend', logSystemState('suspend'));
-    powerMonitor.on('resume', logSystemState('resume'));
+    powerMonitor.on('resume', () => {
+      logSystemState('resume')();
+      void logNetworkEnv('resume');
+    });
     powerMonitor.on('lock-screen', logSystemState('lock-screen'));
     powerMonitor.on('unlock-screen', logSystemState('unlock-screen'));
     app.on('child-process-gone', (_event, details) => {
@@ -76,6 +80,7 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     registerIpc();
+    watchNetworkEnv();
     registerVaultIpc();
     registerUiCacheIpc();
     registerDragOutIpc();

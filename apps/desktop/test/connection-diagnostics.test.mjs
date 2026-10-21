@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { appendRotatingLog, MAX_LOG_BYTES, LOG_BACKUPS } from '../src/main/rotating-log.ts';
-import { connectionLogData, connectionEndpoint } from '../src/main/connection-log-data.ts';
+import { connectionLogData, connectionEndpoint, createCloseBurstDetector } from '../src/main/connection-log-data.ts';
 import { CONNECTION_DIAGNOSTIC_HOOKS } from '../../../packages/ui-web/connection-diagnostic-hooks.ts';
 import { connectionDiagnostic } from '../../../packages/ui-web/overrides/shared/terminal/connection-diagnostics.ts';
 import ts from 'typescript';
@@ -111,4 +111,28 @@ test('连接关联、迟到关闭、心跳采样与凭据隔离', () => {
       else delete globalThis[key];
     }
   }
+});
+
+test('同时断开：一段时间内两条及以上非正常断开才报告，且每批只报一次', () => {
+  let now = 0;
+  const timers = [];
+  const reports = [];
+  const add = createCloseBurstDetector((summary) => reports.push(summary), 3000, () => now, (run) => timers.push(run));
+  add({ instance: 'a', window: 1, code: 1006 });
+  now = 400;
+  add({ instance: 'b', window: 2, code: 1006 });
+  now = 900;
+  add({ instance: 'a', window: 1, code: 1011 });
+  assert.equal(timers.length, 1);
+  timers.shift()();
+  assert.deepEqual(reports, [{ count: 3, instances: ['a', 'b'], windows: 2, codes: [1006, 1011], spanMs: 900 }]);
+  now = 10_000;
+  add({ instance: 'a', window: 1, code: 1006 });
+  timers.shift()();
+  assert.equal(reports.length, 1, '单独一条断开不报告');
+});
+
+test('新增的诊断事件与字段能通过白名单', () => {
+  assert.deepEqual(connectionLogData({ event: 'heartbeat-postponed', silentMs: 12_000, terminalId: 1 }), { event: 'heartbeat-postponed', terminalId: 1, silentMs: 12_000 });
+  assert.deepEqual(connectionLogData({ event: 'resume-attempt', attempt: 3, elapsedMs: 4200 }), { event: 'resume-attempt', attempt: 3, elapsedMs: 4200 });
 });

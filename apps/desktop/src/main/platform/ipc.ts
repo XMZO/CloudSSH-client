@@ -12,7 +12,8 @@ import {
   isSameInstanceOrigin,
 } from '@cloudssh/core';
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type IpcMainEvent, net, shell } from 'electron';
-import { connectionLogData } from '../connection-log-data';
+import { connectionLogData, createCloseBurstDetector } from '../connection-log-data';
+import { logNetworkEnv } from '../network-env';
 import { configStore, type Preferences } from '../config/store';
 import { createLogger, logFilePath } from '../logger';
 import { listBundledUis } from '../ui/providers';
@@ -82,6 +83,11 @@ function broadcastChanged(): void {
 
 export function registerIpc(): void {
   const connectionLog = createLogger('connection');
+  // 几条连接同一时刻一起非正常断开：记一行汇总，并强制记下当时的代理 / TUN 情况
+  const noteAbnormalClose = createCloseBurstDetector((summary) => {
+    connectionLog.warn('simultaneous-close', summary);
+    void logNetworkEnv('simultaneous-close', true);
+  });
   const budgets = new WeakMap<Electron.WebContents, { start: number; count: number; dropped: number }>();
   ipcMain.on('desktop:connection-log', (event, input: unknown) => {
     try {
@@ -96,7 +102,12 @@ export function registerIpc(): void {
       }
       if (++budget.count > 600) { budget.dropped++; return; }
       const data = connectionLogData(input);
-      if (data) connectionLog.info({ instance: instance.id, window: event.sender.id, ...data });
+      if (!data) return;
+      connectionLog.info({ instance: instance.id, window: event.sender.id, ...data });
+      if (data.event === 'socket-close' && data.code !== 1000) {
+        noteAbnormalClose({ instance: instance.id, window: event.sender.id, code: typeof data.code === 'number' ? data.code : undefined });
+        void logNetworkEnv('socket-close');
+      }
     } catch { /* 非实例页面或已销毁窗口的诊断不影响会话。 */ }
   });
   // ---------- 实例页面 ----------

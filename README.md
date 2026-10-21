@@ -703,6 +703,7 @@ Android 的 `versionCode` 由 Tauri 按 主×1000000 + 次×1000 + 修订 推导
 - **一直显示未登录**：在实例管理里点“GitHub 登录”重新登录，或者“清除登录数据”后再登录。检查 Worker 的 `GITHUB_ALLOWED_USER_IDS` 是否包含你的账号
 - **GitHub 授权页提示 redirect_uri is not associated with this application**：实例地址和 OAuth App 登记的回调域名不一致，把实例地址改成回调域名（本项目即 `https://bash.al`）
 - **终端连不上 / 突然断线**：桌面安装版默认保存连接诊断，打开“帮助 → 打开日志”，Windows 默认位于 `%APPDATA%\CloudSSH\logs\main.log`。日志记录 UTC 时间、实例/窗口、终端/连接编号、WebSocket 握手状态码及耗时、Chromium 网络错误、关闭码、正常关闭标记、服务端事件名、最后接收数据/心跳距断线的时间、恢复次数、健康检查结果、回退原因，以及网络在线状态、前后台和系统睡眠/唤醒事件。普通心跳每条连接每分钟汇总一次，异常逐次记录；每窗口超过每分钟 600 条 UI 诊断时限流，并在下一个窗口有事件时报告丢弃数。网络握手日志不受这项 UI 限流影响。401/403/404 等需要结合具体接口判断，不能仅凭 1006 或健康检查成功断定服务器已关闭会话。
+- **看日志定位断线**：搜这几个词——`simultaneous-close`（几条连接同一时刻一起非正常断开：本机网络、系统代理 / TUN、Cloudflare 边缘或 Worker 重新部署这类共用环节出的事，而不是某台服务器）、`network-env`（每个实例实际走的代理，如 `PROXY 127.0.0.1:7890`、`DIRECT`，以及开着的 TUN 类网卡名；变化时、同时断开时记）、`resume-rejected`（恢复握手被拒：`404 session-not-in-grace-period` 表示 Worker 那边还没把会话放进保持期——经过代理时它往往晚几秒才察觉旧连接断开，客户端会接着试 20 秒；20 秒后仍是 404 多半是会话真没了，如 Worker 重新部署过）、`resume-attempt`（每次恢复尝试与距断开的时间 `elapsedMs`）、`heartbeat-postponed`（pong 超时但最近还收到过数据，没有判定卡死）、`system-state`（睡眠、唤醒、锁屏）
 - **日志容量**：运行中按大小轮转，每份最多 2 MiB，保留 `main.log` 和 `.1`～`.4`（`.1` 最新），最多 10 MiB，旧记录自动淘汰；旧版遗留超大文件会保留末尾。单条最多 16 KiB。新增连接诊断仅记录元数据，不保存命令、终端输出、密码、私钥、Cookie、查询参数、服务端自由文本消息或 WebSocket 关闭原因正文（只记录其长度）。排查时同时保留当时的终端错误提示及这几份日志。
 - **界面和服务端行为不一致**：可能是版本漂移，参考上文“同步上游网页版”，或者把实例切到 `remote`
 - **依赖安装报 `ERR_PNPM_TRUST_DOWNGRADE` 或 `minimumReleaseAge`**：`pnpm-workspace.yaml` 沿用了主仓库的供应链策略，详见文件注释

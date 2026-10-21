@@ -9,6 +9,7 @@ import { app, session, type Session } from 'electron';
 import path from 'node:path';
 import { createLogger } from '../logger';
 import { connectionEndpoint } from '../connection-log-data';
+import { trackInstanceNetwork } from '../network-env';
 import { resolveUi, type ResolvedUi } from '../ui/providers';
 import { claimDragDownload } from './drag-out';
 import { applyOriginBridge } from './origin-bridge';
@@ -40,6 +41,7 @@ export function getInstanceSession(instance: InstanceConfig): Session {
   const ses = session.fromPartition(instancePartition(instance.id));
   instanceOfSession.set(ses, instance.id);
   baseUrlOfSession.set(ses, instance.baseUrl);
+  trackInstanceNetwork(instance.id, ses, instance.baseUrl);
   if (!configured.has(ses)) {
     configureSession(ses);
     configured.add(ses);
@@ -51,6 +53,18 @@ function isFromInstance(ses: Session, url: string | undefined): boolean {
   const baseUrl = baseUrlOfSession.get(ses);
   return !!baseUrl && !!url && isSameInstanceOrigin(url, baseUrl);
 }
+
+/**
+ * 恢复握手（带 resume_token 的 /api/ssh）没有升级成 WebSocket 时状态码的含义（CloudSSH Worker 在握手前拒绝）。
+ * 404 最常见：Worker 这边没有处于保持期的这个会话——经过代理 / TUN 时它还没察觉旧连接断开（过几秒再试能接上），
+ * 或者保持期已过、Worker 重新部署过（会话真没了）
+ */
+const RESUME_REJECT_MEANING: Record<number, string> = {
+  401: 'not-signed-in',
+  403: 'resume-token-or-device-rejected',
+  404: 'session-not-in-grace-period',
+  429: 'rate-limited',
+};
 
 function configureSession(ses: Session): void {
   ses.setPermissionRequestHandler((_webContents, permission, callback, details) => {
@@ -110,7 +124,14 @@ function configureSession(ses: Session): void {
   });
   ses.webRequest.onHeadersReceived(filter, (details, callback) => {
     try {
-      if (tracked(details)) networkLog.info('response-headers', { ...metadata(details), status: details.statusCode });
+      if (tracked(details)) {
+        const info = metadata(details);
+        networkLog.info('response-headers', { ...info, status: details.statusCode });
+        // 恢复握手被拒单独记一行，一眼能看出原会话为什么没接上
+        if (info.resume && details.statusCode !== 101) {
+          networkLog.warn('resume-rejected', { ...info, status: details.statusCode, meaning: RESUME_REJECT_MEANING[details.statusCode] ?? 'other' });
+        }
+      }
     } finally { callback({}); }
   });
   ses.webRequest.onCompleted(filter, (details) => {
@@ -120,7 +141,8 @@ function configureSession(ses: Session): void {
   });
   ses.webRequest.onErrorOccurred(filter, (details) => {
     if (!tracked(details)) return;
-    networkLog.warn('request-failed', { ...metadata(details), error: details.error });
+    const info = metadata(details);
+    networkLog.warn(info.resume ? 'resume-failed' : 'request-failed', { ...info, error: details.error });
     pending.delete(details.id);
   });
 }

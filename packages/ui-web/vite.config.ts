@@ -132,6 +132,18 @@ interface Hook {
  */
 const COMMON_HOOKS: Hook[] = [
   ...CONNECTION_DIAGNOSTIC_HOOKS,
+  // 心跳判断更稳（overrides/shared/terminal/heartbeat-guard.ts）：记下最后一次收到消息的时间；
+  // pong 超时、网页版要判定卡死并以 1000 关闭（关闭帧送到 Worker 会直接销毁会话）之前先问它，最近 20 秒内收到过消息就先不判定
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '    this.ws.onmessage = (event) => {\n      if (socket !== this.ws) return;\n',
+    inject: '      (this as any).__cloudsshLastInboundAt = performance.now();\n',
+  },
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: "      this.lastPingTime = null;\n      if (document.visibilityState === 'hidden') return;\n",
+    inject: '      if ((globalThis as any).__cloudsshHeartbeatStall?.(this, socket) === true) return;\n',
+  },
   // 打开着时跟上别处的改动（overrides/shared/live-sync.ts）：把网页版只在启动时做一次的两个同步交出来，内容变了时再调用。
   // 主题只取“云端有主题 → 更新并应用”那一段：云端没有主题时网页版会把本机的主题回填上去，别处刚删掉的会被加回来，这里不做；
   // 本机选的是内置主题时只更新主题库、不切换（与网页版启动时一致）

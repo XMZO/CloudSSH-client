@@ -14,6 +14,7 @@ import { ht } from './i18n';
 import { startReconnectCountdown } from './reconnect-countdown';
 import { installResumeRetry } from './resume-retry';
 import { installIdleReminder } from './idle-reminder';
+import { installHeartbeatGuard } from './heartbeat-guard';
 import { installSessionEnd } from '../session-end';
 import './terminal.css';
 
@@ -148,6 +149,8 @@ export function installTerminalEnhancements(): void {
   installResumeRetry();
   // 快空闲断开时弹提醒，点“继续”续期（./idle-reminder.ts）
   installIdleReminder();
+  // 心跳超时前先看最近有没有收到过消息，不把还活着的慢连接当成卡死（./heartbeat-guard.ts）
+  installHeartbeatGuard();
   // 等待自动重连时：构建钩子在网页版写出“x 秒后重连”之后调用，把那一行换成精确到毫秒的实时倒计时并附上按键提示
   (globalThis as { __cloudsshReconnectCountdown?: typeof startReconnectCountdown }).__cloudsshReconnectCountdown =
     startReconnectCountdown;

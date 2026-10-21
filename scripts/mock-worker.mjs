@@ -200,14 +200,17 @@ async function handleHttp(req, res) {
 
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });
   // 调试：从外面断开所有 Shell 连接（像网络抖了一下，不发关闭帧），在 pager、nano 里或打了半行命令时也能测断线恢复。
-  // ?offline=秒：之后这么久“断网”（HTTP 与 WebSocket 都连不上，/__mock 除外）；?forget=1：同时丢掉保持中的会话（恢复会被拒绝）
+  // ?offline=秒：之后这么久“断网”（HTTP 与 WebSocket 都连不上，/__mock 除外）；?forget=1：同时丢掉保持中的会话（恢复会被拒绝）；
+  // ?late=秒：像经过代理时 Worker 过一会儿才察觉旧连接断开，这么久内恢复以 404 拒绝（之后能恢复）
   if (path === '/__mock/drop') {
     let count = 0;
+    const late = Number(url.searchParams.get('late')) || 0;
     for (const [id, entry] of shellSessions) {
       if (!entry.link.pending) {
         entry.link.ws.destroy();
         count++;
       }
+      entry.noticeAt = late > 0 ? Date.now() + late * 1000 : 0;
       if (url.searchParams.get('forget') === '1') {
         clearTimeout(entry.timer);
         shellSessions.delete(id);
@@ -215,7 +218,7 @@ async function handleHttp(req, res) {
     }
     const offline = Number(url.searchParams.get('offline')) || 0;
     offlineUntil = offline > 0 ? Date.now() + offline * 1000 : 0;
-    console.log(`断开 ${count} 条 Shell 连接${offline ? `，断网 ${offline} 秒` : ''}${url.searchParams.get('forget') === '1' ? '，丢掉保持中的会话' : ''}`);
+    console.log(`断开 ${count} 条 Shell 连接${offline ? `，断网 ${offline} 秒` : ''}${late ? `，${late} 秒内恢复被拒` : ''}${url.searchParams.get('forget') === '1' ? '，丢掉保持中的会话' : ''}`);
     return json(res, 200, { dropped: count, offline });
   }
   // 调试：不经过键盘、由服务器这边结束所有 Shell（像自动登出、闲置连接被掐、远程主机无响应），测断开后标签留不留
@@ -1311,6 +1314,10 @@ let offlineUntil = 0;
 /** 能不能恢复：会话还在保持期、令牌对得上（与 Worker 一样，不能恢复时在握手前就以 404 拒绝） */
 function resumable(url) {
   const entry = shellSessions.get(url.searchParams.get('session') ?? '');
+  if (entry?.noticeAt && Date.now() < entry.noticeAt) {
+    console.log('恢复被拒：还没察觉旧连接断开（late）');
+    return false;
+  }
   return !!entry && !!entry.link.pending && url.searchParams.get('resume_token') === entry.resumeToken;
 }
 

@@ -7,8 +7,9 @@
  * - 第一次：与网页版一样立刻试；之后每次没接上，先请求一次 /api/health 看网络通不通
  * - 网络不通：按 1、2、3、5、8 秒、之后每 10 秒等着再试，带实时倒计时，可按任意键立即重试；
  *   系统报告网络恢复（online）或回到前台时也立即重试
- * - 健康检查通了恢复却失败：可能是会话过期、权限拒绝或 WebSocket 链路异常，不能据此断言会话已关闭。
- *   先马上再试一次，连续两次失败后回退新连接；具体握手状态由桌面端网络日志记录
+ * - 健康检查通了恢复却失败：最常见的是经过系统代理 / TUN 时，Worker 过一会儿才察觉旧连接断开——察觉之前它不认恢复
+ *   （握手前就 404），察觉之后才把会话放进保持期。所以不马上放弃：按 1、2、3、5 秒的间隔接着试，健康检查一直通、
+ *   恢复一直不成满 20 秒才回退新连接（会话真没了，如 Worker 重新部署过，也只多等这么久）。握手状态码由桌面端网络日志记录
  * - 保持期（与服务端 SESSION_GRACE_PERIOD_MS 对齐，留 2 秒余量）用完或原会话没了：说明原因，清掉恢复凭据，
  *   交回网页版的完整重连（从第 1 次开始算，不占用恢复期间的次数）
  * 恢复尝试不计入网页版完整重连的 5 次上限（否则重试几次后网页版就不再重连了）。恢复成功（session_resumed）时
@@ -26,15 +27,20 @@ const RESUME_WINDOW_MS = 58_000;
 const FINAL_MARGIN_MS = 3_000;
 /** 网络不通时每次等多久：1、2、3、5、8 秒，之后每 10 秒（网络恢复的系统事件、回到前台、按键都会提前） */
 const RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 8000, 10_000];
-/** 健康检查成功、恢复却连续失败这么多次后回退；不代表服务端确认会话已关闭。 */
-const MAX_ONLINE_FAILURES = 2;
+/** 健康检查通、恢复却不成时每次等多久（Worker 还没察觉旧连接断开时，过几秒再试多半就能接上） */
+const ONLINE_RETRY_DELAYS_MS = [1000, 2000, 3000, 5000];
+/** 健康检查一直通、恢复一直不成满这么久才回退新连接；不代表服务端确认会话已关闭 */
+const ONLINE_GIVE_UP_MS = 20_000;
 const PROBE_TIMEOUT_MS = 4000;
 
 /** 一轮断线（从断开到恢复成功或放弃） */
 interface ResumeCycle {
+  startedAt: number;
   deadline: number;
   attempts: number;
   onlineFailures: number;
+  /** 健康检查通、恢复却不成从什么时候开始（中间网络断过就重新算） */
+  onlineSince?: number;
   /** 上一次等待的倒计时那一行：下一次等待时把它和之后的“连接错误 / 连接已关闭”收起来，只留一行 */
   line?: IMarker;
 }
@@ -90,7 +96,7 @@ async function networkReachable(term: SessionTerminal): Promise<boolean> {
 
 /** 试一次恢复；announce：写一行“正在重新连接…”（倒计时那一行到点时已经说明了，不再重复） */
 function attempt(term: SessionTerminal, cycle: ResumeCycle, announce = true): void {
-  connectionDiagnostic(term, 'resume-attempt', { attempt: cycle.attempts, onlineFailures: cycle.onlineFailures, remainingMs: Math.max(0, cycle.deadline - Date.now()) });
+  connectionDiagnostic(term, 'resume-attempt', { attempt: cycle.attempts, onlineFailures: cycle.onlineFailures, elapsedMs: Date.now() - cycle.startedAt, remainingMs: Math.max(0, cycle.deadline - Date.now()) });
   if (announce) term.terminal.writeln(`\x1b[32m[+] ${t('terminal.reconnecting')}\x1b[0m`);
   void term.tryResumeSession().then((created) => {
     // 连 WebSocket 都没建起来（网页版已清掉凭据）：只能完整重连；建起来之后的失败由网页版的 onclose 再交回这里
@@ -170,7 +176,8 @@ function wait(term: SessionTerminal, cycle: ResumeCycle, delay: number): void {
 
 /** 不再恢复：说明原因，清掉恢复凭据，交回网页版完整重连（从第 1 次算起） */
 function giveUp(term: SessionTerminal, reason: string, cause: string): void {
-  connectionDiagnostic(term, 'resume-give-up', { cause, attempt: term.__cloudsshResumeCycle?.attempts, onlineFailures: term.__cloudsshResumeCycle?.onlineFailures });
+  const cycle = term.__cloudsshResumeCycle;
+  connectionDiagnostic(term, 'resume-give-up', { cause, attempt: cycle?.attempts, onlineFailures: cycle?.onlineFailures, elapsedMs: cycle ? Date.now() - cycle.startedAt : undefined });
   term.__cloudsshResumeCycle?.line?.dispose();
   term.__cloudsshResumeCycle = undefined;
   waiting.delete(term);
@@ -191,7 +198,7 @@ function resumeRetry(term: SessionTerminal): boolean {
   let cycle = term.__cloudsshResumeCycle;
   if (!cycle || term.__cloudsshWasReady === true) {
     cycle?.line?.dispose();
-    cycle = { deadline: Date.now() + RESUME_WINDOW_MS, attempts: 0, onlineFailures: 0 };
+    cycle = { startedAt: Date.now(), deadline: Date.now() + RESUME_WINDOW_MS, attempts: 0, onlineFailures: 0 };
     term.__cloudsshResumeCycle = cycle;
   }
   // 用过就清：这一轮后面每次没接上的连接都没就绪过
@@ -206,13 +213,23 @@ function resumeRetry(term: SessionTerminal): boolean {
   const current = cycle;
   void networkReachable(term).then((online) => {
     if (!stillWaiting(term, current)) return;
-    current.onlineFailures = online ? current.onlineFailures + 1 : 0;
-    if (current.onlineFailures >= MAX_ONLINE_FAILURES) return giveUp(term, ht('resumeGone'), 'repeated-resume-failure-while-health-ok');
-    const remaining = current.deadline - Date.now();
+    const now = Date.now();
+    if (online) {
+      current.onlineFailures++;
+      current.onlineSince ??= now;
+    } else {
+      current.onlineFailures = 0;
+      current.onlineSince = undefined;
+    }
+    if (current.onlineSince !== undefined && now - current.onlineSince >= ONLINE_GIVE_UP_MS) {
+      return giveUp(term, ht('resumeGone'), 'resume-rejected-while-health-ok');
+    }
+    const remaining = current.deadline - now;
     if (remaining <= FINAL_MARGIN_MS) return giveUp(term, ht('resumeTimeout'), 'resume-window-exhausted');
-    // 网络已经通了：马上再试一次；还没通：按递增间隔等（不超过保持期剩下的时间）
-    if (online) return attempt(term, current);
-    const step = RETRY_DELAYS_MS[Math.min(current.attempts - 2, RETRY_DELAYS_MS.length - 1)];
+    // 网络通着：Worker 可能还没察觉旧连接断开，隔 1、2、3、5 秒再试；还没通：按递增间隔等（都不超过保持期剩下的时间）
+    const step = online
+      ? ONLINE_RETRY_DELAYS_MS[Math.min(current.onlineFailures - 1, ONLINE_RETRY_DELAYS_MS.length - 1)]
+      : RETRY_DELAYS_MS[Math.min(current.attempts - 2, RETRY_DELAYS_MS.length - 1)];
     wait(term, current, Math.min(step, remaining - FINAL_MARGIN_MS));
   });
   return true;
