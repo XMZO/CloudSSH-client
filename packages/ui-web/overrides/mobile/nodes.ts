@@ -383,9 +383,13 @@ export function mountNodes(): void {
   });
   const tabBar = document.getElementById('tab-bar');
   if (tabBar) new MutationObserver(scheduleRender).observe(tabBar, { childList: true, subtree: true });
-  // 页面切换：回到节点页时在这一帧画出来之前就补上渲染，不和进场动画抢同一帧
+  // 页面切换：回到节点页时在这一帧画出来之前就补上渲染，不和进场动画抢同一帧。
+  // 每次回来都核对一遍（内容没变不会重画）：关掉最后一个标签时网页版的标签栏要等退出动画放完才重建，
+  // 等不到它的变化，横幅会先显示着“1 个会话进行中”
   const sections = new MutationObserver(() => {
-    if (pageVisible()) flush();
+    if (!pageVisible()) return;
+    dirty = true;
+    flush();
   });
   for (const id of ['terminal-section', 'user-space-section']) {
     const node = document.getElementById(id);
