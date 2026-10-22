@@ -124,12 +124,22 @@ function whenListReady(action: () => void): boolean {
   return true;
 }
 
+/**
+ * 正在申请连接的服务器。申请一次性 token 要几百毫秒，标签在申请完成时才建好：这期间再点同一台
+ * （手机上连点几下、电脑上连着双击）不再重复申请，否则每点一下就多一个标签
+ */
+const connecting = new Set<number>();
+
 /** 走网页版自己的连接流程（申请一次性 token → 新建终端标签）；返回 false 表示网页版钩子不可用 */
 export function connectServer(id: number): boolean {
   const list = serverList();
   if (typeof list?.connectServer !== 'function') return whenListReady(() => connectServer(id));
+  if (connecting.has(id)) return true;
+  connecting.add(id);
   const connect = list.connectServer.bind(list);
-  void findListedServer(list, id).then((server) => server && connect(id));
+  void findListedServer(list, id)
+    .then((server) => (server ? connect(id) : undefined))
+    .finally(() => connecting.delete(id));
   return true;
 }
 
