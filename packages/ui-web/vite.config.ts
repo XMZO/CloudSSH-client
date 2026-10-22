@@ -483,12 +483,94 @@ const COMMON_HOOKS: Hook[] = [
     // 先告诉它，这时面板的开合不算用户自己的操作；切换后它在 cloudssh:active-terminal-change 里为新会话重新打开
     file: '/upstream/frontend/src/main.ts',
     anchor: 'function closeAllDrawers(): void {\n',
-    inject: '  (globalThis as any).__cloudsshDrawerProgrammatic?.();\n',
+    inject: [
+      '  (globalThis as any).__cloudsshDrawerProgrammatic?.();',
+      // 保持着命令面板、又是新建会话标签（留在终端页）：命令面板原样留着，其余照常（SFTP 面板由下面 hide() 里的钩子停放）
+      "  if ((globalThis as any).__cloudsshKeepSnippet?.('close-all') === true) {",
+      '    tabManager?.closeAllDrawers();',
+      '    syncDrawerSegmentedControl();',
+      '    void (snippetManager as any).__cloudsshQuietRefresh?.(true);',
+      '    return;',
+      '  }',
+      '',
+    ].join('\n'),
   },
   {
     file: '/upstream/frontend/src/tab-manager.ts',
     anchor: '  switchTab(tabId: string): void {\n    const tab = this.tabs.get(tabId);\n    if (!tab) return;\n    if (this.activeTabId === tabId) return;\n',
     inject: '    (globalThis as any).__cloudsshDrawerProgrammatic?.();\n',
+  },
+  {
+    // 同上：切换标签后网页版收起命令面板（每次清空搜索、重新加载列表）。保持着它时不收起，只同步分段条，
+    // 后台看一眼片段有没有在别处改过（有变化才重画）
+    file: '/upstream/frontend/src/main.ts',
+    anchor: "  document.addEventListener('cloudssh:active-terminal-change', () => {\n",
+    inject: [
+      '    if ((globalThis as any).__cloudsshKeepSnippet?.() === true) {',
+      '      syncDrawerSegmentedControl();',
+      '      void (snippetManager as any).__cloudsshQuietRefresh?.(true);',
+      '      return;',
+      '    }',
+      '',
+    ].join('\n'),
+  },
+  {
+    // 同上：新建会话标签（连接服务器、克隆会话）时紧接着的收起全部面板是留在终端页的
+    file: '/upstream/frontend/src/main.ts',
+    anchor: "  hostInfo?: SSHHostInfo\n): { tab: ReturnType<TabManager['createTab']>; terminal: SSHTerminal } {\n",
+    inject: '  (globalThis as any).__cloudsshDrawersStay?.();\n',
+  },
+  {
+    // 同上：SFTP 面板收起会断开 SFTP 连接、取消传输，切回来还要重新连接、重新列目录。保持着 SFTP 时切走只停放
+    // （看不见，连接和传输照旧），返回 true 就不收起；停放着的面板不响应 Esc、Ctrl+A
+    file: '/upstream/frontend/src/sftp-panel.ts',
+    anchor: '  hide(): void {\n',
+    inject: '    if ((globalThis as any).__cloudsshParkSftp?.(this) === true) return;\n',
+  },
+  {
+    file: '/upstream/frontend/src/sftp-panel.ts',
+    anchor: '  private readonly keydownHandler = (e: KeyboardEvent): void => {\n',
+    inject: '    if ((this as any).__cloudsshParked === true) return;\n',
+  },
+  {
+    // 命令面板每次打开都先清空列表画三张骨架卡片、再从服务器取一遍，看起来闪一下。已经加载过（同一种存储：登录后的云端
+    // 或本机）就先照原样画出已有的列表，后台取一遍，内容有变化才重画；取失败照网页版提示，列表留着
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: "  private async reload(): Promise<void> {\n    const listEl = document.getElementById('snippet-list');\n",
+    inject: [
+      "    if ((this as any).__cloudsshLoaded === (this.deps.isAuthenticated() ? 'remote' : 'local')) {",
+      '      this.render();',
+      '      await (this as any).__cloudsshQuietRefresh();',
+      '      return;',
+      '    }',
+      '',
+    ].join('\n'),
+  },
+  {
+    // 同上：后台取一遍片段，内容有变化才重画（不清空列表、不闪骨架）。保持着命令面板时切换标签、连接新服务器也调用它
+    // （silent：取失败不提示），在别处改过的片段跟着更新
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: '  constructor(private readonly deps: SnippetManagerDeps) {\n',
+    inject: [
+      '    (this as any).__cloudsshQuietRefresh = async (silent = false) => {',
+      '      const key = (list: unknown[]) => JSON.stringify([...list].sort((a: any, b: any) => String(a?.id).localeCompare(String(b?.id))));',
+      '      try {',
+      '        const latest = await this.store.list();',
+      '        if (key(latest) !== key(this.snippets)) {',
+      '          this.snippets = latest;',
+      '          if (this.visible) this.render();',
+      '        }',
+      '      } catch {',
+      "        if (!silent) notify(t('snippets.loadFailed'), { variant: 'danger' });",
+      '      }',
+      '    };',
+      '',
+    ].join('\n'),
+  },
+  {
+    file: '/upstream/frontend/src/snippet-manager.ts',
+    anchor: '      this.snippets = await this.store.list();\n',
+    inject: "      (this as any).__cloudsshLoaded = this.deps.isAuthenticated() ? 'remote' : 'local';\n",
   },
   {
     // 命令片段的手动顺序（overrides/shared/snippet-sort.ts，存在本地、不改 Worker）：网页版每次画列表前按它排好片段数组

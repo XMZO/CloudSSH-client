@@ -5,6 +5,14 @@ html.cs-drawer-instant :is(#sftp-panel, #agent-panel, #snippet-panel) {
   transition: none !important;
 }
 
+/* 切走了的会话的 SFTP 面板：停放着（连接、传输照旧），不显示。不用 display: none——从它恢复显示时
+   文件列表的逐行进场动画会重播，看起来又刷新了一遍 */
+#sftp-panel.cs-sftp-parked {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateX(100%) !important;
+}
+
 /* 新连接还没连上：面板位置先放一块同宽的占位（停靠时终端照样让出这块宽度） */
 .cs-drawer-hold {
   position: fixed;
