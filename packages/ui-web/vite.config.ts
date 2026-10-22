@@ -273,6 +273,36 @@ const COMMON_HOOKS: Hook[] = [
       ].join('\n'),
     })
   ),
+  // 最后一次（第 5 次）自动重连：已保存的服务器申请到一次性令牌、建好新连接之后，网页版要确认这次重连没被取消，
+  // 其中“次数已到上限”本意是认出等令牌期间标签被关了（disconnect() 会把次数设成上限），可最后一次重连时次数本来就等于上限，
+  // 新连接被当成已取消直接关掉、什么也不写，标签就一直停在“正在重新连接…”，按键也没反应。标签关了、换了连接时
+  // reconnectWebSocketFactory 已经变了（disconnect() 会清掉它），这里次数正好等于上限、别的都没变就照常连上
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor:
+      '          const socket = await reconnectFactory();\n          // 用户可能在令牌请求期间主动关闭标签或发起另一条连接。\n          // 这时丢弃迟到的 socket，避免页面被已经取消的重连重新拉起。\n',
+    inject: [
+      '          if (',
+      '            this.reconnectWebSocketFactory === reconnectFactory &&',
+      '            this.canReconnect &&',
+      '            this.reconnectAttempts === this.maxReconnectAttempts',
+      '          ) {',
+      '            this.connectWithWebSocket(socket, this.lastHostInfo ?? undefined, { resetDisplay: false, reconnectFactory });',
+      '            return;',
+      '          }',
+      '',
+    ].join('\n'),
+  },
+  // 最后一次自动重连也没连上：网页版就停在那里（没有提示，按键也没反应），只能关掉标签重开。交给
+  // overrides/shared/terminal/reboot-wait.ts 接着每隔几秒试（最多 5 分钟，按任意键立即试）。两处：最后一次的连接被关闭
+  // （连接关闭处理里的钩子）；最后一次申请连接令牌就失败了，没有关闭事件（这里）
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor:
+      "          this.terminal.writeln(`\\x1b[31m[!] ${t('terminal.reconnectFailed')}\\x1b[0m`);\n          if (this.hasReconnectStrategy()) this.scheduleReconnect();\n",
+    inject:
+      '          else if (this.canReconnect && this.reconnectWebSocketFactory === reconnectFactory) (globalThis as any).__cloudsshReconnectsExhausted?.(this);\n',
+  },
   // 普通会话断线后：网页版只在第一次重连时立刻试一次秒级恢复，没接上就完整重连（新 Shell）。改为先问
   // overrides/shared/terminal/resume-retry.ts：在服务器的 60 秒保持期内持续尝试恢复，确定恢复不了才交回这里完整重连。
   // 分享会话（resumeOnlyMode）照旧走网页版自己的恢复循环
@@ -354,6 +384,18 @@ const COMMON_HOOKS: Hook[] = [
     anchor: '      const willReconnect = event.code !== 1000 && this.hasReconnectStrategy();\n      this.onSessionClosed?.(event, willReconnect);\n',
     inject: [
       '      if ((globalThis as any).__cloudsshServerEnded?.(this, event) === true) return;',
+      // 自动重连的次数用完（本来还会重连，只是次数到了）：接着每隔几秒试，见上面“最后一次自动重连”那两项
+      '      if (',
+      '        !willReconnect &&',
+      '        event.code !== 1000 &&',
+      '        this.canReconnect &&',
+      '        this.reconnectAttempts >= this.maxReconnectAttempts &&',
+      '        !this.resumeOnlyMode &&',
+      '        !this.pendingHostKeyChangeSocket &&',
+      '        (this.lastConfig || this.reconnectWebSocketFactory) &&',
+      '        (globalThis as any).__cloudsshReconnectsExhausted?.(this) === true',
+      '      )',
+      '        return;',
       '      const manualHint =',
       '        !willReconnect &&',
       '        (this as any).__cloudsshWasReady === true &&',

@@ -567,7 +567,7 @@ function boxMenu() {
 
 const HELP = [
   '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  pager（全屏，方向键滚动，q 退出）  nano（像 nano，Alt+M 开关鼠标，Ctrl+X 退出）  size  clear  exit',
-  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）  reboot [秒]（模拟重启：断开后这么久内连不上，默认 25）',
+  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）  reboot [秒]（模拟重启：断开后这么久内连不上，默认 25）  crash [秒]（同 reboot，但不是重启命令：像脚本里自己重启，默认 120）  vanish [秒]（主机死机：保活超时断开，之后这么久连不上，默认 120）',
   '调试断线判定：stall（远程主机无响应）  backlog（本机没确认输出，如省电冻结）  idle（长时间没操作）  kick（无原因关闭）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
@@ -595,12 +595,17 @@ function runCommand(line, write, term, ws) {
       setTimeout(() => ws.close(1011), 50);
       break;
     case 'reboot':
-    case 'poweroff': {
-      // 模拟重启：像 hangup 一样断开，之后 n 秒（默认 25；poweroff 默认 600）内新连接都连不上（Worker 连不到主机：报“连接失败”后以 1011 关闭）
-      const seconds = Math.min(600, Math.max(1, Number(args[0]) || (command === 'poweroff' ? 600 : 25)));
+    case 'poweroff':
+    case 'crash':
+    case 'vanish': {
+      // 模拟重启：像 hangup 一样断开，之后 n 秒（默认 25；poweroff 默认 600）内新连接都连不上（Worker 连不到主机：报“连接失败”后以 1011 关闭）。
+      // crash：客户端认不出这是重启命令（像升级脚本问“是否立即重启”后自己重启、服务器宕机），默认 120 秒。
+      // vanish：主机直接死机、不回保活（像 stall），之后同样连不上，默认 120 秒
+      const seconds = Math.min(600, Math.max(1, Number(args[0]) || (command === 'poweroff' ? 600 : command === 'reboot' ? 25 : 120)));
       rebootingUntil = Date.now() + seconds * 1000;
-      console.log(`reboot：${seconds} 秒内新连接都会失败`);
-      ws.sendJson({ type: 'error', message: '远程主机已关闭连接', event: 'remote_closed' });
+      console.log(`${command}：${seconds} 秒内新连接都会失败`);
+      if (command === 'vanish') ws.sendJson({ type: 'error', message: 'SSH 连接超时，保活失败', event: 'keepalive_timeout' });
+      else ws.sendJson({ type: 'error', message: '远程主机已关闭连接', event: 'remote_closed' });
       setTimeout(() => ws.close(1011), 50);
       break;
     }

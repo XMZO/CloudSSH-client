@@ -22,15 +22,15 @@
  * 网页版处理连接关闭时调用 __cloudsshServerEnded(终端, 关闭事件)，原因放在终端的 __cloudsshClosingEvent 上；
  * 返回 true 时网页版不再排定重连；标签在下一轮事件循环里关闭，并提示原因。
  *
- * 不关标签时（开关关着、页面在后台），你刚执行了重启命令的，交给 ./terminal/reboot-wait.ts 等服务器回来自动连上；
- * 关机命令只说明一下，按任意键再连。
+ * 不关标签时（开关关着、页面在后台、刚才没操作过），你刚执行了重启命令的，交给 ./terminal/reboot-wait.ts 等服务器回来自动连上；
+ * 关机命令只说明一下，按任意键再连；不是重启命令、但 SSH 服务器关了连接（remote_closed）的，也交给它等服务器回来。
  */
 import type { IMarker, Terminal } from '@xterm/xterm';
 import { getLocale } from '../../upstream/frontend/src/i18n';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { closeTabById } from '../sidebar/hooks';
 import { commandFromLine, logicalLine } from './session-notify';
-import { continueRebootWait, noteServerPoweredOff, startRebootWait } from './terminal/reboot-wait';
+import { continueRebootWait, noteServerPoweredOff, startRebootWait, startServerDropWait } from './terminal/reboot-wait';
 
 export type EndKind = 'exit' | 'reboot';
 export const END_KINDS: readonly EndKind[] = ['exit', 'reboot'];
@@ -241,11 +241,12 @@ function onServerEnded(terminal: unknown, event: CloseEvent): boolean {
   if (marks?.__cloudsshWasReady !== true || typeof marks.__cloudsshClosingEvent !== 'string') return false;
   const now = Date.now();
   const lastInput = marks.__cloudsshLastInputAt;
-  if (typeof lastInput !== 'number' || now - lastInput > RECENT_INPUT_MS) return false;
-  const commands = recentCommands(marks, now);
+  // 你刚操作过才看执行过的命令、才会关标签；没操作过就只看 Worker 报的原因（服务器那头关了连接照样等它回来）
+  const recent = typeof lastInput === 'number' && now - lastInput <= RECENT_INPUT_MS;
+  const commands = recent ? recentCommands(marks, now) : [];
   const found = classifyEnd(marks.__cloudsshClosingEvent, commands);
   if (!found) return false;
-  if (closeOnEnd(found.kind) && document.visibilityState !== 'hidden') {
+  if (recent && closeOnEnd(found.kind) && document.visibilityState !== 'hidden') {
     const manager = (globalThis as { __cloudsshTabManager?: { tabs?: Map<string, TabLike> } }).__cloudsshTabManager;
     const tab = manager?.tabs ? [...manager.tabs.values()].find((item) => item.terminal === terminal) : undefined;
     if (tab) {
@@ -262,6 +263,12 @@ function onServerEnded(terminal: unknown, event: CloseEvent): boolean {
   if (found.reason === 'rebooting') {
     if (poweredOff(commands)) noteServerPoweredOff(terminal);
     else startRebootWait(terminal);
+    return true;
+  }
+  // 服务器那头关了连接，但不是你打的重启命令（升级脚本问“是否立即重启”后自己重启、服务器宕机、sshd 重启）：
+  // 会话同样已经没了，等它回来再连。原来交给网页版按 2、4、8、16、30 秒重连 5 次，服务器回来得慢就连不上了
+  if (found.reason === 'broken') {
+    startServerDropWait(terminal);
     return true;
   }
   return false;

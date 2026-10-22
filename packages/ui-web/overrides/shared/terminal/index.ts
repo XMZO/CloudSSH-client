@@ -14,6 +14,7 @@ import { ht } from './i18n';
 import { startReconnectCountdown } from './reconnect-countdown';
 import { installResumeRetry } from './resume-retry';
 import { installResumeRedraw } from './resume-redraw';
+import { installReconnectsExhausted } from './reboot-wait';
 import { installIdleReminder } from './idle-reminder';
 import { installHeartbeatGuard } from './heartbeat-guard';
 import { installSessionEnd } from '../session-end';
@@ -158,6 +159,8 @@ export function installTerminalEnhancements(): void {
   installResumeRetry();
   // 恢复成功后让 Shell 重画提示符，不用按回车（./resume-redraw.ts）
   installResumeRedraw();
+  // 自动重连次数用完还没连上：接着每隔几秒试，不停在那里（./reboot-wait.ts）
+  installReconnectsExhausted();
   // 快空闲断开时弹提醒，点“继续”续期（./idle-reminder.ts）
   installIdleReminder();
   // 心跳超时前先看最近有没有收到过消息，不把还活着的慢连接当成卡死（./heartbeat-guard.ts）

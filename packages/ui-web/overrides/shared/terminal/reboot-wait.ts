@@ -1,19 +1,24 @@
 /**
- * 在终端里重启了服务器（reboot、init 6、shutdown -r……）之后，等它回来自动连上（电脑与手机共用）。
+ * 服务器重启、断开之后等它回来自动连上（电脑与手机共用）。
  *
  * 原来：Worker 报“远程主机已关闭连接”后，网页版与客户端先花十几秒反复尝试恢复原会话（服务器那头的会话已经没了，
  * Worker 不保留，必定失败），满屏“连接错误 / 正在尝试恢复会话”，再按 2、4、8、16、30 秒完整重连 5 次，服务器回来得慢就放弃了；
  * Shell 先被结束、Worker 报“会话已结束”（关闭码 1000）时则根本不重连。
- * 现在（由 ../session-end.ts 判断：你一分钟内输入过重启命令、随后服务器那头结束了会话，且没开“重启时关闭标签”）：
- * - 写一行“服务器正在重启，等它回来后自动重新连接”，之后每隔几秒试一次新连接，最多等 5 分钟
- * - 每次没连上的那几行状态（正在重新连接、连接失败、连接已关闭……）收起成一行实时倒计时，不刷屏；按任意键立即再试
- * - 连上就是新的 Shell；5 分钟还没回来就停下，按任意键再等一轮
+ * 现在三种情况走这一套：
+ * - 你一分钟内输入过重启命令（reboot、init 6、shutdown -r……），随后服务器那头结束了会话，且没开“重启时关闭标签”
+ *   （../session-end.ts 判断）：写“服务器正在重启…”，5 秒后开始试
+ * - 不是你打的重启命令，但服务器那头关了连接（升级脚本问“是否立即重启”后自己重启、服务器宕机、sshd 重启）：
+ *   写“服务器断开了连接（可能在重启）…”，2 秒后开始试
+ * - 网页版自动重连 5 次都没连上（构建钩子调用 __cloudsshReconnectsExhausted）：原来就停在那里，按键也没反应，
+ *   只能关掉标签重开。现在接着每隔几秒试
+ * 都是：每隔几秒试一次新连接，最多等 5 分钟；每次没连上的那几行状态（正在重新连接、连接失败、连接已关闭……）收起成一行
+ * 实时倒计时，不刷屏；按任意键立即再试。连上就是新的 Shell；5 分钟还没连上就停下，按任意键再等一轮。
  * 关机（poweroff、halt、init 0、不带 -r 的 shutdown）不会自己回来：只说明一下，开机后按任意键再连（也是等它回来的这一套）。
  */
 import type { IMarker, Terminal } from '@xterm/xterm';
 import { t } from '../../../upstream/frontend/src/i18n';
 import { connectionDiagnostic } from './connection-diagnostics';
-import { ht } from './i18n';
+import { ht, type HighlightKey } from './i18n';
 import { startReconnectCountdown, type ReconnectCountdown } from './reconnect-countdown';
 import { collapseSequence } from './resume-retry';
 
@@ -21,10 +26,21 @@ import { collapseSequence } from './resume-retry';
 const WAIT_LIMIT_MS = 5 * 60_000;
 /** 重启命令之后先等一会儿（sshd 停了、系统还没真正重启时连上去也会马上断） */
 const FIRST_DELAY_MS = 5000;
+/** 服务器那头关了连接、不知道是不是重启：sshd 重启这类很快就能连上，少等一会儿 */
+const DROP_FIRST_DELAY_MS = 2000;
 /** 每次没连上之后隔多久再试（连不上主机的那一次本身就要等一会儿） */
 const RETRY_DELAY_MS = 3000;
 
+/** server：服务器重启、断开（说“服务器还没回来”）；connection：自动重连用完了，可能是服务器也可能是网络（说“还没连上”） */
+type WaitKind = 'server' | 'connection';
+
+const WORDS: Record<WaitKind, { retry: HighlightKey; gaveUp: HighlightKey; again: HighlightKey }> = {
+  server: { retry: 'rebootRetry', gaveUp: 'rebootGaveUp', again: 'rebootWaitingAgain' },
+  connection: { retry: 'connectRetry', gaveUp: 'connectGaveUp', again: 'connectWaitingAgain' },
+};
+
 interface RebootWait {
+  kind: WaitKind;
   since: number;
   deadline: number;
   /** 上一次等待的倒计时那一行：下一次等待时把它和之后的状态行收起来 */
@@ -113,7 +129,7 @@ function wait(term: RebootTerminal, state: RebootWait, delay: number): void {
     fire();
     return true;
   };
-  const text = (seconds: string) => ht('rebootRetry', { seconds, elapsed: elapsedSeconds(state) });
+  const text = (seconds: string) => ht(WORDS[state.kind].retry, { seconds, elapsed: elapsedSeconds(state) });
   xterm.write('', () => {
     if (term.reconnectTimeout !== id) return;
     const collapse = collapseSequence(xterm, state.line);
@@ -136,25 +152,25 @@ function next(term: RebootTerminal, state: RebootWait): void {
     wait(term, state, RETRY_DELAY_MS);
     return;
   }
-  connectionDiagnostic(term, 'reboot-wait-give-up', { elapsedMs: Date.now() - state.since });
+  connectionDiagnostic(term, 'reboot-wait-give-up', { kind: state.kind, elapsedMs: Date.now() - state.since });
   stop(term);
-  term.terminal.writeln(`\x1b[33m[!] ${ht('rebootGaveUp')}\x1b[0m`);
-  manualRestart(term);
+  term.terminal.writeln(`\x1b[33m[!] ${ht(WORDS[state.kind].gaveUp)}\x1b[0m`);
+  manualRestart(term, state.kind);
 }
 
 /** 按任意键：再等一轮（先立即试一次） */
-function manualRestart(term: RebootTerminal): void {
+function manualRestart(term: RebootTerminal, kind: WaitKind): void {
   term.terminal.writeln(`\x1b[2m${ht('reconnectManual')}\x1b[0m`);
   let used = false;
   term.__cloudsshReconnectNow = () => {
     if (used) return false;
     used = true;
-    begin(term, 0, ht('rebootWaitingAgain'));
+    begin(term, 0, ht(WORDS[kind].again), kind);
     return true;
   };
 }
 
-function begin(term: RebootTerminal, firstDelay: number, intro: string): void {
+function begin(term: RebootTerminal, firstDelay: number, intro: string, kind: WaitKind): void {
   // 服务器那头的会话已经没了：清掉恢复凭据与恢复的这一轮
   term.__cloudsshResumeCycle?.line?.dispose();
   term.__cloudsshResumeCycle = undefined;
@@ -162,9 +178,9 @@ function begin(term: RebootTerminal, firstDelay: number, intro: string): void {
   term.activeResumeToken = null;
   stop(term);
   const now = Date.now();
-  const state: RebootWait = { since: now, deadline: now + WAIT_LIMIT_MS };
+  const state: RebootWait = { kind, since: now, deadline: now + WAIT_LIMIT_MS };
   term.__cloudsshRebootWait = state;
-  connectionDiagnostic(term, 'reboot-wait-start', { firstDelayMs: firstDelay });
+  connectionDiagnostic(term, 'reboot-wait-start', { kind, firstDelayMs: firstDelay });
   term.terminal.writeln(`\x1b[33m[*] ${intro}\x1b[0m`);
   // 从说明下面一行起算：第一次没连上的那几行状态也会在下一次等待时收起
   term.terminal.write('', () => {
@@ -176,7 +192,26 @@ function begin(term: RebootTerminal, firstDelay: number, intro: string): void {
 
 /** 你刚重启了服务器：等它回来自动重新连接 */
 export function startRebootWait(terminal: unknown): void {
-  begin(terminal as RebootTerminal, FIRST_DELAY_MS, ht('rebootWaiting'));
+  begin(terminal as RebootTerminal, FIRST_DELAY_MS, ht('rebootWaiting'), 'server');
+}
+
+/** 服务器那头关了连接（不是你打的重启命令）：可能在重启，同样等它回来 */
+export function startServerDropWait(terminal: unknown): void {
+  begin(terminal as RebootTerminal, DROP_FIRST_DELAY_MS, ht('serverDropWaiting'), 'server');
+}
+
+/**
+ * 网页版自动重连的次数用完了还没连上（构建钩子在它本来要放弃时调用）：接着每隔几秒试，返回 true（网页版不再处理）。
+ * 原来到这里就停了，没有提示、按键也没反应
+ */
+function reconnectsExhausted(terminal: unknown): boolean {
+  const term = terminal as RebootTerminal & { maxReconnectAttempts?: number };
+  begin(term, RETRY_DELAY_MS, ht('reconnectExhausted', { max: term.maxReconnectAttempts ?? 5 }), 'connection');
+  return true;
+}
+
+export function installReconnectsExhausted(): void {
+  (globalThis as { __cloudsshReconnectsExhausted?: typeof reconnectsExhausted }).__cloudsshReconnectsExhausted = reconnectsExhausted;
 }
 
 /** 你刚关了服务器：不会自己回来，说明一下，按任意键再连 */
@@ -189,7 +224,7 @@ export function noteServerPoweredOff(terminal: unknown): void {
   stop(term);
   connectionDiagnostic(term, 'server-powered-off');
   term.terminal.writeln(`\x1b[33m[*] ${ht('serverPoweredOff')}\x1b[0m`);
-  manualRestart(term);
+  manualRestart(term, 'server');
 }
 
 /**
