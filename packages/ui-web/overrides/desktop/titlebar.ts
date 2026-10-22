@@ -42,6 +42,15 @@ function panelsOf(id: string): NodeListOf<HTMLElement> {
 
 let dockWidth = 0;
 let dockFrame = 0;
+/** 面板还没打开、但这块宽度要先留着（drawer-follow.ts：新连接的面板连上后才有，先放占位） */
+let dockHold = 0;
+
+/** 先留出这么宽的停靠位置（0 = 不留） */
+export function setDockHold(width: number): void {
+  dockHold = Math.max(0, Math.round(width));
+  syncDock();
+}
+
 function syncDock(): void {
   let width = 0;
   if (desktopSkin() === 'workbench' && currentView() === 'term') {
@@ -50,6 +59,7 @@ function syncDock(): void {
       // SFTP、AI 助手的面板每个会话标签各一个（id 相同），别的标签收起的 AI 面板是 display: none、宽度为 0
       for (const node of panelsOf(panel)) width = Math.max(width, node.offsetWidth);
     }
+    width = Math.max(width, dockHold);
     const area = document.getElementById('terminal-section')?.clientWidth ?? window.innerWidth;
     if (area - width < MIN_DOCKED_TERMINAL) width = 0;
   }

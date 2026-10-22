@@ -436,6 +436,18 @@ const COMMON_HOOKS: Hook[] = [
     inject: '    (globalThis as any).__cloudsshSnippetManager = this;\n',
   },
   {
+    // 电脑偏好设置“保持面板”（overrides/desktop/drawer-follow.ts）：网页版收起全部面板（新建连接、离开终端页）与切换标签之前
+    // 先告诉它，这时面板的开合不算用户自己的操作；切换后它在 cloudssh:active-terminal-change 里为新会话重新打开
+    file: '/upstream/frontend/src/main.ts',
+    anchor: 'function closeAllDrawers(): void {\n',
+    inject: '  (globalThis as any).__cloudsshDrawerProgrammatic?.();\n',
+  },
+  {
+    file: '/upstream/frontend/src/tab-manager.ts',
+    anchor: '  switchTab(tabId: string): void {\n    const tab = this.tabs.get(tabId);\n    if (!tab) return;\n    if (this.activeTabId === tabId) return;\n',
+    inject: '    (globalThis as any).__cloudsshDrawerProgrammatic?.();\n',
+  },
+  {
     // 命令片段的手动顺序（overrides/shared/snippet-sort.ts，存在本地、不改 Worker）：网页版每次画列表前按它排好片段数组
     file: '/upstream/frontend/src/snippet-manager.ts',
     anchor: "    listEl.textContent = '';\n    listEl.removeAttribute('aria-busy');\n",

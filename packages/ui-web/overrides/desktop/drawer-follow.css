@@ -1,0 +1,64 @@
+/* ========== 保持面板（drawer-follow.ts） ========== */
+
+/* 换成新会话的面板那一刻不播放滑入滑出：旧的直接收起、新的直接出现，看起来面板一直开着 */
+html.cs-drawer-instant :is(#sftp-panel, #agent-panel, #snippet-panel) {
+  transition: none !important;
+}
+
+/* 新连接还没连上：面板位置先放一块同宽的占位（停靠时终端照样让出这块宽度） */
+.cs-drawer-hold {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 70;
+  display: grid;
+  width: 420px;
+  height: 100vh;
+  place-items: center;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--on-surface-variant);
+  font-family: var(--cs-ui-font, inherit);
+}
+
+html[data-cs-desk="workbench"] .cs-drawer-hold {
+  top: var(--cs-tb-height);
+  height: calc(100vh - var(--cs-tb-height));
+}
+
+.cs-drawer-hold-body {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.cs-drawer-hold-body > .material-symbols-outlined {
+  color: var(--accent);
+  font-size: 28px;
+  opacity: 0.8;
+}
+
+.cs-drawer-hold-name {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.cs-drawer-hold-cancel {
+  margin-top: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cs-drawer-hold-cancel:hover,
+.cs-drawer-hold-cancel:focus-visible {
+  border-color: var(--accent);
+  color: var(--on-surface);
+  outline: none;
+}

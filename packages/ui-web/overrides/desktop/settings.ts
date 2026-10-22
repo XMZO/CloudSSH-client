@@ -21,6 +21,7 @@ import { openPresetManager, presetText } from '../shared/credential-presets';
 import { qt } from '../shared/qr-sync/i18n';
 import { openQrSync } from './qr-sync';
 import { closeOnEnd, END_KINDS, serverEndText, setCloseOnEnd } from '../shared/session-end';
+import { DRAWERS, drawerLabel, keepDrawer, setKeepDrawer } from './drawer-follow';
 import { openHighlightEditor } from '../shared/terminal';
 import { ht } from '../shared/terminal/i18n';
 import { el, icon } from './dom';
@@ -206,6 +207,22 @@ function buildSettings(panel: HTMLElement): void {
     endings.append(row);
   }
   list.append(section(dt('sessionSection'), endings));
+
+  // 保持面板：SFTP、自定义命令、AI 助手各一个开关（默认关），切换会话、连接新服务器时保持打开
+  const keeps = el('div', 'cs-dk-checks');
+  for (const drawer of DRAWERS) {
+    const row = el('label', 'cs-dk-check');
+    row.title = dt('keepHint');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = keepDrawer(drawer);
+    box.addEventListener('change', () => setKeepDrawer(drawer, box.checked));
+    row.append(box, el('span', '', drawerLabel(drawer)));
+    keeps.append(row);
+  }
+  const keepSection = section(dt('keepSection'), keeps);
+  keepSection.title = dt('keepHint');
+  list.append(keepSection);
   panel.append(list);
 
   // 功能按钮：排成网格
