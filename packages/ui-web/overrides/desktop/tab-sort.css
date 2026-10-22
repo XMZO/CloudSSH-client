@@ -1,0 +1,33 @@
+/* ========== 拖动会话标签调换顺序（tab-sort.ts） ========== */
+
+/* 拖动中不让各主题自己的过渡（经典主题按下时缩小、悬停变色等）干扰让位动画 */
+html #tab-bar.is-reordering > .tab-item {
+  transition: none !important;
+}
+
+html #tab-bar.is-reordering > .tab-item.is-shifting,
+html #tab-bar.is-reordering > .tab-item.is-settling {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1) !important;
+}
+
+/* 被拖的标签浮起来（压过两种主题给标签定的边框、背景，含当前标签的样式） */
+html #tab-bar.is-reordering > .tab-item.is-lifted {
+  z-index: 3;
+  border-color: var(--accent) !important;
+  background: var(--bg-elevated, var(--bg-surface)) !important;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45) !important;
+  color: var(--on-surface) !important;
+}
+
+html.cs-sorting #tab-bar .tab-item {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html #tab-bar.is-reordering > .tab-item.is-shifting,
+  html #tab-bar.is-reordering > .tab-item.is-settling {
+    transition: none !important;
+  }
+}

@@ -157,8 +157,10 @@ export function mountTitlebar(env: ChromeEnv): void {
   new ResizeObserver(syncTabEdges).observe(tabsSlot);
   const tabBarNode = document.getElementById('tab-bar');
   if (tabBarNode) {
-    // 只看标签增减与切换；状态点、标签栏自己的 class（cs-scrolled 等）变化不算，否则滚轮一滚又被拉回当前标签
+    // 只看标签增减与切换；状态点、标签栏自己的 class（cs-scrolled 等）变化不算，否则滚轮一滚又被拉回当前标签。
+    // 拖动标签调换顺序时（./tab-sort.ts，标签栏带 is-reordering）各标签的 class 一直在变，也不算，不然拖着拖着被拉回当前标签
     new MutationObserver((records) => {
+      if (tabBarNode.classList.contains('is-reordering')) return;
       const changed = records.some(
         (record) => (record.type === 'childList' && record.target === tabBarNode) || (record.target as Element).classList?.contains('tab-item')
       );

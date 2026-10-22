@@ -1,5 +1,6 @@
 /**
- * 电脑侧栏的拖动排序（基于 reorder.ts 的拖动引擎：被拖项浮起跟手、其余项动画让位、松手落位）。
+ * 电脑侧栏、命令片段、会话标签栏（左右排列，axis: 'x'）的拖动排序（基于 reorder.ts 的拖动引擎：被拖项浮起跟手、
+ * 其余项动画让位、松手落位）。
  *
  * 约定：可排序项带 `data-sort-key`，它们的父元素带 `data-sort-scope`（只在同一父元素内排序）。
  * - 鼠标：在整行上按住并移动超过几像素就开始拖（不必对准手柄）；只是点击、双击、右键时行为不变
@@ -20,6 +21,8 @@ export interface SortableOptions {
   onSort: (scope: string, keys: string[]) => void;
   /** 拖动开始（true）与彻底结束（false，含落位动画与取消） */
   onDragState?: (dragging: boolean) => void;
+  /** 排列方向：'y' 上下（默认），'x' 左右（电脑标签栏） */
+  axis?: 'x' | 'y';
 }
 
 const MOUSE_START_DISTANCE = 5;
@@ -27,6 +30,9 @@ const HANDLE_START_DISTANCE = 2;
 
 export function installSortable(options: SortableOptions): void {
   const { root } = options;
+  const axis = options.axis ?? 'y';
+  /** 指针在排列方向上的坐标 */
+  const along = (event: PointerEvent) => (axis === 'x' ? event.clientX : event.clientY);
   let busy = false;
   let swallowClick = false;
 
@@ -48,6 +54,7 @@ export function installSortable(options: SortableOptions): void {
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
+    const startAt = along(event);
     const threshold = handle ? HANDLE_START_DISTANCE : MOUSE_START_DISTANCE;
     let session: ReorderSession | null = null;
     let compact: string | null = null;
@@ -62,7 +69,7 @@ export function installSortable(options: SortableOptions): void {
       root.removeEventListener('lostpointercapture', onLostCapture);
     };
 
-    const activate = (y: number) => {
+    const activate = (at: number) => {
       busy = true;
       swallowClick = true;
       options.onDragState?.(true);
@@ -74,7 +81,7 @@ export function installSortable(options: SortableOptions): void {
       }
       const scroller = options.scroller();
       // 从按下的位置算起（不是越过阈值的位置），被拖的行与指针保持按下时的相对位置
-      let beginY = startY;
+      let beginAt = startAt;
       compact = options.compactClass?.(scope) ?? null;
       if (compact) {
         // 收起各分组的内容，再把被拖的分组标题移到指针下面
@@ -82,7 +89,7 @@ export function installSortable(options: SortableOptions): void {
         root.classList.add(compact);
         scroller.scrollTop += item.getBoundingClientRect().top - before;
         const rect = item.getBoundingClientRect();
-        beginY = rect.top + rect.height / 2;
+        beginAt = rect.top + rect.height / 2;
       }
       const items = [...container.children].filter(
         (node): node is HTMLElement => node instanceof HTMLElement && node.dataset.sortKey !== undefined
@@ -92,7 +99,8 @@ export function installSortable(options: SortableOptions): void {
         item,
         items,
         scroller,
-        y: beginY,
+        at: beginAt,
+        axis,
         onEnd: (changed) => {
           if (compact) {
             // 展开回来时让落下的分组保持在原来的屏幕位置
@@ -113,7 +121,7 @@ export function installSortable(options: SortableOptions): void {
           options.onDragState?.(false);
         },
       });
-      session.move(y);
+      session.move(at);
     };
 
     const finish = (commit: boolean) => {
@@ -134,10 +142,10 @@ export function installSortable(options: SortableOptions): void {
       if (move.pointerId !== pointerId) return;
       if (!session) {
         if (Math.hypot(move.clientX - startX, move.clientY - startY) < threshold) return;
-        activate(move.clientY);
+        activate(along(move));
       }
       move.preventDefault();
-      session?.move(move.clientY);
+      session?.move(along(move));
     }
     function onUp(up: PointerEvent): void {
       if (up.pointerId === pointerId) finish(true);

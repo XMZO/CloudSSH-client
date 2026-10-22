@@ -1,9 +1,10 @@
 /**
  * 列表拖动排序（手机与电脑共用的拖动引擎）。
  *
- * - 被拖的项浮起并跟着指针平移，其余项用 translateY 动画让位；松手后落到目标位置，再一次性调整 DOM 顺序
+ * - 被拖的项浮起并跟着指针平移，其余项用 translate 动画让位；松手后落到目标位置，再一次性调整 DOM 顺序
  * - 全程只用 transform，拖动中不改 DOM、不用 position:fixed（父级带 transform 的面板里也能正确定位）
- * - 指针靠近滚动容器上下边缘时自动滚动；可以取消（动画回到原位，顺序不变）
+ * - 指针靠近滚动容器两端时自动滚动；可以取消（动画回到原位，顺序不变）
+ * - 默认上下排列的列表；axis: 'x' 用于左右排列的一行（电脑标签栏），各项宽度可以不同
  *
  * beginReorder() 是一次拖动；makeReorderable() 是手机“调整排序”面板用的整套手势（手柄/长按），
  * 电脑侧栏的整行拖动在 sortable.ts 里，同样基于 beginReorder()。
@@ -17,8 +18,8 @@ const MAX_SCROLL_SPEED = 16;
 const SETTLE_MS = 160;
 
 export interface ReorderSession {
-  /** 指针移动到 clientY */
-  move(y: number): void;
+  /** 指针移动到 clientY（axis 为 'x' 时是 clientX） */
+  move(at: number): void;
   /** 在当前位置落下 */
   drop(): void;
   /** 取消：回到原位，顺序不变 */
@@ -33,48 +34,73 @@ export interface BeginReorderOptions {
   /** 同一父元素里的全部可排序项，按当前顺序（含 item） */
   items: HTMLElement[];
   scroller: HTMLElement;
-  /** 拖动起点的 clientY（被拖项此后随指针相对这里平移） */
-  y: number;
+  /** 拖动起点的 clientY（axis 为 'x' 时是 clientX；被拖项此后随指针相对这里平移） */
+  at: number;
+  /** 排列方向：'y' 上下（默认），'x' 左右 */
+  axis?: 'x' | 'y';
   /** 落位动画结束、DOM 顺序已更新后调用；changed 表示顺序是否改变（取消时为 false） */
   onEnd: (changed: boolean) => void;
 }
 
 export function beginReorder(options: BeginReorderOptions): ReorderSession {
   const { container, item, items, scroller } = options;
+  const horizontal = options.axis === 'x';
+  const translate = horizontal ? 'translateX' : 'translateY';
+  const scrolled = () => (horizontal ? scroller.scrollLeft : scroller.scrollTop);
+  const scrollBy = (delta: number) => {
+    if (horizontal) scroller.scrollLeft += delta;
+    else scroller.scrollTop += delta;
+  };
   const index = items.indexOf(item);
-  const base = container.getBoundingClientRect().top;
+  const containerRect = container.getBoundingClientRect();
+  const base = horizontal ? containerRect.left : containerRect.top;
   const rects = items.map((node) => node.getBoundingClientRect());
-  const tops = rects.map((rect) => rect.top - base);
-  const heights = rects.map((rect) => rect.height);
-  const gap = items.length > 1 ? Math.max(0, tops[1] - (tops[0] + heights[0])) : 0;
-  const slot = heights[index] + gap;
-  const startY = options.y;
-  const startScroll = scroller.scrollTop;
-  let y = startY;
+  /** 各项在排列方向上的起点（相对容器）与长度 */
+  const starts = rects.map((rect) => (horizontal ? rect.left : rect.top) - base);
+  const sizes = rects.map((rect) => (horizontal ? rect.width : rect.height));
+  const gap = items.length > 1 ? Math.max(0, starts[1] - (starts[0] + sizes[0])) : 0;
+  const slot = sizes[index] + gap;
+  const startAt = options.at;
+  const startScroll = scrolled();
+  let at = startAt;
   let target = index;
   let frame = 0;
   let ended = false;
 
-  const viewport = () =>
-    scroller === document.scrollingElement ? { top: 0, bottom: innerHeight } : scroller.getBoundingClientRect();
+  /** 滚动容器在排列方向上的可见范围 */
+  const viewport = () => {
+    if (scroller === document.scrollingElement) return { from: 0, to: horizontal ? innerWidth : innerHeight };
+    const rect = scroller.getBoundingClientRect();
+    return horizontal ? { from: rect.left, to: rect.right } : { from: rect.top, to: rect.bottom };
+  };
 
   container.classList.add('is-reordering');
   item.classList.add('is-lifted');
   for (const node of items) if (node !== item) node.classList.add('is-shifting');
 
+  /**
+   * 左右排列时（标签栏）像浏览器那样把被拖项显示在第一项与最后一项之间，不拖出栏外、不盖住后面的按钮。
+   * 只限制显示位置，落到哪一格仍按指针算：各项一样宽时，被限制住的中心正好停在最后一项的中线上、越不过去
+   */
+  const last = items.length - 1;
+  const clamp = (delta: number) =>
+    horizontal
+      ? Math.min(Math.max(delta, starts[0] - starts[index]), starts[last] + sizes[last] - sizes[index] - starts[index])
+      : delta;
+
   function update(): void {
-    const dy = y - startY + (scroller.scrollTop - startScroll);
-    const center = tops[index] + heights[index] / 2 + dy;
+    const delta = at - startAt + (scrolled() - startScroll);
+    const center = starts[index] + sizes[index] / 2 + delta;
     let next = index;
-    for (let j = index + 1; j < items.length; j++) if (center > tops[j] + heights[j] / 2) next = j;
-    for (let j = index - 1; j >= 0; j--) if (center < tops[j] + heights[j] / 2) next = j;
+    for (let j = index + 1; j < items.length; j++) if (center > starts[j] + sizes[j] / 2) next = j;
+    for (let j = index - 1; j >= 0; j--) if (center < starts[j] + sizes[j] / 2) next = j;
     target = next;
     items.forEach((node, j) => {
       if (j === index) return;
       const shift = j > index && j <= target ? -slot : j < index && j >= target ? slot : 0;
-      node.style.transform = shift ? `translateY(${shift}px)` : '';
+      node.style.transform = shift ? `${translate}(${shift}px)` : '';
     });
-    item.style.transform = `translateY(${dy}px)`;
+    item.style.transform = `${translate}(${clamp(delta)}px)`;
   }
 
   function autoScroll(): void {
@@ -82,12 +108,12 @@ export function beginReorder(options: BeginReorderOptions): ReorderSession {
     if (ended) return;
     const view = viewport();
     let speed = 0;
-    if (y < view.top + EDGE) speed = -Math.ceil(((view.top + EDGE - y) / EDGE) * MAX_SCROLL_SPEED);
-    else if (y > view.bottom - EDGE) speed = Math.ceil(((y - (view.bottom - EDGE)) / EDGE) * MAX_SCROLL_SPEED);
+    if (at < view.from + EDGE) speed = -Math.ceil(((view.from + EDGE - at) / EDGE) * MAX_SCROLL_SPEED);
+    else if (at > view.to - EDGE) speed = Math.ceil(((at - (view.to - EDGE)) / EDGE) * MAX_SCROLL_SPEED);
     if (!speed) return;
-    const before = scroller.scrollTop;
-    scroller.scrollTop += speed;
-    if (scroller.scrollTop !== before) update();
+    const before = scrolled();
+    scrollBy(speed);
+    if (scrolled() !== before) update();
     frame = requestAnimationFrame(autoScroll);
   }
 
@@ -96,11 +122,11 @@ export function beginReorder(options: BeginReorderOptions): ReorderSession {
     ended = true;
     if (frame) cancelAnimationFrame(frame);
     const final = commit ? target : index;
-    // 往下移时与目标项底部对齐，往上移时与目标项顶部对齐；取消时回到原位。
+    // 往后移时与目标项的末端对齐，往前移时与目标项的起点对齐；取消时回到原位。
     // transform 是相对容器内原位置的（容器随滚动一起移动），所以这里不需要再加滚动距离
-    const landing = final > index ? tops[final] + heights[final] - heights[index] : tops[final];
+    const landing = final > index ? starts[final] + sizes[final] - sizes[index] : starts[final];
     item.classList.add('is-settling');
-    item.style.transform = `translateY(${landing - tops[index]}px)`;
+    item.style.transform = `${translate}(${landing - starts[index]}px)`;
     if (!commit) for (const node of items) if (node !== item) node.style.transform = '';
     window.setTimeout(() => {
       for (const node of items) {
@@ -116,9 +142,9 @@ export function beginReorder(options: BeginReorderOptions): ReorderSession {
 
   update();
   return {
-    move(nextY: number) {
+    move(next: number) {
       if (ended) return;
-      y = nextY;
+      at = next;
       update();
       if (!frame) frame = requestAnimationFrame(autoScroll);
     },
@@ -157,7 +183,7 @@ export function makeReorderable(options: ReorderOptions): () => void {
       item,
       items,
       scroller,
-      y,
+      at: y,
       onEnd: (changed) => {
         settling = false;
         if (changed) options.onReorder(itemsOf().map((node) => node.dataset.key as string));

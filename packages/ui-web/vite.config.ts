@@ -501,6 +501,18 @@ const COMMON_HOOKS: Hook[] = [
     inject: '    (globalThis as any).__cloudsshDrawerProgrammatic?.();\n',
   },
   {
+    // 电脑上拖动会话标签调换顺序（overrides/desktop/tab-sort.ts）：拖动期间不重绘标签栏（连上、状态点变化都会整栏重画，
+    // 会把拖到一半的标签冲掉），落下后它按新顺序补画；每个标签带上排序键
+    file: '/upstream/frontend/src/tab-manager.ts',
+    anchor: '  renderTabBar(): void {\n    if (this.renderSuppressed) return;\n',
+    inject: '    if ((this as any).__cloudsshTabSorting === true) return;\n',
+  },
+  {
+    file: '/upstream/frontend/src/tab-manager.ts',
+    anchor: '      tabEl.dataset.tabId = tab.id;\n',
+    inject: '      tabEl.dataset.sortKey = tab.id;\n',
+  },
+  {
     // 同上：切换标签后网页版收起命令面板（每次清空搜索、重新加载列表）。保持着它时不收起，只同步分段条，
     // 后台看一眼片段有没有在别处改过（有变化才重画）
     file: '/upstream/frontend/src/main.ts',
