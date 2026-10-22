@@ -4,7 +4,8 @@
  * - 长按选中：长按一个词即选中，不松手继续拖动可以扩大选区（靠近上下边缘时自动滚动）；松手后两端出现拖动柄，
  *   上方浮出“复制 / 全选 / 粘贴”。点终端其他地方取消。网页版工具栏的“复制”按钮（选择模式）照常可用，
  *   它选出的内容同样会出现拖动柄和浮动栏。
- * - 双指缩放：捏合调整终端字号（黑曜主题），松手后保存——与“更多”面板里的 A− / A+ 是同一个设置。
+ * - 双指缩放：捏合调整终端字号（黑曜主题），捏合时画面按比例预览，松手后应用并保存（只重排一次）——
+ *   与“更多”面板里的 A− / A+ 是同一个设置。
  *   一键脚本的菜单常常是固定 60～80 列宽，竖屏放不下就会折行错乱，缩小字号即可放下。
  * - 屏蔽长按的系统行为：安卓长按会触发 contextmenu，xterm 把它当成右键——把隐藏输入框挪到手指下并聚焦，
  *   于是弹出“粘贴”气泡和键盘、什么也选不中；还会把单词塞进输入框并选中，出现系统的“分享”菜单。
@@ -16,7 +17,8 @@ import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { terminalFor } from '../shared/terminal';
 import { mt, onLocaleChange } from './i18n';
 import { el } from './sheet';
-import { skinState, updateSkin } from './skin/engine';
+import { skinState } from './skin/engine';
+import { clearFontPreview, commitFontSize, previewFontSize } from './skin/font-apply';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from './skin/state';
 import './terminal-touch.css';
 
@@ -403,16 +405,6 @@ function extendDrag(): void {
   else selectBetween(term, word[0], before(word[1], cell) ? cell : word[1]);
 }
 
-let fontFrame = 0;
-function applyFontLive(size: number): void {
-  (globalThis as { __cloudsshTerminalFontSize?: number }).__cloudsshTerminalFontSize = size;
-  if (fontFrame) return;
-  fontFrame = requestAnimationFrame(() => {
-    fontFrame = 0;
-    window.dispatchEvent(new Event('resize'));
-  });
-}
-
 let hudTimer = 0;
 function showHud(size: number): void {
   hud.textContent = mt('fontSizeHud', { n: size });
@@ -437,11 +429,9 @@ function endPinch(): void {
   const { size, active } = pinch;
   pinch = null;
   swallowUntil = Date.now() + SWALLOW_MS;
-  if (active && size !== skinState().fontSize) {
-    updateSkin((draft) => {
-      draft.fontSize = size;
-    });
-  }
+  // 缩放过程中只按比例预览，松手才应用字号：终端只重排一次、远端只重画一次（./skin/font-apply.ts）
+  if (active) commitFontSize(size);
+  else clearFontPreview();
 }
 
 const onTerminalScreen = (touch: Touch) => !!(touch.target as Element | null)?.closest?.('.xterm-screen');
@@ -471,7 +461,7 @@ function onTouchMove(event: TouchEvent): void {
   const size = clamp(Math.round(pinch.startSize * (distance / pinch.startDistance)), FONT_SIZE_MIN, FONT_SIZE_MAX);
   if (size !== pinch.size) {
     pinch.size = size;
-    applyFontLive(size);
+    previewFontSize(size);
   }
   showHud(size);
 }

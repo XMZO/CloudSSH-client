@@ -95,7 +95,8 @@ export function installKeyboardShift(): void {
       if (!active) return;
       update();
       // 换了做法（保持原高度 ↔ 按键盘上方的高度）后按容器的新高度重算行数
-      requestAnimationFrame(() => tab.terminal?.fit?.());
+      // 不放在动画帧回调里：那里改尺寸，WebGL 画布会先被清空、下一帧才画上，空一帧
+      window.setTimeout(() => tab.terminal?.fit?.(), 0);
     });
   }
 

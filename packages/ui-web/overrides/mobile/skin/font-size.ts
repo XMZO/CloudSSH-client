@@ -1,10 +1,12 @@
 /**
  * 终端字号调节（“更多”面板与设置页共用）：A− / 当前值 / A+ / 自动。
  * withLabel 为 false 时只返回控件本身（设置页的行自己带标题）。
+ * 连点 A− / A+ 时画面先按比例预览，停手后才应用（只重排一次，见 ./font-apply.ts）。
  */
 import { currentTerminalFontSize } from '../../../upstream/frontend/src/terminal-layout';
 import { h, icon } from './dom';
-import { skinState, SKIN_CHANGED_EVENT, updateSkin } from './engine';
+import { skinState, SKIN_CHANGED_EVENT } from './engine';
+import { cancelScheduledFontSize, clearFontPreview, commitFontSize, scheduleFontSize } from './font-apply';
 import { st } from './i18n';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from './state';
 
@@ -23,28 +25,36 @@ export function fontSizeControl(withLabel = true): HTMLElement {
   const auto = h('button', 'cs-ob-font-auto', st('fontAuto'));
   auto.type = 'button';
 
-  const effective = () => skinState().fontSize || currentTerminalFontSize();
+  /** 点了还没应用的字号 */
+  let pending: number | null = null;
+  const effective = () => pending ?? (skinState().fontSize || currentTerminalFontSize());
   const render = () => {
     const { fontSize } = skinState();
     value.textContent = String(effective());
-    auto.classList.toggle('is-on', fontSize === 0);
-    auto.setAttribute('aria-pressed', String(fontSize === 0));
+    const isAuto = pending === null && fontSize === 0;
+    auto.classList.toggle('is-on', isAuto);
+    auto.setAttribute('aria-pressed', String(isAuto));
     minus.disabled = effective() <= FONT_SIZE_MIN;
     plus.disabled = effective() >= FONT_SIZE_MAX;
   };
   const step = (delta: number) => {
     const next = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, effective() + delta));
-    updateSkin((draft) => {
-      draft.fontSize = next;
+    pending = next;
+    render();
+    scheduleFontSize(next, () => {
+      pending = null;
+      if (row.isConnected) render();
     });
   };
   minus.addEventListener('click', () => step(-1));
   plus.addEventListener('click', () => step(1));
-  auto.addEventListener('click', () =>
-    updateSkin((draft) => {
-      draft.fontSize = 0;
-    })
-  );
+  auto.addEventListener('click', () => {
+    pending = null;
+    cancelScheduledFontSize();
+    clearFontPreview();
+    commitFontSize(0);
+    render();
+  });
 
   // 控件可能被移出页面（面板关闭），用 isConnected 判断后自动解除监听
   const onChange = () => {
@@ -52,6 +62,8 @@ export function fontSizeControl(withLabel = true): HTMLElement {
       window.removeEventListener(SKIN_CHANGED_EVENT, onChange);
       return;
     }
+    // 已应用（保存）：不再有待应用的字号
+    pending = null;
     render();
   };
   window.addEventListener(SKIN_CHANGED_EVENT, onChange);

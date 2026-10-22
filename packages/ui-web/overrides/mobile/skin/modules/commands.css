@@ -12,9 +12,10 @@ html[data-cs-cmds="on"] .cs-ob-cmds {
   animation: cs-ob-cmds-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* 网页版在打开 AI 助手时隐藏按键栏，命令条一起隐藏 */
+/* 网页版在打开 AI 助手时隐藏按键栏，命令条一起隐藏。只是看不见、位置照留（按键栏同样处理，见 ../../mobile.css）：
+   终端大小不变，服务器上的程序不用整屏重画 */
 body.agent-panel-open .cs-ob-cmds {
-  display: none !important;
+  visibility: hidden;
 }
 
 @keyframes cs-ob-cmds-in {

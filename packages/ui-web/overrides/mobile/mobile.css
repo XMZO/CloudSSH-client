@@ -900,3 +900,14 @@ html[data-cs-skin="obsidian"] .cs-m-auth-settings {
   border-radius: 50%;
   background: var(--bg-surface);
 }
+
+/* 打开 AI 助手时网页版把快捷键栏 display:none（免得挡住助手的输入框），终端区域因此变高、重算行数，服务器上的
+   程序整屏重画一次；关掉时变回去又重画一次。改成只是看不见、位置照留，终端大小不变 */
+@media (max-width: 767px), (max-width: 1180px) and (pointer: coarse) {
+  html body.agent-panel-open .mobile-terminal-toolbar:not(.hidden),
+  html body:has(#agent-panel:not([style*="display: none"])) .mobile-terminal-toolbar:not(.hidden),
+  html #terminal-section:has(#agent-panel:not([style*="display: none"])) .mobile-terminal-toolbar:not(.hidden) {
+    display: flex !important;
+    visibility: hidden;
+  }
+}
