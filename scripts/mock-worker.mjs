@@ -1426,7 +1426,8 @@ function attachShell(rawWs, url) {
   const term = { cols: 80, rows: 24 };
   /**
    * pager 命令：像 less / nano 那样进备用屏幕、开光标键应用模式，上 / 下方向键滚动 200 行内容，q 退出。
-   * 状态行显示收到的上 / 下键数，用来调试手机端在全屏程序里的滑动（alt-scroll）
+   * 状态行显示收到的上 / 下键数，用来调试手机端在全屏程序里的滑动（alt-scroll）。
+   * pager -m 再开鼠标模式（SGR），像开了 mouse=a 的 vim：收到滚轮报告每格滚 3 行，状态行也显示滚轮次数
    */
   let pager = null;
   const PAGER_LINES = 200;
@@ -1434,7 +1435,8 @@ function attachShell(rawWs, url) {
     const height = Math.max(3, term.rows - 1);
     pager.top = Math.max(0, Math.min(PAGER_LINES - height, pager.top));
     const body = Array.from({ length: height }, (_, i) => `第 ${pager.top + i + 1} 行  ${'·'.repeat(10)}`);
-    write(`\x1b[H\x1b[2J${body.join('\r\n')}\r\n\x1b[7m pager  第 ${pager.top + 1} 行起  收到 上 ${pager.up} / 下 ${pager.down}  （q 退出）\x1b[0m`);
+    const wheel = pager.mouse ? `  滚轮 上 ${pager.wheelUp} / 下 ${pager.wheelDown}` : '';
+    write(`\x1b[H\x1b[2J${body.join('\r\n')}\r\n\x1b[7m pager  第 ${pager.top + 1} 行起  收到 上 ${pager.up} / 下 ${pager.down}${wheel}  （q 退出）\x1b[0m`);
   };
   /**
    * nano 命令：画一个像 nano 的界面（第一行反显的“GNU nano 7.2”标题栏、底部帮助栏），开括号粘贴与光标键应用模式；
@@ -1474,7 +1476,17 @@ function attachShell(rawWs, url) {
     }
   };
   const pagerKey = (sequence) => {
-    if (sequence === '\x1b[A' || sequence === '\x1bOA') {
+    let m;
+    if (pager.mouse && (m = /^\x1b\[<(64|65);\d+;\d+M$/.exec(sequence))) {
+      // 滚轮报告（SGR）：64 往上、65 往下，像 vim 每格滚 3 行
+      if (m[1] === '64') {
+        pager.wheelUp++;
+        pager.top -= 3;
+      } else {
+        pager.wheelDown++;
+        pager.top += 3;
+      }
+    } else if (sequence === '\x1b[A' || sequence === '\x1bOA') {
       pager.up++;
       pager.top--;
     } else if (sequence === '\x1b[B' || sequence === '\x1bOB') {
@@ -1559,7 +1571,7 @@ function attachShell(rawWs, url) {
         const mouse = line.trim() === 'pager -m';
         line = '';
         pos = 0;
-        pager = { top: 0, up: 0, down: 0, mouse };
+        pager = { top: 0, up: 0, down: 0, wheelUp: 0, wheelDown: 0, mouse };
         write(`\r\n\x1b[?1049h\x1b[?1h${mouse ? '\x1b[?1000h\x1b[?1006h' : ''}`);
         drawPager();
         continue;
