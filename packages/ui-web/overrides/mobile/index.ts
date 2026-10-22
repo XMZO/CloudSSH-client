@@ -39,6 +39,7 @@ import { installMobileNotifications } from './notifications';
 import { installAltScroll } from './alt-scroll';
 import { installKeyRepeat } from './key-repeat';
 import { installKeyboardShift } from './keyboard-shift';
+import { installMobileToasts } from './toasts';
 import { installTapCursor } from './tap-cursor';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
@@ -249,6 +250,8 @@ if (isTauri()) {
       ['tap cursor', installTapCursor],
       ['keep alive', installKeepAlive],
       ['notifications', installMobileNotifications],
+      // 页面里的提示条：顶部、紧凑、可滑走、底边进度条（./toasts.ts）
+      ['toasts', installMobileToasts],
       ['credential presets', installPresets],
       ['system bars', installSystemBars],
       ['downloads', installDownloadNotices],

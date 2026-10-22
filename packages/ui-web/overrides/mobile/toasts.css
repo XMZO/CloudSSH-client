@@ -1,0 +1,107 @@
+/* ========== 手机上的提示条（toasts.ts）：顶部、紧凑、可滑走、底边进度条 ==========
+   网页版的提示条在底部、整宽、带标题行，切换服务器时正好挡住键盘和快捷命令栏。 */
+
+.app-toast-container.cs-toasts {
+  top: calc(env(safe-area-inset-top) + 6px);
+  right: max(10px, env(safe-area-inset-right));
+  bottom: auto;
+  left: max(10px, env(safe-area-inset-left));
+  width: auto;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 6px;
+}
+
+.cs-toasts .app-toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 6px 4px 6px 10px;
+  overflow: hidden;
+  border-width: 1px;
+  border-left-width: 1px;
+  border-radius: 12px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transform: translateY(-10px);
+}
+
+.cs-toasts .app-toast--visible {
+  transform: translateY(0);
+}
+
+.cs-toasts .app-toast--leaving {
+  transform: translateY(-8px);
+}
+
+.cs-toasts .app-toast__icon {
+  flex: none;
+  font-size: 17px;
+}
+
+.cs-toasts .app-toast__content {
+  min-width: 0;
+}
+
+/* 标题（“提示”“成功”……）由图标颜色表达，视觉上隐藏，读屏软件仍会读 */
+.cs-toasts .app-toast__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cs-toasts .app-toast__message {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.cs-toasts .app-toast.is-expanded .app-toast__message {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
+
+.cs-toasts .app-toast__close {
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.cs-toasts .app-toast__close .material-symbols-outlined {
+  font-size: 16px;
+}
+
+/* 快空闲断开的提醒：“继续”按钮放在文字下面 */
+.cs-toasts .app-toast.cs-idle-toast .app-toast__content {
+  padding: 2px 0;
+}
+
+/* 还剩多久：贴着底边的一条细线，浮在提示条上、不占布局 */
+.cs-toast-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--feedback-color);
+  opacity: 0.75;
+  transform-origin: left center;
+  pointer-events: none;
+}

@@ -509,6 +509,12 @@ const MOBILE_HOOKS: Hook[] = [
     inject: '    if ((globalThis as any).__cloudsshNoSnippetAutofocus !== true)\n',
   },
   {
+    // 手机上的提示条由 overrides/mobile/toasts.ts 接管计时（显示时长、进度条、滑动关闭）：把调用方要的显示时长记在提示条上
+    file: '/upstream/frontend/src/ui-feedback.ts',
+    anchor: "  const toast = document.createElement('div');\n  toast.className = 'app-toast';\n",
+    inject: '  toast.dataset.duration = String(duration);\n',
+  },
+  {
     // 同理，半屏面板模式下打开 AI 助手不自动聚焦输入框，点输入框时才弹键盘
     file: '/upstream/frontend/src/agent/agent-panel.ts',
     anchor: "    document.body.classList.add('agent-panel-open');\n",
