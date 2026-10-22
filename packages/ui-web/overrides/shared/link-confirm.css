@@ -185,3 +185,16 @@
     transition: none;
   }
 }
+
+/* 手机：盖在底部操作行上时，与那一行一样的底色、没有边框阴影（位置、底色由 mobile/slots.ts 设定） */
+.cs-link-bar.is-mobile.in-slot {
+  min-height: 0;
+  padding: 0 4px 0 12px;
+  border: 0;
+  box-shadow: none;
+}
+
+.cs-link-bar.is-mobile.in-slot.is-expanded {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}

@@ -56,8 +56,13 @@ const lt = (key: Key, params: Record<string, string> = {}) =>
 export interface LinkConfirmOptions {
   /** 交给系统浏览器打开 */
   open: (url: string) => void | Promise<void>;
-  /** 电脑：确认条贴在链接旁边，按住 Ctrl / ⌘ 单击直接打开，打开按钮获得焦点（回车即打开）。手机：确认条停在屏幕顶部 */
+  /** 电脑：确认条贴在链接旁边，按住 Ctrl / ⌘ 单击直接打开，打开按钮获得焦点（回车即打开）。手机：见 place */
   desktop: boolean;
+  /**
+   * 手机：把确认条摆到页面上借用的位置（底部操作行），摆好了返回 true；没有合适位置时停在屏幕顶部。
+   * 键盘弹出 / 收起后会再调用一次
+   */
+  place?: (bar: HTMLElement) => boolean;
 }
 
 /** 最近一次鼠标抬起（xterm 在 mouseup 里打开链接）：位置、有没有按着 Ctrl */
@@ -225,10 +230,14 @@ function showBar(url: string, at: { x: number; y: number } | null): void {
   document.body.append(bar);
 
   // 电脑：盖在链接自己那一行上（确认条里就是这个地址，不丢信息），地址与链接左边对齐，上下只压到相邻两行的一点边；
-  // 认不出链接在哪一段时贴在那一行下面（放不下就放上面）。左右不出窗口。手机：停在顶部（样式里定好）
+  // 认不出链接在哪一段时贴在那一行下面（放不下就放上面）。左右不出窗口。
+  // 手机：盖在底部操作行上（快捷命令条 / 快捷键栏，在键盘上方），不挡终端内容和顶栏按钮；没有时停在顶部（样式里定好）
   const margin = 8;
   const place = (keepTop: boolean) => {
-    if (!desktop) return;
+    if (!desktop) {
+      bar.classList.toggle('in-slot', options?.place?.(bar) === true);
+      return;
+    }
     const rect = bar.getBoundingClientRect();
     const textOffset = text.getBoundingClientRect().left - rect.left + 6;
     const x = spot?.linkLeft != null ? spot.linkLeft - textOffset : (at?.x ?? innerWidth / 2) - 28;
@@ -250,9 +259,14 @@ function showBar(url: string, at: { x: number; y: number } | null): void {
   bar.style.visibility = '';
   requestAnimationFrame(() => bar.classList.add('is-visible'));
 
+  // 手机上键盘弹出 / 收起后操作行挪了位置：跟着挪
+  const onViewport = () => place(false);
+  if (!desktop) window.visualViewport?.addEventListener('resize', onViewport, { passive: true });
+
   const close = (restoreFocus = true) => {
     if (closeBar !== close) return;
     closeBar = null;
+    window.visualViewport?.removeEventListener('resize', onViewport);
     document.removeEventListener('pointerdown', onOutside, true);
     document.removeEventListener('keydown', onKey, true);
     spot?.mark?.decoration.dispose();

@@ -105,3 +105,139 @@
   transform-origin: left center;
   pointer-events: none;
 }
+
+/* ---------- 放在页面上借用的位置里（toasts.ts、slots.ts）：盖住那一块，底色、圆角与那一块相同 ---------- */
+
+.cs-slot-host {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  max-height: 50vh;
+  overflow: hidden;
+  animation: cs-slot-in 150ms ease;
+}
+
+@keyframes cs-slot-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.cs-slot-host .app-toast.in-slot {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 4px 2px 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  opacity: 0;
+  transform: none;
+  transition: opacity 150ms ease;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cs-slot-host .app-toast.in-slot.app-toast--visible {
+  opacity: 1;
+  transform: none;
+}
+
+.cs-slot-host .app-toast.in-slot.app-toast--leaving {
+  opacity: 0;
+  transform: none;
+}
+
+.cs-slot-host .app-toast__icon {
+  flex: none;
+  font-size: 17px;
+}
+
+/* 标题（“提示”“成功”……）由图标颜色表达，视觉上隐藏，读屏软件仍会读 */
+.cs-slot-host .app-toast__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 文字与按钮排成一行（快空闲断开提醒的“继续”放在文字右边） */
+.cs-slot-host .app-toast__content {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cs-slot-host .app-toast__message {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.cs-slot-host .app-toast.is-expanded .app-toast__message {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
+
+.cs-slot-host .app-toast.is-expanded {
+  align-items: flex-start;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* 顶栏里的提示轻点就关，不放关闭按钮（省出宽度给文字）；底部操作行里的留着 */
+.cs-slot-host.is-notice .app-toast__close {
+  display: none;
+}
+
+.cs-slot-host .app-toast__close {
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.cs-slot-host .app-toast__close .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.cs-slot-host .cs-idle-continue {
+  flex: none;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-slot-host {
+    animation: none;
+  }
+
+  .cs-slot-host .app-toast.in-slot {
+    transition: none;
+  }
+}
