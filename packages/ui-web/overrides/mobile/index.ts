@@ -38,6 +38,7 @@ import { configurePresets, installCredentialPresets, localVault } from '../share
 import { installMobileNotifications } from './notifications';
 import { installAltScroll } from './alt-scroll';
 import { installKeyRepeat } from './key-repeat';
+import { installKeyboardShift } from './keyboard-shift';
 import { installTapCursor } from './tap-cursor';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
@@ -240,6 +241,8 @@ if (isTauri()) {
       // 命令面板里按住片段的拖动手柄调整顺序（存在本地，不改 Worker）
       ['snippet sort', () => installSnippetSort({ touchHandles: true })],
       ['terminal touch', installTerminalTouch],
+      // 键盘开合时普通屏幕的终端只整体上下移动，不重算行数、不让远端重画
+      ['keyboard shift', installKeyboardShift],
       ['key repeat', installKeyRepeat],
       // 要排在 terminal touch 后面：缩放、拖选时它先把事件拦下
       ['alt scroll', installAltScroll],

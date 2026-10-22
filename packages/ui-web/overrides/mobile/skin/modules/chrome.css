@@ -20,7 +20,6 @@ html[data-cs-mods~="chrome"] #terminal-section .terminal-status-bar {
   background: var(--bg);
   border-bottom: 1px solid var(--cs-hairline);
   font-family: var(--font-ui);
-  transition: height 180ms ease;
 }
 
 .cs-ob-iconbtn {
@@ -156,7 +155,8 @@ html[data-cs-mods~="chrome"] #terminal-section .terminal-status-bar {
   }
 }
 
-/* 键盘弹出或横屏矮屏时压扁成一行，把空间留给终端 */
+/* 键盘弹出或横屏矮屏时压扁成一行，把空间留给终端。不做高度动画：动画期间终端跟着一帧帧挪动，
+   还会赶上终端重算行数，键盘开合时内容边闪边移（../../keyboard-shift.ts） */
 html.mobile-keyboard-open .cs-ob-bar {
   height: calc(42px + env(safe-area-inset-top));
 }
