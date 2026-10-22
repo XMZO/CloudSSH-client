@@ -8,6 +8,7 @@
  *   workbench.css  工作台的页面布局（收起网页版顶栏页脚、终端占满、底部状态栏）
  *   classic.css    经典主题在桌面窗口里的排版修正
  *   snippets.ts/css  命令片段面板：工作台下收窄成紧凑列表，双击填入终端
+ *   tab-close.ts     会话标签上按鼠标中键关闭
  *   drawers.ts/css   右侧抽屉（SFTP、命令片段、AI 助手）拖动左边缘调宽，按面板记住宽度
  *   app-menus.ts     标题栏左上角的应用菜单、实例菜单（页面里画，不用系统原生菜单）
  *   links.ts         终端里的链接用系统浏览器打开
@@ -34,6 +35,7 @@ import { installPalette, registerPaletteAction } from './palette';
 import { openQrSync } from './qr-sync';
 import { installSftpDragDrop } from './sftp-drop';
 import { mountSnippetEnhancements } from './snippets';
+import { installTabMiddleClose } from './tab-close';
 import { desktopSkin, SKIN_CHANGED_EVENT, trackView } from './state';
 import { mountTitlebar } from './titlebar';
 import { installThemeShare } from './theme-share';
@@ -87,6 +89,8 @@ export async function mountDesktopShell(): Promise<void> {
     // 把当前配色报给主进程，实例管理窗口跟随主题（./theme-share.ts）
     installThemeShare();
     mountSnippetEnhancements();
+    // 会话标签上按中键关闭（./tab-close.ts）
+    installTabMiddleClose();
     mountDrawerResizers();
     installPalette();
     installDesktopNotifications();
