@@ -132,10 +132,14 @@ export const sheetsModule: SkinModule = {
       const kind = kindOf(panel);
       if (!kind || managed.has(panel)) return;
       const local = new Disposer();
-      panel.classList.add('cs-ob-sheet');
+      // 网页版新建的面板（连上服务器时、断线重连后都会重建 SFTP 与 AI 助手面板）停在屏幕右边外面。
+      // 直接放到屏幕下方收起的位置、不要过渡动画：否则它会从右边斜着滑过屏幕右下角，闪一下
+      panel.classList.add('is-placing', 'cs-ob-sheet');
       panel.dataset.csKind = kind;
       panel.dataset.csDetent = detents[kind];
       panel.dataset.csOpen = '0';
+      void panel.getBoundingClientRect();
+      requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('is-placing')));
 
       const grabber = h('div', 'cs-ob-sheet-grabber');
       grabber.setAttribute('role', 'button');

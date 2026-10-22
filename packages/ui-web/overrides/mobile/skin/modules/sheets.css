@@ -37,7 +37,8 @@ html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-o
   transform: translateY(var(--cs-sheet-drag, 0px)) !important;
 }
 
-html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet.is-dragging {
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet.is-dragging,
+html[data-cs-mods~="sheets"] :is(#sftp-panel, #snippet-panel, #agent-panel).cs-ob-sheet.is-placing {
   transition: none !important;
 }
 
