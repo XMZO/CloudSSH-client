@@ -554,7 +554,13 @@ const COMMON_HOOKS: Hook[] = [
     // （看不见，连接和传输照旧），返回 true 就不收起；停放着的面板不响应 Esc、Ctrl+A
     file: '/upstream/frontend/src/sftp-panel.ts',
     anchor: '  hide(): void {\n',
-    inject: '    if ((globalThis as any).__cloudsshParkSftp?.(this) === true) return;\n',
+    inject: [
+      '    if ((globalThis as any).__cloudsshParkSftp?.(this) === true) return;',
+      // 本来就没开、也没有 SFTP 连接时什么都不用做。网页版切换标签（收起上一个标签的）、收起全部面板（每个标签都收）
+      // 时照样执行收起：要发一条 sftp_close，没有连接就先新建一条 SFTP 连接、发完马上关掉，每切一次标签白连一次
+      '    if (!this.visible && !this.ws && !this.sftpWsRetryTimer && this.pendingSends.length === 0) return;',
+      '',
+    ].join('\n'),
   },
   {
     file: '/upstream/frontend/src/sftp-panel.ts',

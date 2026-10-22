@@ -1,19 +1,23 @@
 /**
- * 偏好设置“保持面板”：SFTP、自定义命令、AI 助手三个面板各一个开关（默认关）。开关打开的那个面板，在切换会话标签、
- * 连接新服务器、从服务器列表回到终端时保持打开（换成那个会话自己的面板），不会先收起再打开：
- * - 记住的是你自己打开 / 关上的面板；网页版因为切换标签、新建连接、离开终端页自动收起的不算
- * - 切到已连上的会话：同一瞬间换成新会话的面板，不播放滑入滑出动画，停靠宽度不变，终端不重算行列
+ * 偏好设置“保持面板”：SFTP、自定义命令、AI 助手三个面板各一个开关（默认关）。每个会话标签记住自己开着的面板，
+ * 网页版原来切换标签、离开终端页时一律收起：
+ * - 离开一个标签（切到别的标签、连接新服务器、回到服务器列表）时记下它开着哪个面板；切回它、回到终端页时照原样
+ *   打开（那个面板的开关开着才算），它原来什么都没开就什么都不开。A 开着 SFTP、B 开着 AI 助手、C 什么都没开，
+ *   切到哪个就是哪个的样子
+ * - 新连接的标签还没有自己的记录：沿用连接时开着的面板
+ * - 切到已连上的会话：同一瞬间换成它的面板，不播放滑入滑出动画；两边开着同一种面板时停靠宽度不变，终端不重算行列
  * - 新连接（SFTP、AI 助手的面板要连上后才有）：面板位置先放一块同宽的占位“连接后自动打开…”，停靠宽度照留，
  *   新终端一开始就是让出位置后的宽度；连上后换成真正的面板。30 秒还没连上就收起占位
- * - 自定义命令面板所有会话共用一个：切换标签、连接新服务器时根本不收起（网页版原来先收起再打开，每次清空搜索、
+ * - 自定义命令面板所有会话共用一个：两边都开着它时根本不收起（网页版原来先收起再打开，每次清空搜索、
  *   重新加载一遍列表），面板原样留着：列表、搜索、滚动位置都不变
  * - SFTP 面板每个会话一个：网页版切走时把它收起，会断开 SFTP 连接、取消传输，切回来重新连接、重新列目录。
  *   现在切走时只是停放（看不见，连接和传输照旧），切回来原样出现：还在原来的目录、原来的选中项，传输接着进行。
- *   你自己关上 SFTP、换成别的面板、关掉这个开关时，停放着的才真正收起
+ *   你在那个标签里自己关上 SFTP、关掉 SFTP 的开关、关掉那个标签时才真正收起
  * 两种界面主题都生效（经典主题的面板盖在终端上，没有停靠宽度）。
  *
- * 构建钩子（vite.config.ts）在网页版收起全部面板（closeAllDrawers）和切换标签之前调用 __cloudsshDrawerProgrammatic，
- * 这里据此区分“网页版自动收起”和“你自己关上”；切换标签后网页版派发 cloudssh:active-terminal-change，这里再打开。
+ * 构建钩子（vite.config.ts）在网页版收起全部面板（closeAllDrawers）和切换标签之前调用 __cloudsshDrawerProgrammatic：
+ * 这一刻面板还是离开的那个标签的样子，在这里记下；随后网页版的收起不算你的操作。切换标签后网页版派发
+ * cloudssh:active-terminal-change，这里按新标签的记录打开。
  * 另外：网页版收起命令面板之前问 __cloudsshKeepSnippet、SFTP 面板收起之前问 __cloudsshParkSftp，返回 true 就不收起；
  * 新建会话标签（连接服务器、克隆会话）之前调用 __cloudsshDrawersStay（紧接着的收起全部面板是留在终端页的）。
  */
@@ -73,13 +77,18 @@ const openDrawer = (): Drawer | null => DRAWERS.find((drawer) => button(drawer)?
 const activeTab = () =>
   (globalThis as { __cloudsshTabManager?: { getActiveTab?: () => TabLike | null } }).__cloudsshTabManager?.getActiveTab?.() ?? null;
 
-/** 你最后一次自己打开的面板（自己关上时为 null） */
-let desired: Drawer | null = null;
+/** 每个会话标签离开时开着的面板（null = 什么都没开） */
+const memory = new WeakMap<TabLike, Drawer | null>();
+/** 最近一次离开的标签开着的面板：新连接的标签还没有自己的记录，沿用它 */
+let inherit: Drawer | null = null;
 /** 网页版自动收起 / 这里代为打开的过程中：面板开合不算你的操作 */
 let programmatic = 0;
 /** 每个面板最近一次打开时的宽度（占位用） */
 const widths = new Map<Drawer, number>();
-let pending: { timer: number; poll: number; placeholder: HTMLElement } | null = null;
+/** 新连接还没连上，等着为它打开的面板（tab：等的是哪个标签） */
+let pending: { tab: TabLike; drawer: Drawer; timer: number; poll: number; placeholder: HTMLElement } | null = null;
+/** 上一次看到的打开着的面板（用来分辨你自己换了面板） */
+let lastOpen: Drawer | null = null;
 /** 停放着的 SFTP 面板（切走了的会话标签的）：SFTP 连接、传输照旧，只是不显示 */
 const parked = new Set<SftpLike>();
 /** 正在真正收起停放着的面板：这时网页版的收起照常执行 */
@@ -133,7 +142,7 @@ function cancelPending(): void {
 }
 
 /** 新连接还没连上：面板位置先放占位，连上后换成真正的面板 */
-function waitFor(drawer: Drawer): void {
+function waitFor(tab: TabLike, drawer: Drawer): void {
   const placeholder = el('div', 'cs-drawer-hold');
   const width = widths.get(drawer) ?? 0;
   if (width > 0) placeholder.style.width = `${width}px`;
@@ -142,7 +151,7 @@ function waitFor(drawer: Drawer): void {
   const cancel = el('button', 'cs-drawer-hold-cancel', dt('keepCancel'));
   cancel.type = 'button';
   cancel.addEventListener('click', () => {
-    desired = null;
+    memory.set(tab, null);
     cancelPending();
   });
   body.append(cancel);
@@ -160,6 +169,8 @@ function waitFor(drawer: Drawer): void {
     cancelPending();
   };
   pending = {
+    tab,
+    drawer,
     placeholder,
     poll: window.setInterval(check, POLL_MS),
     timer: window.setTimeout(cancelPending, WAIT_LIMIT_MS),
@@ -169,8 +180,8 @@ function waitFor(drawer: Drawer): void {
 /** 网页版要收起这个 SFTP 面板（切换标签、收起全部面板）：保持着 SFTP 时改为停放，返回 true（网页版不再收起） */
 function parkSftp(panel: SftpLike): boolean {
   if (panel.__cloudsshParked) return !releasing;
-  // 只停放正开着的；你自己关上（不是网页版自动收起）照常收起
-  if (releasing || programmatic === 0 || desired !== 'sftp' || !keepDrawer('sftp') || panel.visible !== true || !panel.container) return false;
+  // 只停放正开着的（离开的标签开着 SFTP，记录里就是它，回来时原样出现）；你自己关上（不是网页版自动收起）照常收起
+  if (releasing || programmatic === 0 || !keepDrawer('sftp') || panel.visible !== true || !panel.container) return false;
   panel.__cloudsshParked = true;
   panel.container.classList.add('cs-sftp-parked');
   parked.add(panel);
@@ -201,24 +212,47 @@ function releaseParked(): void {
   }
 }
 
-/** 网页版要收起命令面板（切换标签、新建会话标签）：保持着它时不收起，原样留着，返回 true */
-function keepSnippet(context?: 'close-all'): boolean {
-  if (context === 'close-all' && !stay) return false;
-  return desired === 'snippet' && keepDrawer('snippet') && currentView() === 'term' && openDrawer() === 'snippet';
+/** 这个标签该开着的面板：它离开时的记录（新标签沿用最近离开的那个），开关关着的不算 */
+function wanted(tab: TabLike | null): Drawer | null {
+  if (!tab) return null;
+  const drawer = memory.has(tab) ? (memory.get(tab) ?? null) : inherit;
+  return drawer && keepDrawer(drawer) ? drawer : null;
 }
 
-/** 到了一个会话（切换、新建、回到终端页）：你记住的面板开关打开着，就为这个会话打开它 */
+/** 离开当前标签之前（切换、新建连接、离开终端页）：记下它开着的面板（还在等连上的，记它在等的那个） */
+function remember(): void {
+  const tab = activeTab();
+  // 不在终端页（服务器列表里切标签、连新服务器）：面板在离开终端页时已经收起，那时记过了，别用“什么都没开”盖掉
+  if (!tab || currentView() !== 'term') return;
+  const drawer = pending?.tab === tab ? pending.drawer : openDrawer();
+  memory.set(tab, drawer);
+  inherit = drawer;
+}
+
+/**
+ * 网页版要收起命令面板：切换标签时新标签也开着它、新建会话标签时它正开着（新标签沿用），就不收起，原样留着，返回 true
+ */
+function keepSnippet(context?: 'close-all'): boolean {
+  if (!keepDrawer('snippet') || currentView() !== 'term' || openDrawer() !== 'snippet') return false;
+  if (context === 'close-all') return stay;
+  return wanted(activeTab()) === 'snippet';
+}
+
+/** 到了一个会话（切换、新建、回到终端页）：照它的记录打开面板，没有记录的沿用最近离开的那个标签 */
 function follow(): void {
   cancelPending();
   if (currentView() !== 'term') return;
-  const panel = activeTab()?.sftpPanel;
+  const tab = activeTab();
+  if (!tab) return;
+  const drawer = wanted(tab);
+  const panel = tab.sftpPanel;
+  // 停放着的 SFTP 就是它离开时开着的：原样出现
   if (panel?.__cloudsshParked) unpark(panel);
-  const drawer = desired;
-  if (!drawer || !keepDrawer(drawer) || openDrawer() === drawer) return;
+  if (!drawer || openDrawer() === drawer) return;
   const state = ready(drawer);
   if (state === 'never') return;
   if (state) open(drawer);
-  else waitFor(drawer);
+  else waitFor(tab, drawer);
 }
 
 export function installDrawerFollow(): void {
@@ -231,8 +265,10 @@ export function installDrawerFollow(): void {
   hooks.__cloudsshDrawerProgrammatic = () => {
     const current = openDrawer();
     if (current) measure(current);
+    // 同一次操作里的第一下（新建连接是先收起全部面板、再切到新标签）：这时面板还是离开的那个标签的样子
+    if (programmatic === 0) remember();
     markProgrammatic();
-    if (desired && keepDrawer(desired)) instant();
+    if (DRAWERS.some(keepDrawer)) instant();
   };
   hooks.__cloudsshDrawersStay = () => {
     stay = true;
@@ -242,21 +278,20 @@ export function installDrawerFollow(): void {
   hooks.__cloudsshKeepSnippet = keepSnippet;
   hooks.__cloudsshParkSftp = parkSftp;
 
-  // 你自己打开 / 关上面板（网页版自动收起、这里代为打开的不算）
+  // 你自己换了面板（网页版自动收起、这里代为打开的不算）：在等新连接连上的占位就不用了
   const observer = new MutationObserver(() => {
-    if (programmatic > 0) return;
     const current = openDrawer();
-    if (current === desired) return;
-    desired = current;
+    if (current === lastOpen) return;
+    lastOpen = current;
+    if (programmatic > 0) return;
     if (current) measure(current);
     cancelPending();
-    if (current !== 'sftp') releaseParked();
   });
   for (const drawer of DRAWERS) {
     const node = button(drawer);
     if (node) observer.observe(node, { attributes: true, attributeFilter: ['class'] });
   }
-  desired = openDrawer();
+  lastOpen = openDrawer();
 
   // 网页版的监听先注册，它在这个事件里收起命令面板、同步分段条之后，这里再打开
   document.addEventListener('cloudssh:active-terminal-change', () => follow());
