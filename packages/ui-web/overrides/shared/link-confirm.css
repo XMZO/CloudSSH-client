@@ -1,94 +1,187 @@
-/* ========== 点链接的确认卡片（link-confirm.ts）：完整地址 + 复制 / 取消 / 打开，紧凑 ========== */
+/* ========== 点链接的确认条（link-confirm.ts）：一行、尽量不挡终端内容 ========== */
 
-.cs-link-card {
+.cs-link-bar {
   position: fixed;
   z-index: 400;
-  display: grid;
-  gap: 8px;
-  width: max-content;
-  min-width: min(240px, calc(100vw - 20px));
-  max-width: min(420px, calc(100vw - 20px));
-  padding: 10px 10px 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 36px;
+  padding: 2px 2px 2px 8px;
   border: 1px solid var(--border-strong, var(--border));
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--bg-elevated, var(--bg-surface));
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   color: var(--on-surface);
   font-family: var(--cs-ui-font, inherit);
   opacity: 0;
-  transform: translateY(-4px);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
+  transition: opacity 100ms ease;
 }
 
-.cs-link-card.is-visible {
+.cs-link-bar.is-visible {
   opacity: 1;
-  transform: none;
 }
 
-/* 完整地址：等宽小字，长地址折行，最多六行后滚动 */
-.cs-link-url {
-  max-height: 8.4em;
-  overflow-y: auto;
+/* 手机：停在屏幕顶部（盖在标题栏上，和提示条同一个位置），不盖住终端里的任何一行 */
+.cs-link-bar.is-mobile {
+  top: calc(env(safe-area-inset-top) + 6px);
+  right: max(8px, env(safe-area-inset-right));
+  left: max(8px, env(safe-area-inset-left));
+  min-height: 42px;
+}
+
+/* 电脑：贴在链接那一行旁边，位置由脚本算 */
+.cs-link-bar.is-desktop {
+  width: max-content;
+  max-width: min(600px, calc(100vw - 16px));
+}
+
+.cs-link-glyph {
+  flex: none;
+  color: var(--accent);
+  font-size: 16px;
+}
+
+/* 地址一行：开头省略在中间、结尾一段留着；点开显示完整地址 */
+.cs-link-text {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
   color: var(--on-surface);
-  font: 12.5px/1.4 var(--font-code, monospace);
+  font: 12.5px/1.35 var(--font-code, monospace);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cs-link-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cs-link-tail {
+  flex: none;
+}
+
+.cs-link-full {
+  display: none;
+}
+
+.cs-link-bar.is-expanded {
+  align-items: flex-start;
+}
+
+.cs-link-bar.is-expanded .cs-link-text {
+  display: block;
+  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-all;
   -webkit-user-select: text;
   user-select: text;
 }
 
-.cs-link-hint {
-  margin-top: -3px;
-  color: var(--text-muted, var(--on-surface-variant));
-  font-size: 11px;
+.cs-link-bar.is-expanded :is(.cs-link-head, .cs-link-tail) {
+  display: none;
 }
 
-.cs-link-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.cs-link-bar.is-expanded .cs-link-full {
+  display: inline;
 }
 
-.cs-link-spacer {
-  flex: 1;
+.cs-link-bar.is-expanded .cs-link-glyph {
+  margin-top: 6px;
 }
 
-.cs-link-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
+.cs-link-icon-btn {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--on-surface);
-  font: inherit;
-  font-size: 13px;
+  color: var(--on-surface-variant);
   cursor: pointer;
 }
 
-.cs-link-btn .material-symbols-outlined {
-  font-size: 16px;
+.cs-link-icon-btn .material-symbols-outlined {
+  font-size: 17px;
 }
 
-.cs-link-btn:hover,
-.cs-link-btn:focus-visible {
-  border-color: var(--accent);
+.cs-link-icon-btn:hover,
+.cs-link-icon-btn:focus-visible {
+  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  color: var(--on-surface);
   outline: none;
 }
 
-.cs-link-btn.is-primary {
-  border-color: var(--accent);
+.cs-link-open {
+  flex: none;
+  height: 28px;
+  margin: 0 2px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
   background: var(--accent);
   color: var(--on-accent, #fff);
+  font: inherit;
+  font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
+}
+
+.cs-link-open:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+/* 电脑：再矮一些（约一行半终端的高度），贴在链接下面最多挡住一行 */
+.cs-link-bar.is-desktop {
+  gap: 0;
+  min-height: 28px;
+  padding: 1px 1px 1px 7px;
+  border-radius: 8px;
+}
+
+.cs-link-bar.is-desktop .cs-link-glyph {
+  font-size: 15px;
+}
+
+.cs-link-bar.is-desktop .cs-link-text {
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.cs-link-bar.is-desktop .cs-link-icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+
+.cs-link-bar.is-desktop .cs-link-icon-btn .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.cs-link-bar.is-desktop .cs-link-open {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+/* 终端里被点到的那个链接 */
+.cs-link-mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cs-link-card {
+  .cs-link-bar {
     transition: none;
   }
 }

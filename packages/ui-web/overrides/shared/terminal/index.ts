@@ -17,7 +17,7 @@ import { installIdleReminder } from './idle-reminder';
 import { installHeartbeatGuard } from './heartbeat-guard';
 import { installSessionEnd } from '../session-end';
 import { installResizeSettle } from './resize-settle';
-import { confirmLinkHandler } from '../link-confirm';
+import { confirmLinkHandler, setLinkTerminalResolver } from '../link-confirm';
 import './terminal.css';
 
 export { openHighlightEditor } from './highlight-editor';
@@ -149,6 +149,8 @@ export function installTerminalEnhancements(): void {
   scope.__cloudsshTerminalCreated = onCreated;
   scope.__cloudsshTerminalDisposed = onDisposed;
   scope.__cloudsshWebglLost = restoreWebgl;
+  // 点链接确认时高亮点到的那个链接：要知道点的位置在哪个终端里
+  setLinkTerminalResolver(terminalFor);
   // 服务器端断开时自动关闭标签（可开关，见 ../session-end.ts）
   installSessionEnd();
   // 断线后在服务器的 60 秒保持期内持续尝试秒级恢复，恢复不了才完整重连（./resume-retry.ts）
