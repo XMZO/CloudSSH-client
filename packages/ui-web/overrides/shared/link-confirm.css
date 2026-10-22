@@ -1,0 +1,94 @@
+/* ========== 点链接的确认卡片（link-confirm.ts）：完整地址 + 复制 / 取消 / 打开，紧凑 ========== */
+
+.cs-link-card {
+  position: fixed;
+  z-index: 400;
+  display: grid;
+  gap: 8px;
+  width: max-content;
+  min-width: min(240px, calc(100vw - 20px));
+  max-width: min(420px, calc(100vw - 20px));
+  padding: 10px 10px 8px 12px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 12px;
+  background: var(--bg-elevated, var(--bg-surface));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  color: var(--on-surface);
+  font-family: var(--cs-ui-font, inherit);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.cs-link-card.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* 完整地址：等宽小字，长地址折行，最多六行后滚动 */
+.cs-link-url {
+  max-height: 8.4em;
+  overflow-y: auto;
+  color: var(--on-surface);
+  font: 12.5px/1.4 var(--font-code, monospace);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.cs-link-hint {
+  margin-top: -3px;
+  color: var(--text-muted, var(--on-surface-variant));
+  font-size: 11px;
+}
+
+.cs-link-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cs-link-spacer {
+  flex: 1;
+}
+
+.cs-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cs-link-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.cs-link-btn:hover,
+.cs-link-btn:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cs-link-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-link-card {
+    transition: none;
+  }
+}

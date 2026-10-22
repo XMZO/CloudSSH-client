@@ -17,6 +17,7 @@ import { installIdleReminder } from './idle-reminder';
 import { installHeartbeatGuard } from './heartbeat-guard';
 import { installSessionEnd } from '../session-end';
 import { installResizeSettle } from './resize-settle';
+import { confirmLinkHandler } from '../link-confirm';
 import './terminal.css';
 
 export { openHighlightEditor } from './highlight-editor';
@@ -53,6 +54,8 @@ function refreshAll(): void {
 function onCreated(term: Terminal): void {
   if (highlighters.has(term)) return;
   term.options.fontFamily = TERMINAL_FONT_FAMILY;
+  // OSC 8 超链接：xterm 默认弹浏览器自带的 confirm()，换成与普通链接同一张确认卡片（../link-confirm.ts）
+  term.options.linkHandler = confirmLinkHandler;
   // 尺寸变化后远端的整屏重画攒齐了一次显示，不一截截地闪（./resize-settle.ts）
   installResizeSettle(term);
   highlighters.set(

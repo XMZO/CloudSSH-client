@@ -40,6 +40,7 @@ import { installAltScroll } from './alt-scroll';
 import { installKeyRepeat } from './key-repeat';
 import { installKeyboardShift } from './keyboard-shift';
 import { installMobileToasts } from './toasts';
+import { installLinkConfirm } from '../shared/link-confirm';
 import { installTapCursor } from './tap-cursor';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
@@ -252,6 +253,8 @@ if (isTauri()) {
       ['notifications', installMobileNotifications],
       // 页面里的提示条：顶部、紧凑、可滑走、底边进度条（./toasts.ts）
       ['toasts', installMobileToasts],
+      // 终端里点链接先弹确认卡片（完整地址，打开 / 复制 / 取消），确认后交给系统浏览器
+      ['link confirm', () => installLinkConfirm({ desktop: false, open: (url) => native.openExternal(url) })],
       ['credential presets', installPresets],
       ['system bars', installSystemBars],
       ['downloads', installDownloadNotices],
