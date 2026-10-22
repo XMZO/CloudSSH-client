@@ -567,7 +567,7 @@ function boxMenu() {
 
 const HELP = [
   '可用命令：help  ls  date  uname -a  echo <文本>  seq <n>  colors  top  logs  menu  pager（全屏，方向键滚动，q 退出）  nano（像 nano，Alt+M 开关鼠标，Ctrl+X 退出）  size  clear  exit',
-  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）',
+  '调试后台提醒：sleep <秒>（隔这么久才回到提示符）  bell（响铃）  notify <文本>（OSC 9 通知）  drop（模拟断网）  hangup（模拟远程主机断开）  reboot [秒]（模拟重启：断开后这么久内连不上，默认 25）',
   '调试断线判定：stall（远程主机无响应）  backlog（本机没确认输出，如省电冻结）  idle（长时间没操作）  kick（无原因关闭）',
   '其他命令会原样回显为“已执行”，方便测试常用命令的插入与执行。',
 ].join('\r\n');
@@ -594,6 +594,16 @@ function runCommand(line, write, term, ws) {
       ws.sendJson({ type: 'error', message: '远程主机已关闭连接', event: 'remote_closed' });
       setTimeout(() => ws.close(1011), 50);
       break;
+    case 'reboot':
+    case 'poweroff': {
+      // 模拟重启：像 hangup 一样断开，之后 n 秒（默认 25；poweroff 默认 600）内新连接都连不上（Worker 连不到主机：报“连接失败”后以 1011 关闭）
+      const seconds = Math.min(600, Math.max(1, Number(args[0]) || (command === 'poweroff' ? 600 : 25)));
+      rebootingUntil = Date.now() + seconds * 1000;
+      console.log(`reboot：${seconds} 秒内新连接都会失败`);
+      ws.sendJson({ type: 'error', message: '远程主机已关闭连接', event: 'remote_closed' });
+      setTimeout(() => ws.close(1011), 50);
+      break;
+    }
     case 'stall':
       // 远程主机不回保活（宕机、断网）：与 Worker 一样报 keepalive_timeout 后以 1011 关闭
       ws.sendJson({ type: 'error', message: 'SSH 连接超时，保活失败', event: 'keepalive_timeout' });
@@ -1357,7 +1367,18 @@ function resumeShell(rawWs, url) {
   return entry.handler;
 }
 
+/** reboot 命令：到这个时间之前新连接都失败（模拟服务器还没起来） */
+let rebootingUntil = 0;
+
 function attachShell(rawWs, url) {
+  if (Date.now() < rebootingUntil) {
+    // Worker 连不到主机时：报“连接失败”（没有 event）后以 1011 关闭；连接超时要等一会儿
+    setTimeout(() => {
+      rawWs.sendJson({ type: 'error', message: '连接失败: Network connection lost.' });
+      setTimeout(() => rawWs.close(1011), 50);
+    }, 1500);
+    return () => {};
+  }
   const sessionId = `session:mock:${crypto.randomUUID()}`;
   // Shell 里的 ws 都经 link 转给当前连着的 WebSocket；断开期间（pending 不为 null）的输出先存着，恢复后补发
   const link = { ws: rawWs, pending: null };

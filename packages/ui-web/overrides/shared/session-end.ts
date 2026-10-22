@@ -21,12 +21,16 @@
  * 构建钩子（vite.config.ts）：往会话里输入时调用 __cloudsshNoteInput(终端, 数据)，回车时这里记下那一行（命令）；
  * 网页版处理连接关闭时调用 __cloudsshServerEnded(终端, 关闭事件)，原因放在终端的 __cloudsshClosingEvent 上；
  * 返回 true 时网页版不再排定重连；标签在下一轮事件循环里关闭，并提示原因。
+ *
+ * 不关标签时（开关关着、页面在后台），你刚执行了重启命令的，交给 ./terminal/reboot-wait.ts 等服务器回来自动连上；
+ * 关机命令只说明一下，按任意键再连。
  */
 import type { IMarker, Terminal } from '@xterm/xterm';
 import { getLocale } from '../../upstream/frontend/src/i18n';
 import { notify } from '../../upstream/frontend/src/ui-feedback';
 import { closeTabById } from '../sidebar/hooks';
 import { commandFromLine, logicalLine } from './session-notify';
+import { continueRebootWait, noteServerPoweredOff, startRebootWait } from './terminal/reboot-wait';
 
 export type EndKind = 'exit' | 'reboot';
 export const END_KINDS: readonly EndKind[] = ['exit', 'reboot'];
@@ -156,6 +160,22 @@ export function classifyEnd(event: string, commands: readonly string[]): EndClas
   return event === 'remote_closed' ? { kind: 'reboot', reason: 'broken' } : { kind: 'exit', reason: 'ended' };
 }
 
+/** 关机而不是重启：poweroff、halt、init 0、systemctl poweroff / halt、不带 -r 的 shutdown（shutdown 默认关机） */
+function powerOffCommand(part: string): boolean {
+  if (!REBOOT_COMMAND.test(part)) return false;
+  if (/(?:^|\s|\/)(?:poweroff|halt)(?:\s|$)|(?:^|\s)(?:tel)?init\s+0(?:\s|$)/.test(part)) return true;
+  return /(?:^|\s|\/)shutdown(?:\s|$)/.test(part) && !/\s(?:-[a-zA-Z]*r[a-zA-Z]*|--reboot)(?:\s|$)/.test(part);
+}
+
+/** 最近执行的重启 / 关机命令里，最后一条是关机 */
+export function poweredOff(commands: readonly string[]): boolean {
+  for (let index = commands.length - 1; index >= 0; index--) {
+    const parts = segments(commands[index]).filter((part) => REBOOT_COMMAND.test(part));
+    if (parts.length) return powerOffCommand(parts[parts.length - 1]);
+  }
+  return false;
+}
+
 // ---------- 记下回车执行的命令 ----------
 
 /** 关闭前这么久内往会话里输入过，才当成你自己结束的（直接打的 reboot 到 sshd 退出一般在这之内；自动登出、闲置断开都远长于它） */
@@ -186,7 +206,8 @@ function xtermOf(marks: TerminalMarks): Terminal | null {
 }
 
 function noteInput(terminal: unknown, data: string | Uint8Array): void {
-  if (typeof data !== 'string' || !data.includes('\r') || !END_KINDS.some(closeOnEnd)) return;
+  // 开关都关着也记：重启后等服务器回来再连（./terminal/reboot-wait.ts）同样要知道你刚执行的是不是重启命令
+  if (typeof data !== 'string' || !data.includes('\r')) return;
   const marks = terminal as TerminalMarks | null;
   const term = marks && xtermOf(marks);
   // vim、less 这类全屏程序里的回车不是 Shell 命令
@@ -213,25 +234,37 @@ interface TabLike {
 }
 
 function onServerEnded(terminal: unknown, event: CloseEvent): boolean {
+  // 正在等重启的服务器回来、这次又没连上：接着等
+  if (continueRebootWait(terminal)) return true;
   if (event.code !== 1000 && event.code !== 1011) return false;
   const marks = terminal as TerminalMarks | null;
   if (marks?.__cloudsshWasReady !== true || typeof marks.__cloudsshClosingEvent !== 'string') return false;
   const now = Date.now();
   const lastInput = marks.__cloudsshLastInputAt;
   if (typeof lastInput !== 'number' || now - lastInput > RECENT_INPUT_MS) return false;
-  if (document.visibilityState === 'hidden') return false;
-  const found = classifyEnd(marks.__cloudsshClosingEvent, recentCommands(marks, now));
-  if (!found || !closeOnEnd(found.kind)) return false;
-  const manager = (globalThis as { __cloudsshTabManager?: { tabs?: Map<string, TabLike> } }).__cloudsshTabManager;
-  const tab = manager?.tabs ? [...manager.tabs.values()].find((item) => item.terminal === terminal) : undefined;
-  if (!tab) return false;
-  const words = text();
-  const message = words.closed.replace('{name}', tab.label ?? '').replace('{reason}', words[found.reason]);
-  // 不在网页版处理关闭事件的过程中销毁终端
-  setTimeout(() => {
-    if (closeTabById(tab.id)) notify(message, { variant: 'info', duration: 3500 });
-  }, 0);
-  return true;
+  const commands = recentCommands(marks, now);
+  const found = classifyEnd(marks.__cloudsshClosingEvent, commands);
+  if (!found) return false;
+  if (closeOnEnd(found.kind) && document.visibilityState !== 'hidden') {
+    const manager = (globalThis as { __cloudsshTabManager?: { tabs?: Map<string, TabLike> } }).__cloudsshTabManager;
+    const tab = manager?.tabs ? [...manager.tabs.values()].find((item) => item.terminal === terminal) : undefined;
+    if (tab) {
+      const words = text();
+      const message = words.closed.replace('{name}', tab.label ?? '').replace('{reason}', words[found.reason]);
+      // 不在网页版处理关闭事件的过程中销毁终端
+      setTimeout(() => {
+        if (closeTabById(tab.id)) notify(message, { variant: 'info', duration: 3500 });
+      }, 0);
+      return true;
+    }
+  }
+  // 标签留着、你刚执行了重启命令：不去恢复（会话已经没了），等服务器回来自动连上；关机的说明一下、按键再连
+  if (found.reason === 'rebooting') {
+    if (poweredOff(commands)) noteServerPoweredOff(terminal);
+    else startRebootWait(terminal);
+    return true;
+  }
+  return false;
 }
 
 let installed = false;

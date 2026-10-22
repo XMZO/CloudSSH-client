@@ -12,6 +12,8 @@
  *   恢复一直不成满 20 秒才回退新连接（会话真没了，如 Worker 重新部署过，也只多等这么久）。握手状态码由桌面端网络日志记录
  * - 保持期（与服务端 SESSION_GRACE_PERIOD_MS 对齐，留 2 秒余量）用完或原会话没了：说明原因，清掉恢复凭据，
  *   交回网页版的完整重连（从第 1 次开始算，不占用恢复期间的次数）
+ * 服务器那头结束了会话（Worker 报 session_ended / remote_closed）时不恢复：Worker 不保留这种会话，直接完整重连；
+ * 你刚输入了重启命令的，由 ./reboot-wait.ts 等服务器回来再连。
  * 恢复尝试不计入网页版完整重连的 5 次上限（否则重试几次后网页版就不再重连了）。恢复成功（session_resumed）时
  * 构建钩子清掉这一轮的状态；锚点失效时这项增强自动失效，行为与网页版一致。
  */
@@ -58,6 +60,8 @@ interface SessionTerminal {
   scheduleFallbackReconnect(): void;
   /** 构建钩子：刚关闭的那条连接是否就绪过（就绪过的断开是新一轮） */
   __cloudsshWasReady?: boolean;
+  /** 构建钩子：Worker 关闭这条连接前报的原因（最后一个带 event 的 status / error） */
+  __cloudsshClosingEvent?: unknown;
   /** 构建钩子：Shell 未就绪时的键盘输入先调用它（立即执行排定的重连） */
   __cloudsshReconnectNow?: () => boolean;
   __cloudsshResumeCycle?: ResumeCycle;
@@ -109,7 +113,7 @@ function attempt(term: SessionTerminal, cycle: ResumeCycle, announce = true): vo
  * 光标停在它们下面的行首、那一行还在可见区域里时，返回把它们清掉的控制序列；否则（有别的输出、已滚出屏幕）返回空串、不动。
  * 在 xterm 的写入回调里调用（读的是已解析的缓冲区）
  */
-function collapseSequence(xterm: Terminal, line: IMarker | undefined): string {
+export function collapseSequence(xterm: Terminal, line: IMarker | undefined): string {
   if (!line || line.isDisposed) return '';
   const buffer = xterm.buffer.active;
   if (buffer.type !== 'normal' || buffer.cursorX !== 0) return '';
@@ -189,8 +193,22 @@ function giveUp(term: SessionTerminal, reason: string, cause: string): void {
   term.scheduleFallbackReconnect();
 }
 
+/**
+ * 服务器那头结束了会话（Shell 退出、SSH 服务器关了连接：重启、sshd 被停、被踢下线）时 Worker 直接关掉会话、不进保持期，
+ * 恢复必定失败，试了只会多出一串“连接错误 / 正在尝试恢复会话”、白等十几秒。这时不恢复，直接交回网页版完整重连
+ */
+const SERVER_ENDED_EVENTS: ReadonlySet<unknown> = new Set(['session_ended', 'remote_closed']);
+
 /** 网页版排定重连时先调用；返回 true 表示这次由这里处理（网页版不再排定） */
 function resumeRetry(term: SessionTerminal): boolean {
+  if (term.__cloudsshWasReady === true && SERVER_ENDED_EVENTS.has(term.__cloudsshClosingEvent)) {
+    connectionDiagnostic(term, 'resume-skipped', { cause: term.__cloudsshClosingEvent });
+    term.__cloudsshResumeCycle?.line?.dispose();
+    term.__cloudsshResumeCycle = undefined;
+    term.activeSessionId = null;
+    term.activeResumeToken = null;
+    return false;
+  }
   if (!term.activeSessionId || !term.activeResumeToken) {
     term.__cloudsshResumeCycle = undefined;
     return false;
