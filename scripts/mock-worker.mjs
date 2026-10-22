@@ -1445,6 +1445,9 @@ function attachShell(rawWs, url) {
   };
   /** 客户端报告的终端尺寸（resize 消息），size 命令显示它 */
   const term = { cols: 80, rows: 24 };
+  /** 像 readline：上次处理窗口变化信号时读到的尺寸，与还没处理的信号（见 resize 消息的处理） */
+  let readlineSize = { cols: 80, rows: 24 };
+  let winchTimer = null;
   /**
    * pager 命令：像 less / nano 那样进备用屏幕、开光标键应用模式，上 / 下方向键滚动 200 行内容，q 退出。
    * 状态行显示收到的上 / 下键数，用来调试手机端在全屏程序里的滑动（alt-scroll）。
@@ -1544,9 +1547,21 @@ function attachShell(rawWs, url) {
           // 像远端终端尺寸变了发 SIGWINCH：readline 在当前行重画提示符和没打完的命令（光标回到原来的字上），全屏程序整屏重画
           if (changed && nano) drawNano();
           else if (changed && pager) drawPager();
-          else if (changed && !busy) {
-            console.log('窗口变化：重画提示符');
-            write(`\r\x1b[K${PROMPT}${line}${'\b'.repeat(cellWidth([...line].slice(pos).join('')))}`);
+          else if (changed && !winchTimer) {
+            // 像真的 bash / readline：信号稍后才处理，连着来的几次合成一次；处理时读到的尺寸和它上次记下的一样就不重画
+            // （客户端先窄一列再改回来、两次挨得太近时就是这样：等于没变，提示符不会重画）
+            winchTimer = setTimeout(() => {
+              winchTimer = null;
+              const same = readlineSize.cols === term.cols && readlineSize.rows === term.rows;
+              readlineSize = { cols: term.cols, rows: term.rows };
+              if (same) {
+                console.log('窗口变化：合并后尺寸没变，不重画');
+                return;
+              }
+              if (busy) return;
+              console.log('窗口变化：重画提示符');
+              write(`\r\x1b[K${PROMPT}${line}${'\b'.repeat(cellWidth([...line].slice(pos).join('')))}`);
+            }, 30);
           }
         }
         if (msg.type === 'agent_start') mockAgentReply(ws, msg);

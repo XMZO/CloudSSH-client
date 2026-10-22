@@ -287,10 +287,11 @@ const COMMON_HOOKS: Hook[] = [
     inject: "    if (!this.sessionReady && source === 'keyboard' && (this as any).__cloudsshReconnectNow?.() === true) return;\n",
   },
   // 断线后秒级恢复（session_resumed）接上的是断线前那个 Shell：它早把提示符打印过了、不会再打印，而网页版在后面写了
-  // “连接已关闭 / 正在重新连接 / 已成功恢复会话”，光标停在新的空行上，要按一下键才出现提示符。恢复后把宽度减一再改回去：
-  // 远端终端尺寸真的变了才会发窗口变化信号（SIGWINCH），bash / zsh / fish 收到后在当前行重画提示符和没打完的命令，
-  // vim、top 这类全屏程序整屏重画（顺带盖掉写在它们画面上的断线提示）。断线期间暂存的输出在 session_resumed 之后补发，
-  // 重画排在它们后面
+  // “连接已关闭 / 正在重新连接 / 已成功恢复会话”，光标停在新的空行上，要按一下键才出现提示符。恢复后让远端终端尺寸
+  // 变一下（窄一列再改回去）：bash / zsh / fish 收到窗口变化信号（SIGWINCH）在当前行重画提示符和没打完的命令，vim、top
+  // 这类全屏程序整屏重画（顺带盖掉写在它们画面上的断线提示）。两次改动要分开发——挨着到达时 bash 合成一次、尺寸没变
+  // 就不重画；分开的时机由 overrides/shared/terminal/resume-redraw.ts 掌握（等补发的输出停下、等第一次重画）。
+  // 它没装上时退回挨着发
   {
     file: '/upstream/frontend/src/terminal.ts',
     anchor: '            this.onSessionReady?.();\n            this.startHeartbeat();\n',
@@ -298,7 +299,7 @@ const COMMON_HOOKS: Hook[] = [
       // 恢复成功：结束 overrides/shared/terminal/resume-retry.ts 的这一轮重试
       '            (this as any).__cloudsshResumeCycle?.line?.dispose?.();',
       '            (this as any).__cloudsshResumeCycle = undefined;',
-      '            {',
+      '            if ((globalThis as any).__cloudsshRedrawAfterResume?.(this) !== true) {',
       '              const size = this.getTerminalSize();',
       '              if (size.cols > 2) {',
       '                this.sendResize({ ...size, cols: size.cols - 1 });',
