@@ -512,6 +512,23 @@ const COMMON_HOOKS: Hook[] = [
     anchor: '      tabEl.dataset.tabId = tab.id;\n',
     inject: '      tabEl.dataset.sortKey = tab.id;\n',
   },
+  // 关掉当前标签后网页版切到剩下的最后一个（最右边），像浏览器那样改为切到右边紧挨着的（关的是最右边的就切到左边紧挨着的）。
+  // 删掉之前记下它排第几，网页版取 remaining 的最后一个，这里把要切到的那个追加到最后；锚点失效时照网页版
+  {
+    file: '/upstream/frontend/src/tab-manager.ts',
+    anchor: '    tab.terminal.dispose();\n    tab.containerEl.remove();\n',
+    inject: '    (this as any).__cloudsshClosedIndex = Array.from(this.tabs.keys()).indexOf(tabId);\n',
+  },
+  {
+    file: '/upstream/frontend/src/tab-manager.ts',
+    anchor: '      const remaining = Array.from(this.tabs.keys());\n',
+    inject: [
+      '      const cloudsshClosedAt = (this as any).__cloudsshClosedIndex;',
+      "      if (typeof cloudsshClosedAt === 'number' && cloudsshClosedAt >= 0 && remaining.length > 0)",
+      '        remaining.push(remaining[Math.min(cloudsshClosedAt, remaining.length - 1)]);',
+      '',
+    ].join('\n'),
+  },
   {
     // 同上：切换标签后网页版收起命令面板（每次清空搜索、重新加载列表）。保持着它时不收起，只同步分段条，
     // 后台看一眼片段有没有在别处改过（有变化才重画）
