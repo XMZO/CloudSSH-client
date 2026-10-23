@@ -1,6 +1,6 @@
 {
   "$comment": "客户端版本号与版本代号的唯一来源。修改请运行 node scripts/version.mjs set <版本号> <中文代号> <英文代号>，不要手改各处 package.json / Cargo.toml / tauri.conf.json",
-  "version": "0.3.54",
+  "version": "0.3.55",
   "codename": {
     "zh": "牛郎",
     "en": "Altair"
