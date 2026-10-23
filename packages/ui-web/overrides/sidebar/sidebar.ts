@@ -216,11 +216,18 @@ function applyLayout(): void {
   html.classList.toggle('cs-sb-railed', state.visible && state.collapsed);
 }
 
-let refitFrame = 0;
-/** 侧栏宽度变化不会触发窗口 resize，主动通知终端重新适配列数 */
+let refitQueued = false;
+/**
+ * 侧栏宽度变化不会触发窗口 resize，主动通知终端重新适配列数：同一个任务里合并成一次、当场适配，
+ * 和这次布局变化画在同一帧（原来排到下一帧，终端总比侧栏晚一帧）
+ */
 function refitTerminal(): void {
-  cancelAnimationFrame(refitFrame);
-  refitFrame = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  if (refitQueued) return;
+  refitQueued = true;
+  queueMicrotask(() => {
+    refitQueued = false;
+    window.dispatchEvent(new Event('resize'));
+  });
 }
 
 function setCollapsed(collapsed: boolean): void {
@@ -768,6 +775,8 @@ resizer.addEventListener('pointerdown', (event) => {
   const onMove = (move: PointerEvent) => {
     state.width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(move.clientX)));
     applyLayout();
+    // 拖动中终端就跟着重新排版（原来松手才适配，拖动时文字被挤出右边、跟不上）；服务器那边等停下来才通知一次
+    refitTerminal();
   };
   const onUp = () => {
     resizer.removeEventListener('pointermove', onMove);

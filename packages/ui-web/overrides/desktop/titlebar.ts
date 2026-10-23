@@ -41,7 +41,7 @@ function panelsOf(id: string): NodeListOf<HTMLElement> {
 }
 
 let dockWidth = 0;
-let dockFrame = 0;
+let refitQueued = false;
 /** 面板还没打开、但这块宽度要先留着（drawer-follow.ts：新连接的面板连上后才有，先放占位） */
 let dockHold = 0;
 
@@ -68,9 +68,14 @@ function syncDock(): void {
   const html = document.documentElement;
   html.style.setProperty('--cs-dock-w', `${width}px`);
   html.classList.toggle('cs-docked', width > 0);
-  // 终端按新宽度重新计算列数
-  cancelAnimationFrame(dockFrame);
-  dockFrame = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  // 终端按新宽度重新计算列数：同一个任务里合并成一次、当场适配（原来排到下一帧，终端总比面板晚一帧，
+  // 拖面板边缘时文字跟不上、有拖影）
+  if (refitQueued) return;
+  refitQueued = true;
+  queueMicrotask(() => {
+    refitQueued = false;
+    window.dispatchEvent(new Event('resize'));
+  });
 }
 
 /** 终端工具：代点网页版顶栏里的按钮 */
