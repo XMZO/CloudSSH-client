@@ -20,6 +20,7 @@ import { installHeartbeatGuard } from './heartbeat-guard';
 import { installSessionEnd } from '../session-end';
 import { installResizeSettle } from './resize-settle';
 import { installResizeRender } from './resize-render';
+import { installBottomAnchor } from './bottom-anchor';
 import { confirmLinkHandler, setLinkTerminalResolver } from '../link-confirm';
 import './terminal.css';
 
@@ -63,6 +64,8 @@ function onCreated(term: Terminal): void {
   installResizeSettle(term);
   // 改尺寸后先按新的折行重标关键词高亮，再当场重画：不留一帧空白画布，也不留几帧错位的高亮（./resize-render.ts）
   installResizeRender(term, () => highlighters.get(term)?.rescanNow());
+  // 不足一行的余量放上面，改高度时提示符贴着底边连续移动、不整行跳（./bottom-anchor.ts）
+  if (bottomAnchor) installBottomAnchor(term);
   highlighters.set(
     term,
     new TerminalHighlighter(term, () => compiled, (hex) => adjust(hex))
@@ -142,10 +145,13 @@ async function loadFont(): Promise<void> {
 }
 
 let installed = false;
+/** 终端贴着底边放（./bottom-anchor.ts）：电脑端开启；手机端键盘弹出另有一套布局（mobile/keyboard-shift.ts），不开 */
+let bottomAnchor = false;
 
-export function installTerminalEnhancements(): void {
+export function installTerminalEnhancements(options: { bottomAnchor?: boolean } = {}): void {
   if (installed) return;
   installed = true;
+  bottomAnchor = options.bottomAnchor === true;
   const scope = globalThis as {
     __cloudsshTerminalCreated?: (term: Terminal) => void;
     __cloudsshTerminalDisposed?: (term: Terminal) => void;

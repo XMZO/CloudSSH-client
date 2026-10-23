@@ -28,8 +28,8 @@ import { mountDesktopShell } from './desktop';
 import { mountSidebar } from './sidebar/sidebar';
 
 document.documentElement.dataset.cloudsshClient = 'desktop';
-// 要在网页版创建第一个终端之前装好（构建钩子在创建终端时回调）
-installTerminalEnhancements();
+// 要在网页版创建第一个终端之前装好（构建钩子在创建终端时回调）；电脑端终端贴着底边放（拖窗口改高度时文字跟着走）
+installTerminalEnhancements({ bottomAnchor: true });
 // 命令行里单击把光标移过去；nano 没开鼠标时第一次单击替它打开（shared/terminal/click-cursor.ts，与手机端轻点共用）
 installMouseClickCursor(terminalFor);
 
