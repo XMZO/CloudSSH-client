@@ -501,6 +501,19 @@ const COMMON_HOOKS: Hook[] = [
     inject: '    (globalThis as any).__cloudsshDrawerProgrammatic?.();\n',
   },
   {
+    // 连续改尺寸（拖动窗口边缘）时只把最后的尺寸告诉服务器（overrides/shared/terminal/resize-defer.ts，电脑端安装）：
+    // 网页版每变一次就通知一次，远端程序按每个中间尺寸各整屏重画一遍、终端一直闪。由它接手时这里只更新 trzsz 的列数
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: '      this.terminal.onResize(({ cols, rows }) => {\n',
+    inject: [
+      '        if ((globalThis as any).__cloudsshDeferResize?.(this) === true) {',
+      '          this.trzszFilter?.setTerminalColumns(cols);',
+      '          return;',
+      '        }',
+      '',
+    ].join('\n'),
+  },
+  {
     // 电脑上拖动会话标签调换顺序（overrides/desktop/tab-sort.ts）：拖动期间不重绘标签栏（连上、状态点变化都会整栏重画，
     // 会把拖到一半的标签冲掉），落下后它按新顺序补画；每个标签带上排序键
     file: '/upstream/frontend/src/tab-manager.ts',

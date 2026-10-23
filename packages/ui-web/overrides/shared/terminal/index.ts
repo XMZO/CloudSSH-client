@@ -19,6 +19,7 @@ import { installIdleReminder } from './idle-reminder';
 import { installHeartbeatGuard } from './heartbeat-guard';
 import { installSessionEnd } from '../session-end';
 import { installResizeSettle } from './resize-settle';
+import { installResizeRender } from './resize-render';
 import { confirmLinkHandler, setLinkTerminalResolver } from '../link-confirm';
 import './terminal.css';
 
@@ -60,6 +61,8 @@ function onCreated(term: Terminal): void {
   term.options.linkHandler = confirmLinkHandler;
   // 尺寸变化后远端的整屏重画攒齐了一次显示，不一截截地闪（./resize-settle.ts）
   installResizeSettle(term);
+  // 改尺寸后当场重画，不留一帧空白画布（./resize-render.ts）
+  installResizeRender(term);
   highlighters.set(
     term,
     new TerminalHighlighter(term, () => compiled, (hex) => adjust(hex))

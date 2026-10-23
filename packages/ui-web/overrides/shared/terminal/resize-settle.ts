@@ -17,6 +17,14 @@ const MAX_HOLD_MS = 400;
 
 type Data = string | Uint8Array;
 
+/** 每个终端“从现在起开始攒”的入口 */
+const holders = new WeakMap<Terminal, () => void>();
+
+/** 尺寸变化晚一点才告诉服务器时（./resize-defer.ts），从发出那一刻起重新开始攒：远端的重画在这之后才到 */
+export function holdOutputAfterResize(term: Terminal): void {
+  holders.get(term)?.();
+}
+
 export function installResizeSettle(term: Terminal): void {
   const write = term.write.bind(term);
   let holdUntil = 0;
@@ -35,9 +43,11 @@ export function installResizeSettle(term: Terminal): void {
     for (const [data, callback] of items) write(data, callback);
   };
 
-  term.onResize(() => {
+  const hold = () => {
     holdUntil = performance.now() + WAIT_MS;
-  });
+  };
+  holders.set(term, hold);
+  term.onResize(hold);
 
   term.write = (data: Data, callback?: () => void) => {
     if (!pending.length && performance.now() > holdUntil) {

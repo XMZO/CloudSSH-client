@@ -36,6 +36,7 @@ import { qt } from '../shared/qr-sync/i18n';
 import { installPalette, registerPaletteAction } from './palette';
 import { openQrSync } from './qr-sync';
 import { installSftpDragDrop } from './sftp-drop';
+import { installResizeDefer } from '../shared/terminal/resize-defer';
 import { mountSnippetEnhancements } from './snippets';
 import { installTabMiddleClose } from './tab-close';
 import { installTabSort } from './tab-sort';
@@ -103,6 +104,8 @@ export async function mountDesktopShell(): Promise<void> {
     installPalette();
     installDesktopNotifications();
     installSftpDragDrop();
+    // 拖动窗口边缘时只把最后的尺寸告诉服务器，远端程序只重画一次（../shared/terminal/resize-defer.ts）
+    installResizeDefer();
     installCredentialPresets({ vault: bridge?.vault ?? null, scope: info?.instance.id ? `instance:${info.instance.id}` : null });
     registerPaletteAction(() => ({
       title: presetText('title'),
