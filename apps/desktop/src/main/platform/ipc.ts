@@ -174,7 +174,10 @@ export function registerIpc(): void {
       senderInstance(event);
       if (event.senderFrame !== event.sender.mainFrame) return;
       const palette = normalizePalette(input);
-      if (palette && setPalette(palette)) applyManagerPalette(palette);
+      if (!palette) return;
+      // 窗口底色跟着页面背景：拖动改窗口大小时，新露出的边缘在页面画上来之前显示的是窗口底色，和主题不一样就闪一条
+      BrowserWindow.fromWebContents(event.sender)?.setBackgroundColor(palette.bg);
+      if (setPalette(palette)) applyManagerPalette(palette);
     } catch {
       // 非实例页面不理会
     }

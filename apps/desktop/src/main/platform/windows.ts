@@ -17,6 +17,7 @@ import { createLogger } from '../logger';
 import type { ResolvedUi } from '../ui/providers';
 import { loginWithGitHub } from './oauth';
 import { prepareInstanceSession } from './session';
+import { currentPalette } from './ui-palette';
 
 const log = createLogger('window');
 
@@ -197,7 +198,8 @@ function createInstanceWindow(instance: InstanceConfig, replace?: BrowserWindow)
     show: false,
     title: windowTitle(instance),
     icon: resourcePath('icon.png'),
-    backgroundColor: '#131313',
+    // 上次页面报来的主题背景（./ui-palette.ts）：拖动改窗口大小时新露出的边缘不闪别的颜色；页面报配色后随主题更新
+    backgroundColor: currentPalette()?.bg ?? '#131313',
     autoHideMenuBar: false,
     webPreferences: {
       session: prepared.session,

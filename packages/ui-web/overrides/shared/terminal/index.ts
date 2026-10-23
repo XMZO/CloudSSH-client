@@ -61,8 +61,8 @@ function onCreated(term: Terminal): void {
   term.options.linkHandler = confirmLinkHandler;
   // 尺寸变化后远端的整屏重画攒齐了一次显示，不一截截地闪（./resize-settle.ts）
   installResizeSettle(term);
-  // 改尺寸后当场重画，不留一帧空白画布（./resize-render.ts）
-  installResizeRender(term);
+  // 改尺寸后先按新的折行重标关键词高亮，再当场重画：不留一帧空白画布，也不留几帧错位的高亮（./resize-render.ts）
+  installResizeRender(term, () => highlighters.get(term)?.rescanNow());
   highlighters.set(
     term,
     new TerminalHighlighter(term, () => compiled, (hex) => adjust(hex))

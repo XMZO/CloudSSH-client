@@ -124,6 +124,18 @@ export class TerminalHighlighter {
     }, SCAN_DELAY);
   }
 
+  /**
+   * 终端改了尺寸：马上按新的排版重新标（由 ./resize-render.ts 在重画这一帧之前调用）。
+   * 原来等 SCAN_DELAY 再扫，改尺寸后的几帧里高亮还挂在旧的行列上（折行变了），落在错的字上或消失，
+   * 拖动窗口、侧栏时一路改尺寸，颜色就一闪一闪
+   */
+  rescanNow(): void {
+    if (this.disposed) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = 0;
+    this.scan();
+  }
+
   /** 规则或配色变了：清掉重来 */
   refresh(): void {
     this.clear();
