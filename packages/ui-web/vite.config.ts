@@ -627,6 +627,19 @@ const COMMON_HOOKS: Hook[] = [
     inject: "    globalThis.dispatchEvent?.(new CustomEvent('cloudssh:os-detected', { detail: { serverId, os } }));\n",
   },
   {
+    // 终端里选中文字后点浮出的“问 AI 助手”：网页版只收起了 SFTP 就打开 AI 助手，命令面板开着时两个面板同时开着、
+    // 叠在一起，分段条也还停在“命令”上。打开了 AI 助手就照抽屉互斥收起命令面板，并同步分段条
+    file: '/upstream/frontend/src/main.ts',
+    anchor: "askAISelectionButton?.addEventListener('click', () => {\n  tabManager?.askAIAboutActiveSelection();\n",
+    inject: [
+      '  if (tabManager?.getActiveTab()?.agentPanel?.isOpen) {',
+      '    snippetManager.close();',
+      '    syncDrawerSegmentedControl();',
+      '  }',
+      '',
+    ].join('\n'),
+  },
+  {
     // AI 面板的 hide() 无论原来开没开都会在下一帧重新适配终端；回到服务器列表时网页版对每个标签都调一次，
     // 白白重排所有终端（手机上一次要几十毫秒，页面切换因此卡一下）。面板原本就没开时布局没变，跳过适配。
     // 两段注入用实例属性传值：任一锚点失效时条件不成立，行为与网页版一致
