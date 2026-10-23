@@ -165,11 +165,12 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
   border-radius: 4px;
 }
 
+/* 节点列表上下紧凑：分组与节点都是 28px 一行（原来 32 / 34px，一屏放得下更多节点） */
 .cs-sb-group {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 32px;
+  height: 28px;
   padding: 0 8px 0 4px;
   border-radius: 6px;
   cursor: pointer;
@@ -212,8 +213,8 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 34px;
+  gap: 8px;
+  height: 28px;
   padding: 0 4px 0 8px;
   border-radius: 6px;
   cursor: default;
@@ -237,8 +238,8 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
   content: '';
   position: absolute;
   left: 0;
-  top: 7px;
-  bottom: 7px;
+  top: 6px;
+  bottom: 6px;
   width: 3px;
   border-radius: 2px;
   background: var(--accent);
@@ -249,9 +250,9 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   background: var(--accent);
   color: var(--on-accent);
   font-size: 12px;
@@ -267,8 +268,8 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
 }
 
 .cs-sb-avatar.has-os svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 
 .cs-sb-name {
@@ -300,8 +301,8 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
 
 .cs-sb-go {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   visibility: hidden;
 }
 
