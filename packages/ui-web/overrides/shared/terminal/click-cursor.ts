@@ -9,11 +9,8 @@
  *   “$ / # / % / > / ❯ … 加空格”之后是输入开头），不往行尾以外走，也不走进 zsh-autosuggestions、fish 那种光标后面
  *   灰色的自动建议（按“右”会接受建议）。点在别的行、往回翻着历史时不动
  * - 全屏编辑器（备用屏幕、括号粘贴打开）：开了鼠标模式时点击本来就会报给编辑器，它自己定位，最准，不用管。
- *   没开鼠标模式时不模拟（Tab、宽字符、折行、标题栏和帮助栏都可能算错）：
- *   · 能确定是 nano（第一行是反显或带底色的“GNU nano x.y”标题栏）：替用户按一下 Alt+M 打开 nano 的鼠标支持，等鼠标
- *     模式打开后把这一下点击补报给 nano，光标就到点的地方。每次进 nano 最多自动打开一次（用户自己按 Alt+M 关掉后，
- *     这次不再打开；退出 nano、回到普通屏幕后重新算）
- *   · 其他编辑器（vim 等）：不替用户按键，只提示一次怎么打开鼠标支持
+ *   没开鼠标模式时不模拟（Tab、宽字符、折行、标题栏和帮助栏都可能算错），也不替用户按键（nano、vim 都一样），
+ *   只提示一次怎么打开鼠标支持
  * - 调用方（手机端 tap-cursor.ts、桌面端 installMouseClickCursor）只交来干脆的单击 / 轻点；这里再排除：有选区、
  *   快捷键栏按着 Ctrl / Alt、刚打的字还没回显、上一次移动还没到位
  * 方向键按光标键模式编码（ESC [ D 或 ESC O D），经 xterm 的 input() 走网页版的输入管线（Shell 就绪、trzsz 照旧）。
@@ -27,8 +24,6 @@ const ECHO_WAIT_MS = 1500;
 /** 移动后等光标到位的最长时间 */
 const SETTLE_MS = 1200;
 const MAX_STEPS = 500;
-/** 按下 Alt+M 后等 nano 打开鼠标模式的最长时间 */
-const NANO_WAIT_MS = 1500;
 /** 提示符结尾的常见符号（后面跟一个空格） */
 const PROMPT_MARKS = new Set(['$', '#', '%', '>', '❯', '➜', '»', 'λ', '→', ']']);
 
@@ -37,37 +32,10 @@ interface Activity {
   output: number;
   /** 上一次移动的目标（缓冲区绝对行、列），光标到位或超时前不接受新的点击 */
   pending: { row: number; col: number; until: number } | null;
-  /** 这次进备用屏幕后已经替 nano 打开过鼠标（退回普通屏幕时清掉） */
-  nanoTried: boolean;
 }
 
 const activity = new WeakMap<Terminal, Activity>();
 let hinted = false;
-let nanoNoticeShown = false;
-/** 补报给 nano 的点击：桌面端的点击检测不要再处理它 */
-let replaying = false;
-/**
- * 手机端：替 nano 打开鼠标后，这一下轻点浏览器自己补发的兼容鼠标事件（mousedown / mouseup / click）可能晚到、
- * 正好赶上鼠标模式已经打开，nano 就会收到同一位置的两次点击，当成双击设下标记（[ Mark Set ]）。
- * 这段时间里吞掉它们，只留补报的那一下
- */
-const COMPAT_SWALLOW_MS = 700;
-let swallowCompatUntil = 0;
-let compatGuardInstalled = false;
-
-function guardCompatMouse(): void {
-  swallowCompatUntil = Date.now() + COMPAT_SWALLOW_MS;
-  if (compatGuardInstalled) return;
-  compatGuardInstalled = true;
-  const swallow = (event: Event) => {
-    if (replaying || Date.now() >= swallowCompatUntil) return;
-    if (!(event.target instanceof Element) || !event.target.closest('.xterm')) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  };
-  for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) document.addEventListener(type, swallow, true);
-}
-
 function modifierArmed(): boolean {
   return !!document.querySelector('#mobile-terminal-toolbar [data-mobile-modifier][aria-pressed="true"]');
 }
@@ -76,12 +44,9 @@ function modifierArmed(): boolean {
 export function trackTerminal(term: Terminal): Activity {
   let state = activity.get(term);
   if (!state) {
-    const created: Activity = { input: 0, output: 0, pending: null, nanoTried: false };
+    const created: Activity = { input: 0, output: 0, pending: null };
     term.onData(() => (created.input = Date.now()));
     term.onWriteParsed(() => (created.output = Date.now()));
-    term.buffer.onBufferChange((buffer) => {
-      if (buffer.type === 'normal') created.nanoTried = false;
-    });
     activity.set(term, created);
     state = created;
   }
@@ -179,56 +144,6 @@ function moveCursor(term: Terminal, state: Activity, target: { row: number; col:
   term.input(key.repeat(count), true);
 }
 
-/** 第一行是不是 nano 的标题栏：“GNU nano x.y”，反显或带底色 */
-export function isNano(term: Terminal): boolean {
-  const buffer = term.buffer.active;
-  if (buffer.type !== 'alternate') return false;
-  const line = buffer.getLine(buffer.viewportY);
-  if (!line || !/^\s*GNU nano \d+(\.\d+)*\b/.test(line.translateToString(true))) return false;
-  const cell = line.getCell(0);
-  return !!cell && (cell.isInverse() !== 0 || !cell.isBgDefault());
-}
-
-/** 等鼠标模式打开（nano 处理了 Alt+M）；超时返回 false */
-function waitForMouse(term: Terminal): Promise<boolean> {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    const check = () => {
-      if (term.modes.mouseTrackingMode !== 'none') return resolve(true);
-      if (Date.now() - started > NANO_WAIT_MS) return resolve(false);
-      setTimeout(check, 40);
-    };
-    check();
-  });
-}
-
-/** 把这一下点击补报给已经开了鼠标模式的程序（xterm 按协商好的编码发出去） */
-function replayClick(screen: HTMLElement, clientX: number, clientY: number): void {
-  replaying = true;
-  try {
-    for (const type of ['mousedown', 'mouseup'] as const) {
-      screen.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: type === 'mousedown' ? 1 : 0, view: window }));
-    }
-  } finally {
-    replaying = false;
-  }
-}
-
-async function enableNanoMouse(term: Terminal, state: Activity, screen: HTMLElement, clientX: number, clientY: number): Promise<void> {
-  state.nanoTried = true;
-  // Alt+M：nano 的“鼠标支持”开关
-  term.input('\x1bm', true);
-  if (!(await waitForMouse(term))) {
-    showEditorHint();
-    return;
-  }
-  if (!nanoNoticeShown) {
-    nanoNoticeShown = true;
-    notify(ht('nanoMouseOn'), { duration: 6000 });
-  }
-  replayClick(screen, clientX, clientY);
-}
-
 function showEditorHint(): void {
   if (hinted) return;
   hinted = true;
@@ -237,26 +152,16 @@ function showEditorHint(): void {
 
 /**
  * 一次干脆的单击 / 轻点落在终端上（调用方已经排除了拖动、长按、双击、按下时就有选区的情况）：
- * 命令行里把光标移过去；nano 没开鼠标时替它打开并补报这一下；别的编辑器没开鼠标时提示一次
+ * 命令行里把光标移过去；全屏编辑器没开鼠标时提示一次怎么打开
  */
-export function cursorClick(term: Terminal, screen: HTMLElement, clientX: number, clientY: number, source: 'touch' | 'mouse' = 'mouse'): void {
-  if (replaying) return;
+export function cursorClick(term: Terminal, screen: HTMLElement, clientX: number, clientY: number): void {
   const state = trackTerminal(term);
   if (term.hasSelection() || modifierArmed()) return;
   // 括号粘贴没开：没有行编辑器在等输入（命令在跑、less、sh……），不动
   if (!term.modes.bracketedPasteMode) return;
   const mouse = term.modes.mouseTrackingMode !== 'none';
   if (term.buffer.active.type === 'alternate') {
-    if (mouse) return;
-    if (isNano(term)) {
-      if (!state.nanoTried) {
-        // 手机端：这一下轻点浏览器还会补发鼠标事件，鼠标模式打开后别让它再报给 nano（不然成了双击）
-        if (source === 'touch') guardCompatMouse();
-        void enableNanoMouse(term, state, screen, clientX, clientY);
-      }
-      return;
-    }
-    showEditorHint();
+    if (!mouse) showEditorHint();
     return;
   }
   if (mouse) return;
@@ -284,7 +189,7 @@ export function installMouseClickCursor(terminalFor: (node: Element | null) => T
     'mousedown',
     (event) => {
       press = null;
-      if (replaying || event.button !== 0 || event.detail > 1 || event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
+      if (event.button !== 0 || event.detail > 1 || event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
       const target = event.target instanceof Element ? event.target : null;
       const screen = target?.closest<HTMLElement>('.xterm-screen');
       const term = screen ? terminalFor(screen) : null;
@@ -299,7 +204,7 @@ export function installMouseClickCursor(terminalFor: (node: Element | null) => T
     (event) => {
       const current = press;
       press = null;
-      if (!current || replaying || event.button !== 0) return;
+      if (!current || event.button !== 0) return;
       if (current.hadSelection || Date.now() - current.at > 500 || Math.hypot(event.clientX - current.x, event.clientY - current.y) > 4) return;
       // 等 xterm 处理完这次松开（拖动时它会生成选区）再判断
       setTimeout(() => cursorClick(current.term, current.screen, current.x, current.y), 0);

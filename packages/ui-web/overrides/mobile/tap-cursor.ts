@@ -1,7 +1,7 @@
 /**
  * 手机端：点哪光标就到哪。这里只认手势——干脆的单指轻点（350ms 内、移动不超过 10px，按下时没有选区，
  * 不在网页版的选择模式里）；判断与移动光标在 ../shared/terminal/click-cursor.ts（与桌面端单击共用）：
- * 命令行里按字符数发左 / 右键，nano 没开鼠标时替它打开并补报这一下，别的编辑器没开鼠标时提示一次。
+ * 命令行里按字符数发左 / 右键，全屏编辑器没开鼠标时提示一次怎么打开。
  */
 import type { Terminal } from '@xterm/xterm';
 import { terminalFor } from '../shared/terminal';
@@ -54,7 +54,7 @@ export function installTapCursor(): void {
       tap = null;
       if (!current || event.pointerId !== current.pointerId || current.hadSelection) return;
       if (Date.now() - current.at > TAP_MS || Math.hypot(event.clientX - current.x, event.clientY - current.y) > TAP_MOVE_PX) return;
-      cursorClick(current.term, current.screen, current.x, current.y, 'touch');
+      cursorClick(current.term, current.screen, current.x, current.y);
     },
     true
   );
