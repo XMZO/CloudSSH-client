@@ -9,15 +9,12 @@
  *   “$ / # / % / > / ❯ … 加空格”之后是输入开头），不往行尾以外走，也不走进 zsh-autosuggestions、fish 那种光标后面
  *   灰色的自动建议（按“右”会接受建议）。点在别的行、往回翻着历史时不动
  * - 全屏编辑器（备用屏幕、括号粘贴打开）：开了鼠标模式时点击本来就会报给编辑器，它自己定位，最准，不用管。
- *   没开鼠标模式时不模拟（Tab、宽字符、折行、标题栏和帮助栏都可能算错），也不替用户按键（nano、vim 都一样），
- *   只提示一次怎么打开鼠标支持
+ *   没开鼠标模式时什么都不做：不模拟（Tab、宽字符、折行、标题栏和帮助栏都可能算错），不替用户按键，也不弹提示
  * - 调用方（手机端 tap-cursor.ts、桌面端 installMouseClickCursor）只交来干脆的单击 / 轻点；这里再排除：有选区、
  *   快捷键栏按着 Ctrl / Alt、刚打的字还没回显、上一次移动还没到位
  * 方向键按光标键模式编码（ESC [ D 或 ESC O D），经 xterm 的 input() 走网页版的输入管线（Shell 就绪、trzsz 照旧）。
  */
 import type { IBufferCell, Terminal } from '@xterm/xterm';
-import { notify } from '../../../upstream/frontend/src/ui-feedback';
-import { ht } from './i18n';
 
 /** 打完字多久内还在等回显（光标位置不可信） */
 const ECHO_WAIT_MS = 1500;
@@ -35,7 +32,6 @@ interface Activity {
 }
 
 const activity = new WeakMap<Terminal, Activity>();
-let hinted = false;
 function modifierArmed(): boolean {
   return !!document.querySelector('#mobile-terminal-toolbar [data-mobile-modifier][aria-pressed="true"]');
 }
@@ -144,27 +140,17 @@ function moveCursor(term: Terminal, state: Activity, target: { row: number; col:
   term.input(key.repeat(count), true);
 }
 
-function showEditorHint(): void {
-  if (hinted) return;
-  hinted = true;
-  notify(ht('editorMouseHint'), { duration: 9000 });
-}
-
 /**
  * 一次干脆的单击 / 轻点落在终端上（调用方已经排除了拖动、长按、双击、按下时就有选区的情况）：
- * 命令行里把光标移过去；全屏编辑器没开鼠标时提示一次怎么打开
+ * 命令行里把光标移过去；全屏编辑器里不管（开了鼠标模式时点击由编辑器自己处理）
  */
 export function cursorClick(term: Terminal, screen: HTMLElement, clientX: number, clientY: number): void {
   const state = trackTerminal(term);
   if (term.hasSelection() || modifierArmed()) return;
   // 括号粘贴没开：没有行编辑器在等输入（命令在跑、less、sh……），不动
   if (!term.modes.bracketedPasteMode) return;
-  const mouse = term.modes.mouseTrackingMode !== 'none';
-  if (term.buffer.active.type === 'alternate') {
-    if (!mouse) showEditorHint();
-    return;
-  }
-  if (mouse) return;
+  // 全屏编辑器（备用屏幕）、开了鼠标模式：不动
+  if (term.buffer.active.type === 'alternate' || term.modes.mouseTrackingMode !== 'none') return;
   const now = Date.now();
   // 刚打的字还没回显：光标位置还不对
   if (state.input > state.output && now - state.input < ECHO_WAIT_MS) return;
