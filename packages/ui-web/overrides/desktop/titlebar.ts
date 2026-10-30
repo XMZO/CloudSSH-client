@@ -12,6 +12,7 @@
 import { onColorSchemeChange } from '../../upstream/frontend/src/theme';
 import { toggleAppMenu, toggleInstanceMenu } from './app-menus';
 import { el, icon, iconButton, opaqueHex } from './dom';
+import { mountGatewayStatus } from './gateway-status';
 import { dt, onLocaleChange } from './i18n';
 import { togglePalette } from './palette';
 import { toggleSettings } from './settings';
@@ -114,6 +115,8 @@ export function mountTitlebar(env: ChromeEnv): void {
     instance.disabled = true;
   }
   lead.append(menu, instance);
+  // 实例是入口网关（tools/gateway）时，显示两个号今天的用量和新会话放哪边（./gateway-status.ts）
+  mountGatewayStatus(lead);
 
   // ---------- 中间：服务器页、会话标签 ----------
   const nav = el('nav', 'cs-tb-nav');

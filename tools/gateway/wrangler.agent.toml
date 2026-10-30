@@ -1,0 +1,16 @@
+# CloudSSH 入口网关的 A 号代理（说明见 agent.js 开头）。部署在 A 号，即和 A 号 CloudSSH Worker 同一个 Cloudflare 账号。
+#
+# 部署（在本目录下，用 A 号的凭据）：
+#   npx wrangler deploy -c wrangler.agent.toml --var ROUTE_KEY:<A 号 /api/auth/me 的 github_id> --var USER_ID:<同上的 id>
+#   npx wrangler secret put AGENT_TOKEN -c wrangler.agent.toml   # 至少 32 个字符的随机串，网关里填同一串
+name = "cloudssh-agent"
+main = "agent.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# A 号 CloudSSH 的用户数据库（跨脚本绑定，不新建 Durable Object，也不需要迁移）。
+# script_name 要和 A 号上 CloudSSH Worker 的名字一致
+[[durable_objects.bindings]]
+name = "USER_DB"
+class_name = "UserDBDO"
+script_name = "cloudssh"

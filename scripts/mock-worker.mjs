@@ -6,6 +6,7 @@
  *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist   # 同时托管构建好的界面，浏览器直接打开调试
  *   node scripts/mock-worker.mjs 8788 --servers 90                 # 补足到 90 台服务器，看节点很多时的流畅度
  *   node scripts/mock-worker.mjs 8788 --anon                       # 未登录（匿名连接页），可走一遍模拟的 GitHub 登录
+ *   node scripts/mock-worker.mjs 8788 --gateway                    # 像入口网关（tools/gateway）：提供 /api/__gateway/status
  *   node scripts/mock-worker.mjs 8788 --ui packages/ui-web/dist --desktop-shim   # 模拟桌面客户端的桥接（左下角版本号与自动更新）
  *
  * 客户端把实例地址设为 http://127.0.0.1:8788（安卓模拟器可配合 adb reverse tcp:8788 tcp:8788）。
@@ -29,6 +30,7 @@ const mobileShim = args.includes('--mobile-shim');
 const desktopShim = args.includes('--desktop-shim');
 const shim = mobileShim ? 'mock-tauri.js' : desktopShim ? 'mock-desktop.js' : null;
 const anonymous = args.includes('--anon');
+const gateway = args.includes('--gateway');
 const now = Date.now();
 
 // ---------- 数据 ----------
@@ -198,6 +200,20 @@ async function handleHttp(req, res) {
   const method = req.method;
   console.log(method, path);
 
+  // 入口网关的状态（tools/gateway/gateway.js 的 GET /api/__gateway/status）：示例是 A 号额度用完、新会话放 B
+  if (path === '/api/__gateway/status') {
+    if (!gateway) return json(res, 404, { error: 'Not Found' });
+    return json(res, 200, {
+      gateway: true,
+      policy: 'fill',
+      limit: 0.9,
+      next: 'B',
+      usage: { at: Date.now(), A: { gbs: 14343, ratio: 1.103 }, B: { gbs: 412, ratio: 0.032 } },
+      aDown: { until: Date.now() + 9 * 3600_000, reason: 'Exceeded allowed duration in Durable Objects free tier.' },
+      mapped: { servers: 87, stale: 1 },
+      lastSync: { at: Date.now() - 3 * 60_000, errors: [] },
+    });
+  }
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });
   // 调试：从外面断开所有 Shell 连接（像网络抖了一下，不发关闭帧），在 pager、nano 里或打了半行命令时也能测断线恢复。
   // ?offline=秒：之后这么久“断网”（HTTP 与 WebSocket 都连不上，/__mock 除外）；?forget=1：同时丢掉保持中的会话（恢复会被拒绝）；

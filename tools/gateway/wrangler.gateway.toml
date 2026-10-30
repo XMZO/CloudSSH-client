@@ -1,0 +1,50 @@
+# CloudSSH 入口网关（说明见 gateway.js 开头）。部署在 B 号，即和 B 号 CloudSSH Worker 同一个 Cloudflare 账号。
+#
+# 部署（在本目录下，用 B 号的凭据）：
+#   1. npx wrangler d1 create cloudssh-gateway，把返回的 database_id 填到下面
+#   2. 按需改 [vars]，然后 npx wrangler deploy -c wrangler.gateway.toml
+#   3. Secret（npx wrangler secret put <名字> -c wrangler.gateway.toml）：
+#      AGENT_TOKEN        与 A 号代理相同的密钥
+#      ADMIN_TOKEN        至少 32 个字符；手动触发同步、经网关改数据后马上同步时用
+#      A_ACCOUNT_ID / B_ACCOUNT_ID              两边的 Cloudflare 账号 ID（看用量用；不填就不看用量，一直先用 A）
+#      A_ANALYTICS_TOKEN / B_ANALYTICS_TOKEN    两边各一个只有“Account Analytics: Read”权限的 API 令牌
+#   4. 把入口域名指给网关（自定义域或路由），客户端的实例地址填这个域名
+name = "cloudssh-gateway"
+main = "gateway.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+# 另一个号上 CloudSSH 的地址，和那边 A 号代理的地址
+A_ORIGIN = "https://cloudssh.example.com"
+A_AGENT_URL = "https://cloudssh-agent.example.workers.dev"
+# 本号 CloudSSH 用户的路由键和 id（单管理员密码模式是 -1 和 1）
+B_ROUTE_KEY = "-1"
+B_USER_ID = "1"
+# fill：先用 A，A 今天用到 A_LIMIT 再放 B（B 存着数据，要留着）；even：放今天用得少的那边
+POLICY = "fill"
+A_LIMIT = "0.9"
+
+# 本号 CloudSSH：服务绑定（同账号 Worker 之间不能走公网互相请求）和它的用户数据库
+[[services]]
+binding = "B_APP"
+service = "cloudssh"
+
+[[durable_objects.bindings]]
+name = "B_DB"
+class_name = "UserDBDO"
+script_name = "cloudssh"
+
+# 绑定自己：经网关改了数据后另起一次调用马上同步
+[[services]]
+binding = "SELF"
+service = "cloudssh-gateway"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudssh-gateway"
+database_id = "<填 wrangler d1 create 返回的 ID>"
+
+# 每 5 分钟双向同步一次、刷新两边用量
+[triggers]
+crons = ["*/5 * * * *"]

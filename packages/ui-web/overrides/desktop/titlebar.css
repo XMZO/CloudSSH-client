@@ -422,9 +422,54 @@ html.cs-chrome :is(#user-space-section, #auth-section) {
   }
 }
 
+/* 入口网关状态（./gateway-status.ts）：A / B 两个号今天的用量，新会话会放的那边高亮 */
+.cs-tb-gateway {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: 600 11px/1 var(--cs-ui-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cs-tb-gateway[hidden] {
+  display: none;
+}
+
+.cs-tb-gateway:hover {
+  background: var(--cs-hover);
+  color: var(--on-surface);
+}
+
+.cs-tb-gateway:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cs-tb-gw-side.is-next {
+  color: var(--accent);
+}
+
+.cs-tb-gw-side.is-down {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.cs-tb-gw-dot {
+  opacity: 0.5;
+}
+
 /* 窄窗口：实例名、“服务器”只留图标，把位置让给会话标签 */
 @media (max-width: 900px) {
-  .cs-tb :is(.cs-tb-instance-name, .cs-tb-home-label) {
+  .cs-tb :is(.cs-tb-instance-name, .cs-tb-home-label, .cs-tb-gw-dot, .cs-tb-gw-side:not(.is-next)) {
     display: none;
   }
 }
