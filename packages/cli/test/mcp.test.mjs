@@ -189,10 +189,32 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     const result = await mcp.callTool('exec', { target: 'JP-A,JP-B,JP-C', command: 'cat /tmp/big.txt' });
     assert.ok(bytes(result.text) <= LIMIT, `结果 ${bytes(result.text)} 字节`);
     assert.equal(result.text.match(/^===== /gm).length, 3);
-    // 每台都留了最后一行
+    // 每台都留了最后一行；超过 64KB 的开头拿不到，只留末尾，而且不会留下被截成半行的一行
     assert.equal(result.text.match(/line 03999 x+/g).length, 3);
     assert.match(result.text, /只保留最后/);
     assert.match(result.text, /要看完整输出/);
+    for (const line of result.text.split('\n').filter((item) => /x{3}/.test(item))) assert.match(line, /^line \d{5} x{40}$/, line);
+  });
+
+  test('输出比上限长、没超过 64KB：留开头和末尾，中间注明省略了多少，都是整行', async () => {
+    const local = tempDir('cloudssh-mid-');
+    const file = path.join(local, 'mid.txt');
+    const lines = Array.from({ length: 900 }, (_, i) => `line ${String(i).padStart(5, '0')} ${'x'.repeat(40)}`);
+    fs.writeFileSync(file, `${lines.join('\n')}\n`);
+    assert.equal((await mcp.callTool('upload', { target: 'JP-A', local_path: file, remote_path: '/tmp/mid.txt' })).isError, false);
+    const result = await mcp.callTool('exec', { target: 'JP-A', command: 'cat /tmp/mid.txt' });
+    assert.ok(bytes(result.text) <= LIMIT, `结果 ${bytes(result.text)} 字节`);
+    assert.match(result.text, /line 00000 x+/);
+    assert.match(result.text, /line 00899 x+/);
+    assert.match(result.text, /中间省略了 \d+ 行/);
+    for (const line of result.text.split('\n').filter((item) => /x{3}/.test(item))) assert.match(line, /^line \d{5} x{40}$/, line);
+  });
+
+  test('超时：结果里说怎么办（调大 timeout，或用 start_job 放到后台）', async () => {
+    const result = await mcp.callTool('exec', { target: 'JP-B', command: 'sleep 5', timeout: 1 });
+    assert.equal(result.isError, true);
+    assert.match(result.text, /超时，命令已被结束/);
+    assert.match(result.text, /timeout 调大.*start_job/);
   });
 
   test('上限可调：环境变量 CLOUDSSH_MCP_OUTPUT_KB 改小后结果跟着变小，工具说明写的是实际上限', async () => {

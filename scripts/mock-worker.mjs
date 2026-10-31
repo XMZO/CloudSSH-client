@@ -1392,6 +1392,9 @@ function mockRemoteLine(line, write) {
   const cmd = m[4] ? Buffer.from(m[4], 'base64').toString('utf8') : m[3].slice(1, -1).replace(/'\\''/g, "'");
   console.log('ai-remote exec:', cmd.length > 160 ? `${cmd.slice(0, 160)}…` : cmd);
   const { output, rc, delay } = mockExec(cmd);
+  // 像 cs_run 里的 timeout：比时限跑得久就在时限到时结束，退出码 124
+  const limitMs = Number(m[2]) * 1000;
+  if ((delay ?? 0) > limitMs) return void setTimeout(() => out(`__CSBEG${id}\n\n__CSRC124\n__CSEND${id}\n`), limitMs);
   setTimeout(() => out(`__CSBEG${id}\n${output}\n__CSRC${rc}\n__CSEND${id}\n`), delay ?? 30);
 }
 
