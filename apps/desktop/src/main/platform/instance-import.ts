@@ -11,7 +11,9 @@
  * 读写页面存储：在实例自己的分区里开一个隐藏窗口，打开起源桥提供的本地空白页（不启动界面、不碰 Worker）。
  */
 import { type InstanceConfig, originOf } from '@cloudssh/core';
-import { BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, Notification } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
 import { configStore } from '../config/store';
 import { createLogger } from '../logger';
 import {
@@ -159,6 +161,108 @@ export async function importInstanceData(sourceId: string, targetId: string): Pr
   return summary;
 }
 
+// ---------- 第一次打开时自动导入 ----------
+
+/** 每个实例自动导入做过没有：imported（导过）、own（有自己的排序，不用导）、none（没有可导的） */
+type Mark = { state: 'imported' | 'own' | 'none'; from?: string; at: number };
+
+function marksPath(): string {
+  return path.join(app.getPath('userData'), 'instance-import.json');
+}
+
+function readMarks(): Record<string, Mark> {
+  try {
+    return JSON.parse(fs.readFileSync(marksPath(), 'utf8')) as Record<string, Mark>;
+  } catch {
+    return {};
+  }
+}
+
+function setMark(instanceId: string, mark: Omit<Mark, 'at'>): void {
+  const marks = readMarks();
+  marks[instanceId] = { ...mark, at: Date.now() };
+  try {
+    fs.writeFileSync(marksPath(), JSON.stringify(marks, null, 2));
+  } catch (error) {
+    log.warn('记录自动导入状态失败', (error as Error).message);
+  }
+}
+
+const PROBE_SCRIPT = `(async () => ({
+  hasOrder: !!localStorage.getItem('cloudssh_desktop_node_order'),
+  conversations: await new Promise((resolve) => {
+    const request = indexedDB.open(${JSON.stringify(HISTORY_DB)});
+    request.onupgradeneeded = () => request.transaction.abort();
+    request.onerror = () => resolve(0);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(${JSON.stringify(HISTORY_STORE)})) { db.close(); resolve(0); return; }
+      const count = db.transaction(${JSON.stringify(HISTORY_STORE)}).objectStore(${JSON.stringify(HISTORY_STORE)}).count();
+      count.onsuccess = () => { db.close(); resolve(count.result); };
+      count.onerror = () => { db.close(); resolve(0); };
+    };
+  }),
+}))()`;
+
+/** 服务器至少对上这么多台、且至少是较少那边的一半，才算“同一套数据” */
+const MIN_MATCHED = 3;
+
+async function autoImport(target: InstanceConfig): Promise<void> {
+  if (readMarks()[target.id]) return;
+  const others = configStore.instances.filter((instance) => instance.id !== target.id);
+  if (others.length === 0) return setMark(target.id, { state: 'none' });
+  // 还没登录（读不到列表）：这次不导，下次打开再试
+  const targetServers = await fetchList<ServerLike>(target, '/api/servers').catch(() => null);
+  if (!targetServers || targetServers.length < MIN_MATCHED) return;
+  const own = await inPage<{ hasOrder: boolean; conversations: number }>(target, PROBE_SCRIPT);
+  if (own.hasOrder) return setMark(target.id, { state: 'own' });
+
+  let best: { source: InstanceConfig; score: number } | null = null;
+  let unsure = false;
+  for (const source of others) {
+    try {
+      const servers = await fetchList<ServerLike>(source, '/api/servers');
+      const matched = matchIds(servers, targetServers, serverKey).size;
+      if (matched < MIN_MATCHED || matched < Math.min(servers.length, targetServers.length) / 2) continue;
+      const probe = await inPage<{ hasOrder: boolean; conversations: number }>(source, PROBE_SCRIPT);
+      const score = (probe.hasOrder ? 1000 : 0) + probe.conversations;
+      if (score > own.conversations && (!best || score > best.score)) best = { source, score };
+    } catch {
+      // 那个实例没登录或连不上：说不准它有没有可导的，先不记“没有”
+      unsure = true;
+    }
+  }
+  if (!best) {
+    if (!unsure) setMark(target.id, { state: 'none' });
+    return;
+  }
+  const summary = await importInstanceData(best.source.id, target.id);
+  setMark(target.id, { state: 'imported', from: best.source.id });
+  if (Notification.isSupported()) {
+    new Notification({
+      title: `已从「${best.source.name}」导入本地数据`,
+      body: `节点排序等 ${summary.settings} 项设置、${summary.conversations} 段 AI 对话；以后在「${target.name}」里改的不会再同步回去`,
+    }).show();
+  }
+}
+
+/**
+ * 实例第一次打开、页面加载之前调用：服务器和另一个实例是同一套、这个实例还没有自己的排序时，把那个实例的本地数据
+ * 自动导进来（页面一打开就是原来的排序和对话）。每个实例只做一次；最多等 15 秒，出错就算了，不耽误打开
+ */
+const triedThisRun = new Set<string>();
+
+export async function autoImportOnFirstOpen(target: InstanceConfig): Promise<void> {
+  // 有标记就不再做；没登录等原因这次没做成的，本次运行里不再试（免得每开一个窗口都多等），下次启动再试
+  if (readMarks()[target.id] || triedThisRun.has(target.id)) return;
+  triedThisRun.add(target.id);
+  try {
+    await Promise.race([autoImport(target), new Promise((resolve) => setTimeout(resolve, 15_000))]);
+  } catch (error) {
+    log.warn('自动导入本地数据失败', target.name, (error as Error).message);
+  }
+}
+
 /** 实例管理里点“导入”：先确认（目标实例的窗口会重新加载），再导入 */
 export async function confirmAndImport(parent: BrowserWindow | null, sourceId: string, targetId: string): Promise<ImportSummary | null> {
   const source = configStore.getInstance(sourceId);
@@ -178,6 +282,7 @@ export async function confirmAndImport(parent: BrowserWindow | null, sourceId: s
   const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
   if (response !== 0) return null;
   const summary = await importInstanceData(sourceId, targetId);
+  setMark(targetId, { state: 'imported', from: sourceId });
   reloadInstance(targetId);
   return summary;
 }

@@ -17,6 +17,7 @@ import { createLogger } from '../logger';
 import type { ResolvedUi } from '../ui/providers';
 import { loginWithGitHub } from './oauth';
 import { prepareInstanceSession } from './session';
+import { autoImportOnFirstOpen } from './instance-import';
 import { currentPalette } from './ui-palette';
 
 const log = createLogger('window');
@@ -325,7 +326,10 @@ function createInstanceWindow(instance: InstanceConfig, replace?: BrowserWindow)
   }
 
   log.info('打开实例', instance.id, origin, 'UI =', prepared.ui.label);
-  void window.loadURL(`${origin}/`);
+  // 第一次打开：和别的实例是同一套服务器、自己还没有排序时，先把那边的本地数据导进来再加载页面（./instance-import.ts）
+  void autoImportOnFirstOpen(instance).finally(() => {
+    if (!window.isDestroyed()) void window.loadURL(`${origin}/`);
+  });
   return window;
 }
 
