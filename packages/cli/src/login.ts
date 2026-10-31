@@ -9,6 +9,7 @@
  *   - 终端里：cloudssh login 打开浏览器后直接在终端里等你粘贴（没给地址时先问实例地址；粘错了可以重贴）
  *   - 非交互（例如 AI 代为执行）：cloudssh login --start 打印授权地址；cloudssh login --callback "<地址>" 完成
  * 单管理员密码模式：在本机做与网页版相同的 PBKDF2 预拉伸，POST /api/auth/password/login（开了 Turnstile 时无法用命令行登录）。
+ * 入口网关（tools/gateway）的长期令牌：cloudssh login <地址> --token-stdin 从标准输入读令牌，验证后存下（不经过命令行参数、不进历史）。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -57,7 +58,7 @@ export function openBrowser(url: string): void {
   }
 }
 
-async function finish(origin: string, session: string, source: 'login'): Promise<string> {
+async function finish(origin: string, session: string, source: 'login' | 'token'): Promise<string> {
   const me = await request(origin, `${origin}/api/auth/me`, { headers: { Cookie: `session=${session}`, Origin: origin } });
   const user = me.ok ? ((await me.json().catch(() => null)) as { username?: string } | null)?.username : undefined;
   saveCredential(origin, { session, source, savedAt: new Date().toISOString(), user });
@@ -131,6 +132,8 @@ async function passwordLogin(origin: string, params: { salt: string; iterations:
 
 export interface LoginOptions {
   url?: string;
+  /** 直接用这个会话（入口网关签发的长期令牌） */
+  token?: string;
   start?: boolean;
   callback?: string;
   noBrowser?: boolean;
@@ -147,6 +150,19 @@ export async function login(options: LoginOptions, log: (text: string) => void):
   if (!target && interactive()) target = await ask('CloudSSH 地址（例如 https://ssh.example.com）：');
   if (!target) throw new UsageError('用法：cloudssh login https://你的域名');
   const origin = normalizeOrigin(target);
+  if (options.token !== undefined) {
+    const token = options.token.trim();
+    // 一行可见 ASCII，不能带分号（要放进 Cookie）
+    if (!/^[!-~]{16,512}$/.test(token) || token.includes(';')) {
+      throw new UsageError(`令牌格式不对：从标准输入给一行令牌（例如 printf '%s' "$TOKEN" | cloudssh login <地址> --token-stdin）`);
+    }
+    const check = await request(origin, `${origin}/api/auth/me`, { headers: { Cookie: `session=${token}`, Origin: origin } });
+    if (check.status === 401) throw new Error('令牌无效、已过期或已吊销');
+    if (!check.ok) throw new Error(`验证令牌失败（HTTP ${check.status}）`);
+    const user = await finish(origin, token, 'token');
+    log(`已登录 ${origin}（${user}，长期令牌）`);
+    return;
+  }
   const info = (await (await request(origin, `${origin}/api/config`)).json().catch(() => null)) as {
     authMode?: string;
     turnstileEnabled?: boolean;

@@ -36,7 +36,8 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
 用法：cloudssh <命令> [参数]（别名 cssh）
 
 登录
-  login [https://域名]          登录（GitHub 授权或管理员密码）；--start / --callback "<网址>" 分两步完成
+  login [https://域名]          登录（GitHub 授权或管理员密码）；--start / --callback "<网址>" 分两步完成；
+                                --token-stdin 从标准输入读入口网关签发的长期令牌
   logout                        退出登录
   status                        当前实例、用户、登录到期时间
 
@@ -199,9 +200,19 @@ async function cmdCopy(argv: string[]): Promise<number> {
 }
 
 async function cmdLogin(argv: string[]): Promise<number> {
-  const parsed = parseArgs(argv, flagsWith({ start: { type: 'boolean' }, callback: { type: 'string' }, 'no-browser': { type: 'boolean' } }));
+  const parsed = parseArgs(
+    argv,
+    flagsWith({ start: { type: 'boolean' }, callback: { type: 'string' }, 'no-browser': { type: 'boolean' }, 'token-stdin': { type: 'boolean' } })
+  );
+  const token = bool(parsed, 'token-stdin') ? await readStdin() : undefined;
   await login(
-    { url: parsed.positionals[0] ?? str(parsed, 'instance'), start: bool(parsed, 'start'), callback: str(parsed, 'callback'), noBrowser: bool(parsed, 'no-browser') },
+    {
+      url: parsed.positionals[0] ?? str(parsed, 'instance'),
+      token,
+      start: bool(parsed, 'start'),
+      callback: str(parsed, 'callback'),
+      noBrowser: bool(parsed, 'no-browser'),
+    },
     log
   );
   return 0;
@@ -267,14 +278,16 @@ async function cmdStatus(argv: string[]): Promise<number> {
     signedIn: valid,
     user,
     source: credential?.source ?? null,
-    expiresAt: credential ? expiresAt(credential).toISOString() : null,
+    expiresAt: credential && credential.source !== 'token' ? expiresAt(credential).toISOString() : null,
     instances: config.instances.map((item) => ({ ...item, default: item.url === config.defaultInstance, signedIn: !!loadCredentials()[item.url] })),
   };
   out(info, bool(parsed, 'json'), () =>
     [
       `实例：${instance.name}（${instance.origin}）`,
       valid
-        ? `已登录：${user ?? '?'}（来自${credential!.source === 'desktop' ? '桌面客户端同步' : ' cloudssh login'}，约 ${expiresAt(credential!).toLocaleString()} 过期）`
+        ? credential!.source === 'token'
+          ? `已登录：${user ?? '?'}（入口网关的长期令牌，到期时间由网关决定）`
+          : `已登录：${user ?? '?'}（来自${credential!.source === 'desktop' ? '桌面客户端同步' : ' cloudssh login'}，约 ${expiresAt(credential!).toLocaleString()} 过期）`
         : credential
           ? '登录已失效：运行 cloudssh login'
           : '未登录：运行 cloudssh login',
@@ -350,7 +363,7 @@ async function cmdConfig(argv: string[]): Promise<number> {
     else if (key === 'concurrency' && /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 32) config.concurrency = Number(value);
     else if (key === 'timeout' && /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 3600) config.timeout = Number(value);
     else if (key === 'notes' && value !== undefined) config.skillNotes = value.slice(0, MAX_SKILL_NOTES);
-    else if (key === 'output' && /^d+$/.test(value ?? '') && Number(value) >= OUTPUT_LIMIT_KB.min && Number(value) <= OUTPUT_LIMIT_KB.max) config.outputLimit = Number(value);
+    else if (key === 'output' && /^\d+$/.test(value ?? '') && Number(value) >= OUTPUT_LIMIT_KB.min && Number(value) <= OUTPUT_LIMIT_KB.max) config.outputLimit = Number(value);
     else if (key === 'default' && value) {
       const hit = config.instances.find((item) => item.name === value);
       config.defaultInstance = hit?.url ?? normalizeOrigin(value);

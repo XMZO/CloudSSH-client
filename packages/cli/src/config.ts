@@ -46,7 +46,8 @@ export const MAX_SKILL_NOTES = 4000;
 
 export interface Credential {
   session: string;
-  source: 'login' | 'desktop';
+  /** token：入口网关签发的长期令牌（cloudssh login --token-stdin），到期由网关决定 */
+  source: 'login' | 'desktop' | 'token';
   /** ISO 时间 */
   savedAt: string;
   user?: string;
