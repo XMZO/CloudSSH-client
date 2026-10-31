@@ -41,6 +41,16 @@ export function vaultAvailable(): boolean {
   return true;
 }
 
+/** 凭据预设整份 JSON（密码 / 私钥是加密过的）；instance-import.ts 迁移“哪台服务器用哪个预设”时用 */
+export function readPresetFile(): string | null {
+  return readData();
+}
+
+export function writePresetFile(data: string): void {
+  JSON.parse(data);
+  writeData(data);
+}
+
 function readData(): string | null {
   try {
     return fs.readFileSync(filePath(), 'utf8');

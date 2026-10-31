@@ -21,6 +21,7 @@ import { applyManagerPalette, isManagerWebContents, notifyManager, openManagerWi
 import { refreshMenus } from './menus';
 import { cliSettings, cliStatus, type CliSettingsPatch, installCli, setCliMcp, uninstallCli, updateCliSettings } from './cli-install';
 import { applyCliSync } from './cli-sync';
+import { confirmAndImport } from './instance-import';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
 import { clearInstanceData, syncInstanceProxy } from './session';
@@ -345,6 +346,12 @@ export function registerIpc(): void {
     if (!instance) return;
     await clearInstanceData(instance);
     reloadInstance(id);
+  });
+
+  ipcMain.handle('manager:import-instance-data', async (event, targetId: unknown, sourceId: unknown) => {
+    assertManager(event);
+    if (typeof targetId !== 'string' || typeof sourceId !== 'string') throw new Error('参数错误');
+    return confirmAndImport(BrowserWindow.fromWebContents(event.sender), sourceId, targetId);
   });
 
   ipcMain.handle('manager:test-instance', async (event, baseUrl: string, options?: { direct?: boolean }) => {

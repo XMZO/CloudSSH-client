@@ -89,9 +89,17 @@ export function applyOriginBridge(ses: Session, baseUrl: string, ui: ResolvedUi)
   log.info('origin bridge 已就绪', origin, '→', ui.kind === 'static' ? ui.root : ui.target);
 }
 
+/** 实例页面存储的读写入口（instance-import.ts 在隐藏窗口里打开）：只在本地返回空白页，不启动界面、不碰 Worker */
+export const BLANK_PAGE_PATH = '/__cloudssh/blank';
+
 async function handleRequest(ses: Session, request: Request): Promise<Response> {
   const state = states.get(ses);
   const url = new URL(request.url);
+  if (state && url.origin === state.origin && url.pathname === BLANK_PAGE_PATH && request.method === 'GET') {
+    return new Response('<!doctype html><meta charset="utf-8"><title>CloudSSH</title>', {
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
+    });
+  }
   if (state && url.origin === state.origin && !isApiPath(url.pathname) && SAFE_METHODS.has(request.method)) {
     try {
       return state.ui.kind === 'static'

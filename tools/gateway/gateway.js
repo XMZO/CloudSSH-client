@@ -576,6 +576,8 @@ async function runSync(env, { dry = false, followUp = false } = {}) {
     for (const [name, result] of Object.entries({ 'A 服务器': aServers, 'A 命令片段': aSnippets, 'A AI 设置': aAi, 'B 服务器': bServers, 'B 命令片段': bSnippets, 'B AI 设置': bAi })) {
       if (!result?.ok) throw new Error(`读${name}失败：${opError(result)}`);
     }
+    // A 又能读了（额度刚重置时可能还报几分钟“超出”，那时会被暂停到第二天）：清掉暂停，新会话回到 A
+    if (await aDownUntil(env)) await kvSet(env, 'a_down', null);
     report.servers = await syncServers(env, side, [aServers.data, bServers.data], dry, report.errors);
     report.snippets = await syncSnippets(env, side, [aSnippets.data, bSnippets.data], dry, report.errors);
     report.ai = await syncAi(env, side, [aAi.data, bAi.data], dry, report.errors);

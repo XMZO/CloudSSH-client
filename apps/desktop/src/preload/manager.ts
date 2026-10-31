@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('managerApi', {
   openInstance: (id: string, newWindow: boolean) => ipcRenderer.invoke('manager:open-instance', id, newWindow),
   login: (id: string) => ipcRenderer.invoke('manager:login', id),
   clearData: (id: string) => ipcRenderer.invoke('manager:clear-data', id),
+  /** 从别的实例导入本地数据（platform/instance-import.ts） */
+  importInstanceData: (targetId: string, sourceId: string) => ipcRenderer.invoke('manager:import-instance-data', targetId, sourceId),
   testInstance: (baseUrl: string, options?: { direct?: boolean }) => ipcRenderer.invoke('manager:test-instance', baseUrl, options),
   setPreferences: (patch: unknown) => ipcRenderer.invoke('manager:set-preferences', patch),
   /** 录制全局快捷键期间暂停旧快捷键（否则按下时被系统截走，窗口收不到） */

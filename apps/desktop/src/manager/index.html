@@ -120,6 +120,14 @@
           <section class="card card-data">
             <div class="data-row">
               <div class="data-text">
+                <strong>本地数据</strong>
+                <small title="节点排序、分组折叠、命令片段顺序、关键词高亮与各项开关、AI 对话历史、凭据预设关联都存在客户端本地、按实例分开。换了实例地址（比如改走入口网关）后，可以从原来的实例复制过来">从别的实例复制节点排序、AI 对话历史等本地数据</small>
+              </div>
+              <select id="import-source" aria-label="从哪个实例导入"></select>
+              <button id="import-data" class="btn btn-small" type="button">导入…</button>
+            </div>
+            <div class="data-row">
+              <div class="data-text">
                 <strong>数据</strong>
                 <small title="清除登录数据：退出登录并清掉这个实例的 Cookie、本地存储与缓存。删除实例：只删客户端里这条配置，不影响 Worker 上的服务器与数据">退出登录，或删掉这条配置（不影响 Worker 上的数据）</small>
               </div>

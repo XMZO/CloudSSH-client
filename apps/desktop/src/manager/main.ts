@@ -86,6 +86,8 @@ interface ManagerApi {
   cliInstall(): Promise<CliStatus>;
   cliUninstall(): Promise<CliStatus>;
   cliSettings(): Promise<CliSettings>;
+  /** 从别的实例导入本地数据（旧版 preload 没有）；取消时返回 null */
+  importInstanceData?(targetId: string, sourceId: string): Promise<{ settings: number; conversations: number; presetLinks: number; servers: { matched: number; total: number } } | null>;
   setCliSettings(patch: Partial<CliConfigView>): Promise<CliSettings>;
   setCliMcp(id: string, on: boolean): Promise<CliStatus>;
   /** 应用里点了“命令行与 Skill”（旧版 preload 没有） */
@@ -360,6 +362,11 @@ function fillForm(instance: InstanceConfig | null): void {
   for (const id of ['open-here', 'open-new', 'login', 'set-default', 'clear-data', 'delete-instance']) {
     $<HTMLButtonElement>(id).disabled = !existing;
   }
+  const importSource = $<HTMLSelectElement>('import-source');
+  const others = instance && state ? state.instances.filter((item) => item.id !== instance.id) : [];
+  importSource.replaceChildren(...others.map((item) => new Option(`${item.name}（${hostOf(item.baseUrl)}）`, item.id)));
+  importSource.disabled = others.length === 0 || !api.importInstanceData;
+  $<HTMLButtonElement>('import-data').disabled = importSource.disabled;
   if (instance && state) {
     $<HTMLButtonElement>('set-default').disabled = instance.id === state.defaultInstanceId;
     $<HTMLButtonElement>('delete-instance').disabled = state.instances.length <= 1;
@@ -777,6 +784,16 @@ $('set-default').addEventListener('click', () =>
     await refresh();
   })
 );
+$('import-data').addEventListener('click', () => {
+  const source = $<HTMLSelectElement>('import-source').value;
+  if (!selectedId || !source || !api.importInstanceData) return;
+  void run(async () => {
+    const result = await api.importInstanceData!(selectedId!, source);
+    if (!result) return;
+    testResult.className = 'hint ok';
+    testResult.textContent = `已导入：${result.settings} 项本地设置、${result.conversations} 段 AI 对话、${result.presetLinks} 个预设关联；服务器对上 ${result.servers.matched} / ${result.servers.total} 台`;
+  });
+});
 $('clear-data').addEventListener('click', () => {
   if (!selectedId || !confirm('清除该实例的登录状态、本地缓存与网页数据？已打开的窗口会重新加载。')) return;
   void run(async () => {
