@@ -200,18 +200,24 @@ async function handleHttp(req, res) {
   const method = req.method;
   console.log(method, path);
 
-  // 入口网关的状态（tools/gateway/gateway.js 的 GET /api/__gateway/status）：示例是 A 号额度用完、新会话放 B
+  // 入口网关的状态（tools/gateway/gateway.js 的 GET /api/__gateway/status，第二版）：示例是 A 号额度用完、新会话放 B（主节点）
   if (path === '/api/__gateway/status') {
     if (!gateway) return json(res, 404, { error: 'Not Found' });
+    const aDown = { until: Date.now() + 9 * 3600_000, reason: 'Exceeded allowed duration in Durable Objects free tier.' };
     return json(res, 200, {
       gateway: true,
+      version: 2,
       policy: 'fill',
-      limit: 0.9,
+      home: 'B',
       next: 'B',
-      usage: { at: Date.now(), A: { gbs: 14343, ratio: 1.103 }, B: { gbs: 412, ratio: 0.032 } },
-      aDown: { until: Date.now() + 9 * 3600_000, reason: 'Exceeded allowed duration in Durable Objects free tier.' },
-      mapped: { servers: 87, stale: 1 },
+      nodes: [
+        { name: 'A', home: false, ratio: 1.103, gbs: 14343, limit: 0.9, down: aDown, mapped: { servers: 87, stale: 1 } },
+        { name: 'B', home: true, ratio: 0.032, gbs: 412, limit: 0.9, down: null, mapped: null },
+      ],
       lastSync: { at: Date.now() - 3 * 60_000, errors: [] },
+      usage: { at: Date.now(), A: { gbs: 14343, ratio: 1.103 }, B: { gbs: 412, ratio: 0.032 } },
+      aDown,
+      mapped: { servers: 87, stale: 1 },
     });
   }
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });

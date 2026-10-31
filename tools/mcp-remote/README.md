@@ -27,6 +27,10 @@ Meta Muse 这类云端助手不能安装 skill，也碰不到你电脑上的 `cl
    ```bash
    docker compose run --rm cloudssh-mcp node /app/cloudssh.mjs login --callback "<复制的地址>"
    ```
+   实例是入口网关（`tools/gateway`）时不用这样：用管理接口签一个长期令牌（见 `tools/gateway/wrangler.gateway.toml`），存成文件（`chmod 600`）后运行下面这行，用完删掉文件，不用每周重新登录：
+   ```bash
+   docker compose run --rm -T cloudssh-mcp node /app/cloudssh.mjs login https://网关地址 --token-stdin < 令牌文件
+   ```
 4. 启动：`docker compose up -d`，`docker compose logs` 里应有 `listening on http://0.0.0.0:8790（对外 …/mcp，权限 full，CloudSSH 实例 …）`
 5. HTTPS：照 `Caddyfile.example` 给域名加一段，DNS 的 A / AAAA 记录直接指向这台服务器（不开 Cloudflare 代理）
 6. 在 Muse 里：设置 → 连接器 → 添加自定义连接器，地址填 `https://你的域名/mcp`，在弹出的授权页输入口令

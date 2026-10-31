@@ -1,37 +1,44 @@
-# CloudSSH 入口网关（说明见 gateway.js 开头）。部署在 B 号，即和 B 号 CloudSSH Worker 同一个 Cloudflare 账号。
+# CloudSSH 入口网关（说明见 gateway.js 开头）。部署在其中一个节点所在的号（和那个节点的 CloudSSH Worker 同一个 Cloudflare 账号）。
 #
-# 部署（在本目录下，用 B 号的凭据）：
+# 部署（在本目录下，用这个号的凭据）：
 #   1. npx wrangler d1 create cloudssh-gateway，把返回的 database_id 填到下面
-#   2. 按需改 [vars]，然后 npx wrangler deploy -c wrangler.gateway.toml
+#   2. 按需改下面的变量（节点、主节点、分流策略），然后 npx wrangler deploy -c wrangler.gateway.toml
 #   3. Secret（npx wrangler secret put <名字> -c wrangler.gateway.toml）：
-#      AGENT_TOKEN        与 A 号代理相同的密钥
-#      ADMIN_TOKEN        至少 32 个字符；手动触发同步、经网关改数据后马上同步时用
-#      A_ACCOUNT_ID / B_ACCOUNT_ID              两边的 Cloudflare 账号 ID（看用量用；不填就不看用量，一直先用 A）
-#      A_ANALYTICS_TOKEN / B_ANALYTICS_TOKEN    两边各一个只有“Account Analytics: Read”权限的 API 令牌
-#   4. 把入口域名指给网关（自定义域或路由），客户端的实例地址填这个域名
+#      ADMIN_PASSWORD_HASH  网关登录的单管理员密码哈希（格式同 CloudSSH，可以就用某个节点的；单管理员密码模式的节点没有单独设
+#                           <节点名>_PASSWORD_HASH 时，网关也用它给那个节点签会话，这时两者必须相同）
+#      AGENT_TOKEN          与各号代理（agent.js）相同的密钥（某个节点不一样时设 <节点名>_AGENT_TOKEN）
+#      ADMIN_TOKEN          至少 32 个字符；管理接口（/__gateway/…：手动同步、解除暂停、签发长期令牌）与改数据后马上同步用
+#      <节点名>_ACCOUNT_ID / <节点名>_ANALYTICS_TOKEN   各节点所在账号的 ID 与只有“Account Analytics: Read”权限的令牌（看用量；不填就不看）
+#   4. 把入口域名指给网关（自定义域或路由），客户端、命令行、MCP 的实例地址都填这个域名
+#   5. 给命令行 / 远程 MCP 签长期令牌：curl -X POST https://<网关>/__gateway/tokens -H "Authorization: Bearer <ADMIN_TOKEN>"
+#      -d '{"label":"远程 MCP","days":365}'，返回的 token 当作登录会话用（credentials.json 的 session）；DELETE ?label=… 吊销
 name = "cloudssh-gateway"
 main = "gateway.js"
 compatibility_date = "2025-09-01"
 workers_dev = true
 
 [vars]
-# 另一个号上 CloudSSH 的地址，和那边 A 号代理的地址
-A_ORIGIN = "https://cloudssh.example.com"
-A_AGENT_URL = "https://cloudssh-agent.example.workers.dev"
-# 本号 CloudSSH 用户的路由键和 id（单管理员密码模式是 -1 和 1）
-B_ROUTE_KEY = "-1"
-B_USER_ID = "1"
-# fill：先用 A，A 今天用到 A_LIMIT 再放 B（B 存着数据，要留着）；even：放今天用得少的那边
+# 节点：和网关同一个号的那个 local: true（经下面的 LOCAL_APP / LOCAL_DB 绑定直接调），别的号的写它的地址和代理地址。
+# routeKey / userId 是那个节点 /api/auth/me 里的 github_id / id；auth 是它的登录方式（github 或 password：单管理员密码）。
+# 可选 limit：这个节点今天用到多少（0～1）就不再放新会话，默认 LIMIT
+NODES = '''[
+  { "name": "A", "origin": "https://cloudssh.example.com", "agent": "https://cloudssh-agent.example.workers.dev", "routeKey": "12345678", "userId": 1, "auth": "github" },
+  { "name": "B", "local": true, "routeKey": "-1", "userId": 1, "auth": "password" }
+]'''
+# 主节点：数据接口转给它，其他节点都和它双向同步。默认是 local 的那个
+HOME = "B"
+# 新会话：fill 按 ORDER 的顺序用（默认主节点排最后，留着它），用到 LIMIT 再换下一个；even 挑今天用得最少的
 POLICY = "fill"
-A_LIMIT = "0.9"
+# ORDER = "A,B"
+LIMIT = "0.9"
 
-# 本号 CloudSSH：服务绑定（同账号 Worker 之间不能走公网互相请求）和它的用户数据库
+# 本号节点：服务绑定（同账号 Worker 之间不能走公网互相请求）和它的用户数据库
 [[services]]
-binding = "B_APP"
+binding = "LOCAL_APP"
 service = "cloudssh"
 
 [[durable_objects.bindings]]
-name = "B_DB"
+name = "LOCAL_DB"
 class_name = "UserDBDO"
 script_name = "cloudssh"
 
@@ -45,6 +52,6 @@ binding = "DB"
 database_name = "cloudssh-gateway"
 database_id = "<填 wrangler d1 create 返回的 ID>"
 
-# 每 5 分钟双向同步一次、刷新两边用量
+# 每 5 分钟双向同步一次、刷新各节点用量（想更省就改成 */10 或 */15）
 [triggers]
 crons = ["*/5 * * * *"]

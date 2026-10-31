@@ -115,7 +115,7 @@ export function mountTitlebar(env: ChromeEnv): void {
     instance.disabled = true;
   }
   lead.append(menu, instance);
-  // 实例是入口网关（tools/gateway）时，显示两个号今天的用量和新会话放哪边（./gateway-status.ts）
+  // 实例是入口网关（tools/gateway）时，显示各节点今天的用量和新会话放哪个节点（./gateway-status.ts）
   mountGatewayStatus(lead);
 
   // ---------- 中间：服务器页、会话标签 ----------

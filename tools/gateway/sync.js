@@ -175,17 +175,19 @@ export function translateHostIdentity(identity, mapId) {
 }
 
 /**
- * 新会话放哪边。B 号存着数据（登录、服务器列表都靠它），它的额度用完整个入口就用不了了，所以默认先用 A：
- * A 今天用到 limit（默认 90%）或最近出过错就放 B。policy 为 even 时放今天用得少的那边（比例相同时放 A）。
- * usage：{ A: { ratio }, B: { ratio } }，拿不到时为 null
+ * 新会话放哪个节点。nodes 按优先顺序排好：[{ name, ratio（今天用了多少，拿不到为 null）, limit, down }]。
+ * - fill（默认）：按顺序用第一个没暂停、今天还没用到 limit 的。主节点存着数据，默认排在最后，留着它
+ * - even：没暂停、没到 limit 的里面挑今天用得最少的（一样多时按顺序）
+ * 都到了 limit：按顺序挑第一个没暂停的（总比连不上好）；全都暂停了：返回第一个
  */
-export function chooseBackend({ policy = 'fill', limit = 0.9, usage = null, aDown = false }) {
-  if (aDown) return 'B';
-  const a = usage?.A?.ratio;
-  const b = usage?.B?.ratio;
-  if (a != null && a >= Math.min(limit, 1)) return 'B';
-  if (policy === 'even' && a != null && b != null) return b < a ? 'B' : 'A';
-  return 'A';
+export function chooseNode(nodes, policy = 'fill') {
+  const open = nodes.filter((node) => !node.down);
+  const fresh = open.filter((node) => node.ratio == null || node.ratio < Math.min(node.limit ?? 0.9, 1));
+  if (fresh.length) {
+    if (policy !== 'even') return fresh[0].name;
+    return fresh.reduce((best, node) => ((node.ratio ?? 0) < (best.ratio ?? 0) ? node : best)).name;
+  }
+  return (open[0] ?? nodes[0])?.name ?? null;
 }
 
 /** 下一个 UTC 0 点（Cloudflare 免费额度每天这时重置） */

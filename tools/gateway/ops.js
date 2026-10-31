@@ -82,7 +82,8 @@ export async function runOp(stub, userId, op) {
     case 'deleteKnownHost':
       return call(stub, 'DELETE', '/internal/known-hosts', { user_id: userId, host: op.host, port: op.port });
     case 'createSession':
-      return call(stub, 'POST', '/internal/session/create', { user_id: userId });
+      // 单管理员密码模式的会话令牌要由调用方按 -1:<哈希指纹>:<随机> 生成好传进来；GitHub 模式不传，由数据库生成
+      return call(stub, 'POST', '/internal/session/create', { user_id: userId, ...(typeof op.token === 'string' ? { token: op.token } : {}) });
     default:
       return { ok: false, status: 400, data: { error: `unknown op ${op?.op}` } };
   }

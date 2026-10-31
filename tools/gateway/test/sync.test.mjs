@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
-  chooseBackend,
+  chooseNode,
   deletesLookSafe,
   needsCredential,
   nextUtcMidnight,
@@ -144,16 +144,22 @@ describe('translateHostIdentity', () => {
   });
 });
 
-describe('chooseBackend', () => {
-  test('默认先用 A；A 用到上限、或出过错就放 B', () => {
-    assert.equal(chooseBackend({}), 'A');
-    assert.equal(chooseBackend({ usage: { A: { ratio: 0.5 }, B: { ratio: 0.1 } } }), 'A');
-    assert.equal(chooseBackend({ usage: { A: { ratio: 0.95 }, B: { ratio: 0.1 } } }), 'B');
-    assert.equal(chooseBackend({ aDown: true }), 'B');
+describe('chooseNode', () => {
+  const node = (name, ratio, extra = {}) => ({ name, ratio, limit: 0.9, down: false, ...extra });
+  test('fill：按顺序用第一个没暂停、没到上限的；拿不到用量时照样能用', () => {
+    assert.equal(chooseNode([node('A', 0.5), node('B', 0.1)]), 'A');
+    assert.equal(chooseNode([node('A', 0.95), node('B', 0.1)]), 'B');
+    assert.equal(chooseNode([node('A', 0.2, { down: true }), node('B', 0.1)]), 'B');
+    assert.equal(chooseNode([node('A', null), node('B', 0.1)]), 'A');
+    assert.equal(chooseNode([node('C', 0.95), node('A', 0.5, { limit: 0.4 }), node('B', 0.1)]), 'B');
   });
-  test('even：放今天用得少的那边', () => {
-    assert.equal(chooseBackend({ policy: 'even', usage: { A: { ratio: 0.5 }, B: { ratio: 0.1 } } }), 'B');
-    assert.equal(chooseBackend({ policy: 'even', usage: { A: { ratio: 0.2 }, B: { ratio: 0.3 } } }), 'A');
+  test('even：没到上限的里面挑用得最少的', () => {
+    assert.equal(chooseNode([node('A', 0.5), node('B', 0.1)], 'even'), 'B');
+    assert.equal(chooseNode([node('A', 0.2), node('B', 0.3)], 'even'), 'A');
+  });
+  test('都到上限：挑第一个没暂停的；全暂停：第一个', () => {
+    assert.equal(chooseNode([node('A', 1.1, { down: true }), node('B', 0.95)]), 'B');
+    assert.equal(chooseNode([node('A', 0.2, { down: true }), node('B', 0.1, { down: true })]), 'A');
   });
   test('下一个 UTC 0 点', () => {
     assert.equal(nextUtcMidnight(Date.UTC(2026, 9, 30, 13, 5)), Date.UTC(2026, 9, 31));
