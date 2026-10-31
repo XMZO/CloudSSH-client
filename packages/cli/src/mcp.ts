@@ -33,7 +33,7 @@ import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes
 import { userGuidance } from './install';
 import { ApiError } from './net';
 import { readOnlyCheck } from './readonly';
-import { editText, jobStatus, listDir, numberLines, readText, startJob, writeText, type WriteMode } from './remote-files';
+import { editText, jobStatus, listDir, numberLines, readText, startJob, writeText, writeTextPart, type WriteMode } from './remote-files';
 import { activeInstance, filterServers, formatServerRow, hostId, loadServers, resolveSingle, resolveTargets } from './targets';
 
 /** 认识的协议版本，新的在前 */
@@ -51,6 +51,8 @@ export function outputLimitOf(config: CliConfig | null): number {
 }
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
+/** 写文件时建议每段最多这么多 KB：AI 客户端对单次工具调用的长度有上限，大脚本一次写不下 */
+const PART_HINT_KB = 8;
 /** 命令输出被截断时，告诉模型怎么拿到完整的 */
 const FULL_OUTPUT_HINT = '要看完整输出：在命令后加 > /tmp/out.log 2>&1，再用 read_file 分段读（offset / limit），或用 grep / tail / head 过滤';
 const SERVER_CACHE_MS = 15_000;
@@ -359,14 +361,17 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       title: 'Write a file',
       description:
         'Write text (UTF-8) to a file on one server over SFTP: no shell quoting or heredoc needed. mode overwrite (default) replaces the file atomically and keeps its permissions and owner; append adds to the end; create refuses if the file exists. Missing parent directories are created; symlinks are written through to their target. Up to 10 MB.' +
+        ` Long content (more than about ${PART_HINT_KB} KB, e.g. a big script) must not go into one call, since clients limit how long a single tool call can be: split it into consecutive pieces and send them in order with part = 1, 2, … and the same parts (total), path and mode. The pieces are collected next to the file and the file is written only when the last part arrives, so an interrupted upload leaves the original untouched; a wrong order or a restart means starting again from part 1.` +
         writeConfirm,
       inputSchema: {
         type: 'object',
         properties: {
           target: one,
           path: { type: 'string', description: 'File path; relative paths start in the login user\'s home directory' },
-          content: { type: 'string', description: 'The full text to write (or to append)' },
+          content: { type: 'string', description: `The text to write (or to append); with parts, just this piece (keep each piece under about ${PART_HINT_KB} KB)` },
           mode: { type: 'string', enum: ['overwrite', 'append', 'create'], description: 'Default overwrite' },
+          part: { type: 'integer', minimum: 1, maximum: 1000, description: 'Which piece this is (1-based), when sending long content in pieces' },
+          parts: { type: 'integer', minimum: 1, maximum: 1000, description: 'How many pieces in total (same in every call)' },
           ...(fullAccess ? {} : { confirm: { type: 'boolean', description: 'Set to true only after the user agreed to change an existing file' } }),
         },
         required: ['target', 'path', 'content'],
@@ -498,7 +503,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
       `Commands run in a non-interactive shell; each tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. ` + 'Batch independent read-only checks for one server into one exec with `echo \'== …\'` headers joined by `;`.',
       'For files use read_file / list_dir' +
         (remote.access === 'read-only' ? '' : ' / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text)') +
-        '; for anything that runs longer than a minute or two use start_job and check it with job_status.',
+        `; write long content (more than about ${PART_HINT_KB} KB) with write_file in pieces (part / parts) instead of one huge call; for anything that runs longer than a minute or two use start_job and check it with job_status.`,
       remote.access === 'read-only'
         ? READ_ONLY_DOC
         : remote.access === 'full'
@@ -512,7 +517,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     `These tools work on the servers the user saved in CloudSSH${origin ? ` (${origin})` : ''}, through the CloudSSH server: it signs in with the stored credentials and handles jump hosts and Cloudflare tunnels.`,
     'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
     `Commands run in a non-interactive shell; each tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. ` + 'Ask the user before risky commands and pass confirm: true only after they agree.',
-    'For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.',
+    `For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text; long content, more than about ${PART_HINT_KB} KB, goes in pieces with part / parts); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.`,
     'If a tool reports that the login expired or no instance is signed in, ask the user to run `cloudssh login` in a terminal, or to turn on "同步登录给命令行" in the CloudSSH desktop app.',
   ].join('\n');
   return base + (config ? userGuidance(config, '`confirm: true`') : '');
@@ -793,9 +798,23 @@ export class McpServer {
       const mode = (optString(args, 'mode') ?? 'overwrite') as WriteMode;
       if (!['overwrite', 'append', 'create'].includes(mode)) throw new ToolError('mode 只能是 overwrite、append、create');
       const confirm = optBool(args, 'confirm');
+      const part = optInt(args, 'part', 1, 1000);
+      const parts = optInt(args, 'parts', 1, 1000);
+      if ((part === undefined) !== (parts === undefined)) throw new ToolError('part 和 parts 要一起给');
+      if (part !== undefined && parts !== undefined && part > parts) throw new ToolError(`part（${part}）不能大于 parts（${parts}）`);
       const { config, servers } = await this.prepare();
       const server = resolveSingle(target, servers, config);
       context.use([server]);
+      if (part !== undefined && parts !== undefined && parts > 1) {
+        // 要不要确认只在第 1 段判断，后面的段接着写
+        const piece = await writeTextPart(server, path, content, part, parts, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
+        if (!piece.done) {
+          return { text: `已收到 ${hostId(server)} ${server.name}:${piece.path} 的第 ${piece.received}/${parts} 段（共 ${formatBytes(piece.bytes)}），接着发第 ${piece.received + 1} 段；最后一段到了才写进文件` };
+        }
+        this.audit(`write_file ${hostId(server)}:${piece.path}（${mode}，${parts} 段，${piece.bytes} 字节）`);
+        const verb = mode === 'append' && !piece.created ? '追加到' : piece.created ? '新建' : '覆盖';
+        return { text: `已${verb} ${hostId(server)} ${server.name}:${piece.path}（${parts} 段，共 ${formatBytes(piece.bytes)}）` };
+      }
       const result = await writeText(server, path, content, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
       this.audit(`write_file ${hostId(server)}:${result.path}（${mode}，${result.bytes} 字节）`);
       const action = mode === 'append' && !result.created ? '追加到' : result.created ? '新建' : '覆盖';

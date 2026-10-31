@@ -99,6 +99,44 @@ describe('MCP 文件与后台任务工具', { timeout: 120_000 }, () => {
     assert.doesNotMatch(part.text, /gamma/);
   });
 
+  test('分段写：按顺序收齐才写进文件，中途原文件不动，顺序不对要重来，确认只在第 1 段', async () => {
+    const pieces = [`#!/bin/sh\n# 大脚本 ${tricky}`, 'echo "第二段 $HOME"\n', 'exit 0\n'];
+    // 新文件：三段
+    const first = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: pieces[0], part: 1, parts: 3, mode: 'create' });
+    assert.equal(first.isError, false, first.text);
+    assert.match(first.text, /第 1\/3 段.*接着发第 2 段/);
+    const missing = await mcp.callTool('read_file', { target: 'JP-A', path: '/root/mcp/big.sh' });
+    assert.equal(missing.isError, true, '没收齐之前不应出现目标文件');
+    const wrong = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: pieces[2], part: 3, parts: 3, mode: 'create' });
+    assert.equal(wrong.isError, true);
+    assert.match(wrong.text, /应该写第 2\/3 段/);
+    const second = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: pieces[1], part: 2, parts: 3, mode: 'create' });
+    assert.equal(second.isError, false, second.text);
+    const last = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: pieces[2], part: 3, parts: 3, mode: 'create' });
+    assert.equal(last.isError, false, last.text);
+    assert.match(last.text, /已新建 .*big\.sh（3 段/);
+    const read = await mcp.callTool('read_file', { target: 'JP-A', path: '/root/mcp/big.sh' });
+    for (const line of pieces.join('').split('\n').filter(Boolean)) assert.ok(read.text.includes(line), `少了一行：${line}`);
+
+    // 改已有文件：第 1 段要 confirm，之后的段不用；写完前原文件不变
+    const refused = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: 'new 1\n', part: 1, parts: 2 });
+    assert.equal(refused.isError, true);
+    assert.match(refused.text, /confirm: true/);
+    await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: 'new 1\n', part: 1, parts: 2, confirm: true });
+    const during = await mcp.callTool('read_file', { target: 'JP-A', path: '/root/mcp/big.sh' });
+    assert.match(during.text, /第二段/, '最后一段到之前原文件不变');
+    const done = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: 'new 2\n', part: 2, parts: 2 });
+    assert.match(done.text, /已覆盖/);
+    const after = await mcp.callTool('read_file', { target: 'JP-A', path: '/root/mcp/big.sh' });
+    assert.match(after.text, /new 1\n.*new 2/s);
+    assert.doesNotMatch(after.text, /第二段/);
+
+    // create 遇到已有文件：第 1 段就拒绝
+    const exists = await mcp.callTool('write_file', { target: 'JP-A', path: '/root/mcp/big.sh', content: 'x', part: 1, parts: 2, mode: 'create' });
+    assert.equal(exists.isError, true);
+    assert.match(exists.text, /已有/);
+  });
+
   test('read_file：二进制、目录、不存在都说明原因', async () => {
     const binary = path.join(root, 'blob.bin');
     fs.writeFileSync(binary, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2, 3]));

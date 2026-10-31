@@ -467,7 +467,7 @@ Claude Desktop、Cursor、VS Code、Windsurf 等不认 skill 的应用用 MCP �
 | `exec` | `target`、`command`、`timeout`、`cwd`、`confirm` | 目标写法与命令行一样（`srv-12`、名称、别名、`tag:`、`all`、逗号隔开）；`cwd` 在指定目录执行（每次调用都是新 Shell，`cd` 不会留到下一次）；`confirm: true` 相当于 `--yes` |
 | `read_file` | `target`、`path`、`offset`、`limit` | 读文本文件，带行号（`cat -n` 的样子）。走 SFTP，不受命令输出 64KB 的限制（文件最大 20MB，每次最多一次结果上限（默认 24KB）的行，用 `offset` / `limit` 分段）；二进制文件不读 |
 | `list_dir` | `target`、`path`、`all` | `ls -l`（目录在前、ISO 时间），最多 1000 项 |
-| `write_file` | `target`、`path`、`content`、`mode`、`confirm` | 经 SFTP 写文本，不用 Shell 转义与 heredoc。`overwrite`（默认，先写临时文件再改名，沿用原文件的权限与属主）、`append`、`create`（已存在就不写）；自动建上级目录，符号链接写到它指向的文件；最大 10MB |
+| `write_file` | `target`、`path`、`content`、`mode`、`confirm`、`part`、`parts` | 经 SFTP 写文本，不用 Shell 转义与 heredoc。内容太长（大约 8KB 以上，比如大脚本，AI 客户端对单次工具调用的长度有上限）时分段：按顺序带 `part` = 1、2…与同样的 `parts`，各段先攒在目标旁边的 `<文件>.cs-upload`，最后一段到了才一次性写进去（中途断了原文件不动；顺序不对、超过 30 分钟或连接器重启过就从第 1 段重来；改已有文件的确认只在第 1 段）。`overwrite`（默认，先写临时文件再改名，沿用原文件的权限与属主）、`append`、`create`（已存在就不写）；自动建上级目录，符号链接写到它指向的文件；最大 10MB |
 | `edit_file` | `target`、`path`、`old_string`、`new_string`、`replace_all`、`confirm` | 精确替换：`old_string` 要唯一（否则报出现次数，或 `replace_all`）；写回前核对文件的 SHA-256 与读时一致，被别人改过就不写；返回改后附近几行 |
 | `start_job` / `job_status` | `target`、`command`、`cwd` / `job_id`、`tail`、`stop` | 长任务：`setsid nohup` 在新会话里跑，断开、会话关闭都不影响，输出与退出码记在 `~/.cloudssh-jobs/`（7 天后清理）；`job_status` 看状态与输出末尾、不带 `job_id` 列出最近的任务、`stop` 结束整个进程组。命令与 `exec` 同一套危险命令规则 |
 | `upload` / `download` | `target`、`local_path`、`remote_path`（download 另有 `max_size_mb`） | 文件或目录，落点规则同 scp；本机相对路径按 MCP 服务器的工作目录，`~` 是家目录 |

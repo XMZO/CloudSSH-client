@@ -166,6 +166,120 @@ export async function writeText(
   return { path: dest, bytes: bytes.length, created: !exists };
 }
 
+// ---------- 分段写入 ----------
+
+/**
+ * 内容太长、AI 一次调用放不下（客户端对单次工具调用的长度有上限）时按顺序分几段写：前面的段先攒在目标旁边的
+ * <文件>.cs-upload 里，最后一段到了才一次性换成目标（覆盖时保留原来的权限和属主），中途断了原文件不受影响。
+ * 每个进程按“服务器 + 路径”记着写到第几段；顺序不对、超时（30 分钟）或进程重启过就要从第 1 段重来
+ */
+interface PartState {
+  dest: string;
+  stage: string;
+  mode: WriteMode;
+  parts: number;
+  next: number;
+  bytes: number;
+  created: boolean;
+  at: number;
+}
+
+const PART_TTL_MS = 30 * 60_000;
+const partStates = new Map<string, PartState>();
+
+export interface PartResult extends WriteResult {
+  /** 最后一段写完、目标已经换好 */
+  done: boolean;
+  /** 已经收到几段 */
+  received: number;
+}
+
+export async function writeTextPart(
+  server: ServerConfig,
+  path: string,
+  content: string,
+  part: number,
+  parts: number,
+  mode: WriteMode,
+  options: { mayOverwrite?: (path: string) => boolean } = {}
+): Promise<PartResult> {
+  const key = `${server.id}\u0000${path}`;
+  const bytes = encoder.encode(content);
+  let state = partStates.get(key);
+  if (state && Date.now() - state.at > PART_TTL_MS) {
+    partStates.delete(key);
+    await run(server, `rm -f ${quote(state.stage)}`).catch(() => undefined);
+    state = undefined;
+  }
+  if (part === 1) {
+    if (state) await run(server, `rm -f ${quote(state.stage)}`).catch(() => undefined);
+    partStates.delete(key);
+    const where = await run(
+      server,
+      `p=${shellPath(path)}; case "$p" in /*) ;; *) p="$PWD/$p";; esac; if [ -d "$p" ]; then echo dir; exit 4; fi;` +
+        ` mkdir -p -- "$(dirname -- "$p")" || exit 5; if [ -e "$p" ]; then echo exists; else echo new; fi;` +
+        ` r=$(readlink -f -- "$p" 2>/dev/null) || r="$p"; printf '%s\\n' "$r"`
+    ).catch((error: Error) => {
+      if (/\bdir\b|退出码 4/.test(error.message)) throw new UsageError(`${path} 是目录`);
+      throw error;
+    });
+    const lines = where.trim().split('\n').map((line) => line.trim());
+    const exists = lines[0] === 'exists';
+    const dest = lines[lines.length - 1];
+    if (exists && mode === 'create') throw new UsageError(`${server.name} 上已有 ${dest}，没有写入（mode: create 只建新文件）`);
+    if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${server.name} 上已有 ${dest}，没有写入`);
+    state = { dest, stage: `${dest}.cs-upload`, mode, parts, next: 1, bytes: 0, created: !exists, at: Date.now() };
+  } else if (!state) {
+    throw new UsageError(`没有正在写的 ${path}（第 1 段没写过、超过 30 分钟或连接器重启过）：从 part 1 重新开始`);
+  } else if (part !== state.next || parts !== state.parts || mode !== state.mode) {
+    throw new UsageError(`${path} 应该写第 ${state.next}/${state.parts} 段（mode ${state.mode}），收到的是第 ${part}/${parts} 段：按顺序发，或从 part 1 重新开始`);
+  }
+  if (state.bytes + bytes.length > WRITE_MAX_BYTES) {
+    partStates.delete(key);
+    await run(server, `rm -f ${quote(state.stage)}`).catch(() => undefined);
+    throw new UsageError(`合起来超过 ${WRITE_MAX_BYTES / 1048576}MB：大文件用 upload 或 copy`);
+  }
+
+  // 这一段先传到临时文件，再接到 .cs-upload 后面（第 1 段直接成为 .cs-upload）
+  const temp = `${state.stage}.${randomBytes(4).toString('hex')}`;
+  const sftp = await openSftp(server);
+  try {
+    await sftp.upload(temp, new Blob([bytes as BlobPart]));
+  } finally {
+    sftp.close();
+  }
+  const stage = quote(state.stage);
+  try {
+    await run(server, `t=${quote(temp)}; f=${stage}; ${part === 1 ? 'mv -f "$t" "$f"' : 'cat "$t" >> "$f"; rc=$?; rm -f "$t"; exit $rc'}`);
+  } catch (error) {
+    partStates.delete(key);
+    await run(server, `rm -f ${quote(temp)} ${stage}`).catch(() => undefined);
+    throw error;
+  }
+  state.bytes += bytes.length;
+  state.next = part + 1;
+  state.at = Date.now();
+
+  if (part < parts) {
+    partStates.set(key, state);
+    return { path: state.dest, bytes: state.bytes, created: state.created, done: false, received: part };
+  }
+  partStates.delete(key);
+  const guard = state.mode === 'create' ? `if [ -e "$f" ]; then rm -f "$t"; echo "已存在，没有写入"; exit 8; fi;` : '';
+  const finish =
+    state.mode === 'append'
+      ? `cat "$t" >> "$f"; rc=$?; rm -f "$t"; exit $rc`
+      : `if [ -e "$f" ]; then m=$(stat -c %a "$f" 2>/dev/null) && chmod "$m" "$t"; o=$(stat -c %u:%g "$f" 2>/dev/null) && chown "$o" "$t" 2>/dev/null; fi; mv -f "$t" "$f"`;
+  try {
+    await run(server, `t=${stage}; f=${quote(state.dest)}; ${guard}${finish}`);
+  } catch (error) {
+    await run(server, `rm -f ${stage}`).catch(() => undefined);
+    if (/已存在|退出码 8/.test((error as Error).message)) throw new UsageError(`${server.name} 上已有 ${state.dest}，没有写入（mode: create 只建新文件）`);
+    throw error;
+  }
+  return { path: state.dest, bytes: state.bytes, created: state.created, done: true, received: part };
+}
+
 export interface EditResult {
   path: string;
   replaced: number;
