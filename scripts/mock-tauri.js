@@ -3,6 +3,8 @@
  *   node scripts/mock-worker.mjs 8788 --ui <手机版构建目录> --mobile-shim
  * 假 Worker 会把本文件插到 index.html 最前面，于是手机版的网络垫片（overrides/mobile/early.ts）认为自己在 Tauri 里，
  * 把 /api 请求与 SSH/SFTP WebSocket 交给这里，这里再直接发给假 Worker。实例固定为假 Worker 本身、已登录。
+ * 要测“从别的实例导入本地数据”时，在 localStorage 的 __mock_instances 里放额外的实例（[{ id, name }]，地址都是假 Worker），
+ * 读它们的列表（instance_get_json）也发给假 Worker。
  * 原生能力（通知、保活、电池、下载保存……）都只回空值。
  */
 (() => {
@@ -16,7 +18,11 @@
   let nextSocket = 1;
 
   const instance = { id: 'mock', name: '假 Worker', baseUrl: origin };
-  const appState = { instances: [instance], currentId: instance.id, current: instance, proxy: null, loggedIn: true, appVersion: 'dev', platform: 'android' };
+  let extra = [];
+  try {
+    extra = (JSON.parse(localStorage.getItem('__mock_instances') || '[]') || []).map((item) => ({ id: String(item.id), name: String(item.name), baseUrl: origin }));
+  } catch {}
+  const appState = { instances: [instance, ...extra], currentId: instance.id, current: instance, proxy: null, loggedIn: true, appVersion: 'dev', platform: 'android' };
 
   const toBase64 = (bytes) => {
     let binary = '';
@@ -41,6 +47,13 @@
       const type = response.headers.get('content-type') || '';
       const text = !bytes.length || /json|text|javascript|xml/.test(type);
       return { status: response.status, headers: [...response.headers], body: text ? new TextDecoder().decode(bytes) : toBase64(bytes), base64: !text };
+    },
+    async instance_get_json({ id, path }) {
+      if (!appState.instances.some((item) => item.id === id)) throw '实例不存在';
+      if (path !== '/api/servers' && path !== '/api/snippets') throw '不支持的路径';
+      const response = await browserFetch(path);
+      if (response.status === 401) throw '没有登录';
+      return response.json();
     },
     ws_open({ path, onEvent }) {
       const id = nextSocket++;

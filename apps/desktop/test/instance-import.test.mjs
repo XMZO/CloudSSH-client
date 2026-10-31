@@ -1,5 +1,5 @@
 /**
- * 从别的实例导入本地数据的纯函数部分（src/main/platform/instance-import-plan.ts）：编号对应、本地存储改写、
+ * 从别的实例导入本地数据的纯函数部分（packages/core/src/instance-import.ts，电脑与手机共用）：编号对应、本地存储改写、
  * AI 对话历史换范围、凭据预设关联合并。
  */
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'cloudssh-instance-import-'));
 const bundle = path.join(temp, 'plan.mjs');
 await build({
-  entryPoints: [path.join(here, '..', 'src', 'main', 'platform', 'instance-import-plan.ts')],
+  entryPoints: [path.join(here, '..', '..', '..', 'packages', 'core', 'src', 'instance-import.ts')],
   outfile: bundle,
   bundle: true,
   platform: 'node',

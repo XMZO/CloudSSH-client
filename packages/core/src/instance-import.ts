@@ -1,5 +1,6 @@
 /**
- * 从别的实例导入本地数据（纯函数部分，见 ./instance-import.ts）：两边的服务器 / 命令片段编号对应、
+ * 从别的实例导入本地数据（纯函数部分；电脑见 apps/desktop/src/main/platform/instance-import.ts，
+ * 手机见 packages/ui-web/overrides/mobile/instance-import.ts）：两边的服务器 / 命令片段编号对应、
  * 本地存储逐项改写、AI 对话历史换范围、凭据预设的“哪台服务器用哪个预设”合并。
  *
  * 编号按内容对应（服务器看名称、地址、端口、用户名，命令片段看名称和命令），内容一样又有几条时优先同编号的。
@@ -72,7 +73,8 @@ const SKIP_PREFIXES = ['cloudssh_agent_draft_'];
 const NODE_ORDER_KEYS = new Set(['cloudssh_desktop_node_order']);
 const SNIPPET_ORDER_KEYS = new Set(['cloudssh_snippet_order']);
 
-function translateNodeOrder(raw: string, servers: Map<number, number>): string | null {
+/** 节点排序 { groups, servers: { 分组: [服务器编号] } }：编号换成目标实例的，对应不上的去掉 */
+export function translateNodeOrder(raw: string, servers: Map<number, number>): string | null {
   try {
     const data = JSON.parse(raw) as { groups?: unknown; servers?: Record<string, unknown> };
     const next: Record<string, number[]> = {};
@@ -86,7 +88,8 @@ function translateNodeOrder(raw: string, servers: Map<number, number>): string |
   }
 }
 
-function translateSnippetOrder(raw: string, snippets: Map<number, number>): string | null {
+/** 命令片段顺序 ["编号"…]：编号换成目标实例的，对应不上的去掉 */
+export function translateSnippetOrder(raw: string, snippets: Map<number, number>): string | null {
   try {
     const ids = JSON.parse(raw);
     if (!Array.isArray(ids)) return null;

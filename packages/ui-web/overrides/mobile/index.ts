@@ -42,6 +42,7 @@ import { installKeyboardShift } from './keyboard-shift';
 import { installMobileToasts } from './toasts';
 import { applySlot, findSlot } from './slots';
 import { installLinkConfirm } from '../shared/link-confirm';
+import { autoImportLocalData } from './instance-import';
 import { installTapCursor } from './tap-cursor';
 import { installTerminalTouch } from './terminal-touch';
 import { isTauri, native } from './tauri';
@@ -268,6 +269,16 @@ if (isTauri()) {
         }),
       ],
       ['credential presets', installPresets],
+      // 换了实例地址（比如改走入口网关）后第一次打开：从同一套服务器的别的实例带上分组排序等本地数据（./instance-import.ts）。
+      // 晚一点做，不和启动时的列表请求抢
+      ['local data import', () =>
+        window.setTimeout(() => {
+          void native
+            .state()
+            .then(autoImportLocalData)
+            .catch((error: unknown) => console.warn('[cloudssh] local data import', error));
+        }, 1500),
+      ],
       ['system bars', installSystemBars],
       ['downloads', installDownloadNotices],
       ['login result', reportLoginResult],

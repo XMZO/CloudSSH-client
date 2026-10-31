@@ -13,6 +13,7 @@ export {
   configurePresets,
   exportPresets,
   importPresets,
+  importScopeLinks,
   listPresets,
   localVault,
   presetIds,

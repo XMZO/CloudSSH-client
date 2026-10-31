@@ -126,6 +126,12 @@ fn valid_ui_cache_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 用另一个已保存实例的登录读它的服务器 / 命令片段列表（从别的实例导入本地数据时对照编号）
+#[tauri::command]
+async fn instance_get_json(net: State<'_, Net>, id: String, path: String) -> Result<serde_json::Value, String> {
+    net.instance_get_json(&id, &path).await
+}
+
 /// 界面缓存单项上限（几百台服务器的列表也远小于这个数）
 const UI_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
@@ -425,6 +431,7 @@ pub fn run() {
             ui_cache_write,
             test_instance,
             http_request,
+            instance_get_json,
             ws_open,
             ws_send,
             ws_send_binary,

@@ -27,6 +27,9 @@ use url::Url;
 
 const USER_AGENT: &str = concat!("CloudSSH-Mobile/", env!("CARGO_PKG_VERSION"));
 
+/// instance_get_json 能读的路径（只读列表）
+const INSTANCE_READ_PATHS: [&str; 2] = ["/api/servers", "/api/snippets"];
+
 /// rustls 客户端配置：ring 加密 + 内置 Mozilla 根证书（不依赖系统证书库，安卓上行为一致）
 pub fn tls_config() -> Arc<rustls::ClientConfig> {
     static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
@@ -275,6 +278,44 @@ impl Net {
             }
         };
         Ok(HttpResponse { status, headers, body, base64 })
+    }
+
+    /// 用某个已保存实例自己的登录读它的列表（“从别的实例导入本地数据”要对照两边的服务器和命令片段编号）。
+    /// 只放行这几个只读路径；那个实例没登录时报“没有登录”
+    pub async fn instance_get_json(&self, id: &str, path: &str) -> Result<serde_json::Value, String> {
+        if !INSTANCE_READ_PATHS.contains(&path) {
+            return Err("不支持的路径".into());
+        }
+        let instance = self
+            .settings
+            .read()
+            .unwrap()
+            .instances
+            .iter()
+            .find(|instance| instance.id == id)
+            .cloned()
+            .ok_or("实例不存在")?;
+        let url = Url::parse(&instance.base_url).and_then(|base| base.join(path)).map_err(|e| e.to_string())?;
+        let client = self.client.read().unwrap().clone();
+        let mut builder = client
+            .get(url.clone())
+            .header("Origin", &instance.base_url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json");
+        if let Some(cookie) = self.cookie_header(&instance, &url) {
+            builder = builder.header("Cookie", cookie);
+        }
+        let response = builder.send().await.map_err(|e| format!("网络请求失败：{e}"))?;
+        self.store_cookies(
+            &instance,
+            &url,
+            response.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()),
+        );
+        match response.status().as_u16() {
+            401 => Err(format!("「{}」没有登录", instance.name)),
+            status if !(200..300).contains(&status) => Err(format!("HTTP {status}")),
+            _ => response.json::<serde_json::Value>().await.map_err(|e| format!("响应不是 JSON：{e}")),
+        }
     }
 
     /// GET 并解析 JSON（测试连接用）

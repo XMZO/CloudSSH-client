@@ -1,0 +1,289 @@
+/* 入口网关（./index.ts）：节点页的状态条、管理面板。颜色全部取主题变量，两种界面主题共用 */
+
+/* ---------- 节点页的状态条 ---------- */
+
+.cs-gw-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  margin: 0 0 8px;
+  padding: 6px 10px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.cs-gw-strip[hidden] {
+  display: none;
+}
+
+.cs-gw-strip:active {
+  background: var(--accent-bg);
+}
+
+.cs-gw-strip > .cs-m-icon {
+  flex: none;
+  font-size: 18px;
+}
+
+.cs-gw-strip-nodes {
+  display: inline-flex;
+  flex: none;
+  gap: 5px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cs-gw-strip-dot {
+  opacity: 0.5;
+}
+
+.cs-gw-strip-node.is-next {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cs-gw-strip-node.is-down {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.cs-gw-strip-next {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 管理面板 ---------- */
+
+.cs-gw-intro,
+.cs-gw-desc {
+  margin: 0 4px;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.cs-set-card .cs-gw-desc {
+  margin: 0;
+  padding: 10px 14px;
+}
+
+.cs-gw-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.cs-gw-sync-text {
+  white-space: pre-line;
+}
+
+.cs-gw-sync-text.is-bad {
+  color: var(--error);
+}
+
+.cs-set-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.cs-set-btn.is-primary:disabled {
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--on-surface-variant);
+}
+
+/* 节点：一块一个，标题行（顺序、名称、标记、暂停 / 恢复）、用量条、用量与状态、上限 */
+.cs-gw-node {
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-gw-node-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.cs-gw-node-name {
+  font-size: 15px;
+}
+
+.cs-gw-node-action {
+  margin-left: auto;
+}
+
+.cs-gw-move {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+}
+
+.cs-gw-move:disabled {
+  opacity: 0.3;
+}
+
+.cs-gw-move .cs-m-icon {
+  font-size: 17px;
+}
+
+.cs-gw-badge {
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.cs-gw-badge.is-home {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cs-gw-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.cs-gw-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.cs-gw-bar.is-near span {
+  background: var(--warning, #d29922);
+}
+
+.cs-gw-bar.is-over span {
+  background: var(--error);
+}
+
+.cs-gw-node-info {
+  display: grid;
+  gap: 2px;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.cs-gw-node-info .is-ok {
+  color: var(--success, var(--accent));
+}
+
+.cs-gw-node-info .is-down {
+  color: var(--error);
+}
+
+.cs-gw-limit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.cs-gw-limit[hidden] {
+  display: none;
+}
+
+.cs-gw-limit-label {
+  color: var(--on-surface-variant);
+}
+
+.cs-gw-step {
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.cs-gw-step:active {
+  background: var(--accent-bg);
+}
+
+.cs-gw-limit-value {
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* 分流策略：说明换到下一整行 */
+.cs-gw-page .cs-set-row.is-wrap > .cs-gw-desc {
+  flex: 1 0 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.cs-gw-save-state {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 长期令牌 */
+.cs-gw-tokens > .cs-set-row:first-child {
+  border-top: 0;
+}
+
+.cs-gw-issue {
+  gap: 8px;
+}
+
+.cs-gw-issue .cs-gw-token-label {
+  flex: 1 1 auto;
+  width: auto;
+  font-family: inherit;
+}
+
+.cs-gw-issue .cs-gw-token-days {
+  flex: 0 0 auto;
+  width: auto;
+  font-family: inherit;
+}
+
+.cs-gw-new-token[hidden] {
+  display: none;
+}
+
+.cs-gw-token-value {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--on-surface);
+  font-family: var(--font-code, monospace);
+  font-size: 12px;
+  user-select: all;
+}

@@ -26,6 +26,7 @@ import { hostId } from '../shared/ai-remote/servers';
 import { mt, onLocaleChange } from './i18n';
 import { osIcon } from '../shared/os-icon';
 import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
+import { gatewayStrip } from './gateway';
 import { nodeOrder, ORDER_CHANGED_EVENT, orderedGroups, RECENT_KEY, UNGROUPED_KEY } from './node-groups';
 import { openReorderSheet } from './reorder-sheet';
 import { el, icon, showActions, type SheetAction } from './sheet';
@@ -359,6 +360,8 @@ export function mountNodes(): void {
     return;
   }
   toolbar.after(root);
+  // 实例是入口网关时：各节点今天的用量与新会话去向，点开管理面板（./gateway）
+  banner.after(gatewayStrip());
   applyTexts();
   // 标签改名后，按标签名记住的折叠状态与手动排序跟过去
   window.addEventListener(TAG_RENAMED_EVENT, (event) => {

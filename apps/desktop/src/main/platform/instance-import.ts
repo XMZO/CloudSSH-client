@@ -7,19 +7,15 @@
  * - 本地存储里 cloudssh_ 开头的键：目标同名的被覆盖；排序里的服务器 / 命令片段编号换成目标那边的
  * - AI 对话历史（IndexedDB）：换成目标的实例与服务器编号后合并进去
  * - 凭据预设的“哪台服务器用哪个预设”：换编号后合并
- * 编号按内容对应（见 ./instance-import-plan.ts），所以两个实例都要登录着（要读两边的服务器和命令片段列表）。
+ * 编号按内容对应（见 packages/core/src/instance-import.ts），所以两个实例都要登录着（要读两边的服务器和命令片段列表）。
  * 读写页面存储：在实例自己的分区里开一个隐藏窗口，打开起源桥提供的本地空白页（不启动界面、不碰 Worker）。
  */
-import { type InstanceConfig, originOf } from '@cloudssh/core';
-import { app, BrowserWindow, dialog, Notification } from 'electron';
-import fs from 'node:fs';
-import path from 'node:path';
-import { configStore } from '../config/store';
-import { createLogger } from '../logger';
 import {
   type Conversation,
+  type InstanceConfig,
   matchIds,
   mergePresetLinks,
+  originOf,
   type PresetFile,
   type ServerLike,
   serverKey,
@@ -27,7 +23,12 @@ import {
   snippetKey,
   translateConversations,
   translateLocalStorage,
-} from './instance-import-plan';
+} from '@cloudssh/core';
+import { app, BrowserWindow, dialog, Notification } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
+import { configStore } from '../config/store';
+import { createLogger } from '../logger';
 import { BLANK_PAGE_PATH } from './origin-bridge';
 import { prepareInstanceSession } from './session';
 import { readPresetFile, writePresetFile } from './vault';

@@ -52,6 +52,8 @@ export const native = {
   uiCacheRead: (key: string) => invoke<string | null>('ui_cache_read', { key }),
   uiCacheWrite: (key: string, value: string | null) => invoke<void>('ui_cache_write', { key, value }),
   testInstance: (baseUrl: string) => invoke<ProbeResult>('test_instance', { baseUrl }),
+  /** 用另一个已保存实例的登录读它的列表（只能读 /api/servers、/api/snippets；没登录时报错） */
+  instanceJson: <T>(id: string, path: '/api/servers' | '/api/snippets') => invoke<T>('instance_get_json', { id, path }),
   http: (request: { method: string; path: string; headers: [string, string][]; body: string | null; bodyBase64: boolean }) =>
     invoke<HttpResult>('http_request', { request }),
   wsOpen: (path: string, onEvent: Channel<WsEvent | ArrayBuffer>) => invoke<number>('ws_open', { path, onEvent }),

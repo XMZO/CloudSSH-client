@@ -6,3 +6,4 @@ export * from './transport';
 export * from './api-client';
 export * from './server-groups';
 export * from './version';
+export * from './instance-import';

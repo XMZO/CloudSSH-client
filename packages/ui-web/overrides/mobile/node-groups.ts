@@ -77,3 +77,9 @@ export function orderedGroups(servers: ServerConfig[]): NodeGroup[] {
 export function notifyOrderChanged(): void {
   window.dispatchEvent(new Event(ORDER_CHANGED_EVENT));
 }
+
+/** 本地存储里的排序被别处改写了（从别的实例导入）：重新读，并通知列表重排 */
+export function reloadNodeOrder(): void {
+  cache = null;
+  notifyOrderChanged();
+}

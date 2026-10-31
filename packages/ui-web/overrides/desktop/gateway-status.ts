@@ -3,69 +3,14 @@
  * 新会话放在哪个节点，例如“A 62% · B 3%”（新会话放的那个高亮，主节点带 *）。悬停看详情（暂停原因、上次同步），点一下刷新。
  *
  * 读网关的 GET /api/__gateway/status（要登录）；普通实例没有这个接口（404），不显示、也不再问。
- * 第二版网关返回 nodes 列表；第一版只有 A、B 两边（usage / aDown / mapped），读的时候换成同样的列表。
+ * 两版网关的返回都由 ../shared/gateway/model.ts 整理成同样的节点列表。
  * 窗口在前台时每分钟刷新一次，回到前台时也刷新。
  */
 import { el } from './dom';
 import { dt, onLocaleChange } from './i18n';
-
-interface Down {
-  until: number;
-  reason: string;
-  manual?: boolean;
-}
-
-interface GatewayNode {
-  name: string;
-  home: boolean;
-  ratio: number | null;
-  gbs: number | null;
-  down: Down | null;
-  mapped: { servers: number; stale: number } | null;
-}
-
-interface GatewayStatus {
-  next: string | null;
-  nodes: GatewayNode[];
-  lastSync: { at: number; errors: string[] } | null;
-}
-
-interface RawUsage {
-  gbs?: number;
-  ratio?: number;
-}
-
-/** 网关返回的原样内容（两版都可能） */
-interface RawStatus {
-  gateway?: unknown;
-  version?: number;
-  next?: string;
-  nodes?: GatewayNode[];
-  usage?: Record<string, RawUsage> | null;
-  aDown?: Down | null;
-  mapped?: { servers: number; stale: number };
-  lastSync?: { at?: number; errors?: string[] } | null;
-}
+import { type GatewayStatus, mappedServers, normalizeGatewayStatus, percentText as percent } from '../shared/gateway/model';
 
 const REFRESH_MS = 60_000;
-
-function normalize(raw: RawStatus): GatewayStatus | null {
-  if (raw.gateway !== true) return null;
-  const nodes: GatewayNode[] = Array.isArray(raw.nodes)
-    ? raw.nodes
-    : (['A', 'B'] as const).map((name) => ({
-        name,
-        home: name === 'B',
-        ratio: raw.usage?.[name]?.ratio ?? null,
-        gbs: raw.usage?.[name]?.gbs ?? null,
-        down: name === 'A' ? (raw.aDown ?? null) : null,
-        mapped: name === 'A' ? (raw.mapped ?? null) : null,
-      }));
-  const lastSync = raw.lastSync?.at ? { at: raw.lastSync.at, errors: raw.lastSync.errors ?? [] } : null;
-  return { next: raw.next ?? null, nodes, lastSync };
-}
-
-const percent = (ratio: number | null): string => (ratio == null ? '?' : String(Math.round(ratio * 100)));
 
 function ago(at: number): string {
   const minutes = Math.round((Date.now() - at) / 60_000);
@@ -90,7 +35,7 @@ function details(status: GatewayStatus): string {
     }
     if (node.mapped && node.mapped.stale > 0) lines.push(dt('gwStale', { count: node.mapped.stale, side: node.name }));
   }
-  const mapped = Math.max(0, ...status.nodes.map((node) => node.mapped?.servers ?? 0));
+  const mapped = mappedServers(status);
   if (status.lastSync) {
     lines.push(dt('gwSync', { ago: ago(status.lastSync.at), mapped }));
     if (status.lastSync.errors.length) lines.push(dt('gwSyncIssues', { count: status.lastSync.errors.length, first: status.lastSync.errors[0] }));
@@ -143,8 +88,7 @@ export function mountGatewayStatus(container: HTMLElement): void {
     }
     if (response.status === 401) return; // 还没登录：登录后下一次就有了
     // 普通实例：没有这个接口（404，或者返回的是网页），以后也不再问
-    const body = response.ok ? ((await response.json().catch(() => null)) as RawStatus | null) : null;
-    status = body ? normalize(body) : null;
+    status = response.ok ? normalizeGatewayStatus(await response.json().catch(() => null)) : null;
     if (!status) {
       stopped = true;
       window.clearTimeout(timer);

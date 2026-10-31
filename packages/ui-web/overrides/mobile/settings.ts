@@ -29,7 +29,9 @@ import { openQrScanner } from './qr-sync';
 import { agentOutputText, openStyleEditor } from '../shared/agent-output';
 import { mt } from './i18n';
 import { groupNav, segmented, settingsGroup, settingsRow, smallButton, splitToggleRow, toggleRow } from './settings-ui';
-import { closeSheet, confirmSheet, el, icon, openSheet } from './sheet';
+import { closeSheet, confirmSheet, el, icon, openSheet, showActions } from './sheet';
+import { importLocalData } from './instance-import';
+import { gatewaySettingsRow } from './gateway';
 import { native, type MobileInstance, type MobileState } from './tauri';
 
 export const KEEPALIVE_KEY = 'cloudssh_mobile_keepalive';
@@ -173,14 +175,56 @@ function instanceRow(instance: MobileInstance, state: MobileState): HTMLElement 
   return row;
 }
 
+/** 从别的实例导入本地数据（./instance-import.ts）：选实例 → 确认 → 导入 */
+function pickImportSource(state: MobileState): void {
+  const others = state.instances.filter((instance) => instance.id !== state.currentId);
+  const hostOf = (baseUrl: string) => {
+    try {
+      return new URL(baseUrl).host;
+    } catch {
+      return baseUrl;
+    }
+  };
+  showActions(
+    mt('importPick'),
+    others.map((source) => ({
+      label: `${source.name}（${hostOf(source.baseUrl)}）`,
+      icon: 'dns',
+      action: () => {
+        void (async () => {
+          if (!(await confirmSheet(mt('importConfirm', { name: source.name }), mt('importAction'), mt('cancel')))) return;
+          notify(mt('importing'), { duration: 1500 });
+          try {
+            const summary = await importLocalData(source, state);
+            notify(mt('importDone', { ...summary }), { variant: 'success' });
+          } catch (error) {
+            notify(mt('importFailed', { reason: errorMessage(error) }), { variant: 'danger' });
+          }
+        })();
+      },
+    })),
+    mt('cancel')
+  );
+}
+
 function instancesGroup(state: MobileState): HTMLElement {
-  const rows = state.instances.map((instance) => instanceRow(instance, state));
+  // 当前实例是入口网关时多一行“入口网关”：节点用量、新会话去向，点开管理面板（./gateway）
+  const rows = [...state.instances.map((instance) => instanceRow(instance, state)), gatewaySettingsRow()];
   const actions = el('div', 'cs-set-actions');
   const add = el('button', 'cs-set-action');
   add.type = 'button';
   add.append(icon('add'), el('span', '', mt('addInstance')));
   add.addEventListener('click', () => openInstanceEditor(null, state));
   actions.append(add);
+  // 换了实例地址（比如改走入口网关）后，从原来的实例复制分组排序等本地数据
+  if (state.loggedIn && state.instances.length > 1) {
+    const importButton = el('button', 'cs-set-action');
+    importButton.type = 'button';
+    importButton.title = mt('importRowSub');
+    importButton.append(icon('download'), el('span', '', mt('importRow')));
+    importButton.addEventListener('click', () => pickImportSource(state));
+    actions.append(importButton);
+  }
   if (state.loggedIn) {
     const signOut = el('button', 'cs-set-action is-danger');
     signOut.type = 'button';

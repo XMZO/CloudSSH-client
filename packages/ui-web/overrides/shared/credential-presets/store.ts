@@ -8,6 +8,7 @@
  * - Worker 给每台服务器各存一份凭据（加密存在用户数据库里），预设只是填表的来源：改了预设以后要“同步”
  *   一次，才会写进用过它的服务器。哪台服务器用过哪个预设记在本机（按实例分开，服务器 id 只在实例内有效）。
  */
+import { mergePresetLinks } from '@cloudssh/core';
 import { refreshServerList } from '../../sidebar/hooks';
 
 export type AuthMethod = 'password' | 'publickey';
@@ -240,6 +241,17 @@ export async function linkServers(presetId: string, serverIds: number[]): Promis
   for (const key of Object.keys(map)) map[key] = map[key].filter((id) => !ids.has(id));
   map[presetId] = [...new Set([...(map[presetId] ?? []), ...serverIds])];
   await save({ ...data, links: { ...data.links, [scope]: map } });
+}
+
+/**
+ * 从别的实例导入（手机上所有实例共用一份预设）：把 fromScope 里“预设 → 服务器”的关联换成 toScope 的编号，
+ * 合并进去（已有的保留）。返回搬过来几条
+ */
+export async function importScopeLinks(fromScope: string, toScope: string, servers: Map<number, number>): Promise<number> {
+  const data = await load();
+  const { file, links } = mergePresetLinks(data, fromScope, toScope, servers);
+  if (links) await save({ ...data, links: (file.links ?? data.links) as PresetData['links'] });
+  return links;
 }
 
 // ---------- 扫码同步（电脑 → 手机） ----------
