@@ -93,7 +93,9 @@ if (!app.requestSingleInstanceLock()) {
       refreshMenus();
       if (configStore.preferences.cliLoginSync) applyCliSync(true);
     });
-    applyCliSync(configStore.preferences.cliLoginSync);
+    // 只在打开时同步；关着时不清：命令行的登录放在 ~/.cloudssh，是本机共用的，换个数据目录（CLOUDSSH_USER_DATA_DIR）
+    // 启动的客户端看到偏好是关的就清，会把别的客户端同步过去的登录也清掉。清理只在用户手动关掉这个开关时做
+    if (configStore.preferences.cliLoginSync) applyCliSync(true);
     void refreshCliInstall();
     app.on('browser-window-focus', () => refreshMenus());
 
