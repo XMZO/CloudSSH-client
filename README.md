@@ -696,7 +696,7 @@ node scripts/version.mjs sync        # 手动改过 version.json 之后同步
 
 Android 的 `versionCode` 由 Tauri 按 主×1000000 + 次×1000 + 修订 推导（0.2.0 → 2000），所以次版本号和修订号要小于 1000；新版本号必须更高才能覆盖安装，脚本默认拒绝降级（确实需要时加 `--force`）。`pnpm test`、`pnpm dist:win` 和 `pnpm android:build` 都会先检查各处版本号是否一致，不一致直接报错。
 
-代号取自夜空中的亮星：0.1 天狼 Sirius，0.2 织女 Vega，0.3 牛郎 Altair。次版本号或主版本号升级时换新代号，修订版沿用原代号。发版时在 [CHANGELOG.md](CHANGELOG.md) 顶部补上这一版的内容。
+代号取自夜空中的亮星：0.1 天狼 Sirius，0.2 织女 Vega，0.3 牛郎 Altair，0.4 天津四 Deneb。次版本号或主版本号升级时换新代号，修订版沿用原代号。发版时在 [CHANGELOG.md](CHANGELOG.md) 顶部补上这一版的内容。
 
 ---
 
