@@ -107,6 +107,46 @@ const snippets = [
 
 // ---------- HTTP ----------
 
+/** --gateway：入口网关的可变状态（管理接口改它） */
+const gw = {
+  settings: null,
+  lastSync: Date.now() - 3 * 60_000,
+  down: { A: { until: Date.now() + 9 * 3600_000, reason: 'Exceeded allowed duration in Durable Objects free tier.' } },
+  tokens: [{ label: '远程 MCP', created: Date.now() - 86_400_000, expires: Date.now() + 364 * 86_400_000 }],
+};
+
+function gatewayStatus() {
+  const usage = { A: { gbs: 14343, ratio: 1.103 }, B: { gbs: 412, ratio: 0.032 } };
+  const policy = gw.settings?.policy === 'even' ? 'even' : 'fill';
+  const order = gw.settings?.order ?? ['A', 'B'];
+  const limits = { A: 0.9, B: 0.9, ...gw.settings?.limits };
+  const nodes = order.map((name) => ({
+    name,
+    home: name === 'B',
+    ratio: usage[name].ratio,
+    gbs: usage[name].gbs,
+    limit: limits[name],
+    down: gw.down[name] && gw.down[name].until > Date.now() ? gw.down[name] : null,
+    mapped: name === 'B' ? null : { servers: 87, stale: 1 },
+  }));
+  const open = nodes.filter((node) => !node.down);
+  const fresh = open.filter((node) => node.ratio < node.limit);
+  const next = (policy === 'even' ? [...fresh].sort((x, y) => x.ratio - y.ratio)[0] : fresh[0])?.name ?? open[0]?.name ?? nodes[0].name;
+  return {
+    gateway: true,
+    version: 2,
+    policy,
+    settings: { policy, order, limit: 0.9, limits, custom: !!gw.settings },
+    home: 'B',
+    next,
+    nodes,
+    lastSync: { at: gw.lastSync, errors: [] },
+    usage: { at: Date.now(), ...usage },
+    aDown: nodes.find((node) => node.name === 'A')?.down ?? null,
+    mapped: { servers: 87, stale: 1 },
+  };
+}
+
 const json = (res, status, body) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(body === undefined ? '' : JSON.stringify(body));
@@ -200,25 +240,41 @@ async function handleHttp(req, res) {
   const method = req.method;
   console.log(method, path);
 
-  // 入口网关的状态（tools/gateway/gateway.js 的 GET /api/__gateway/status，第二版）：示例是 A 号额度用完、新会话放 B（主节点）
-  if (path === '/api/__gateway/status') {
+  // 入口网关（tools/gateway/gateway.js，第二版）：状态与客户端实例管理用的管理接口。示例是 A 号额度用完、新会话放 B（主节点）
+  if (path.startsWith('/api/__gateway/')) {
     if (!gateway) return json(res, 404, { error: 'Not Found' });
-    const aDown = { until: Date.now() + 9 * 3600_000, reason: 'Exceeded allowed duration in Durable Objects free tier.' };
-    return json(res, 200, {
-      gateway: true,
-      version: 2,
-      policy: 'fill',
-      home: 'B',
-      next: 'B',
-      nodes: [
-        { name: 'A', home: false, ratio: 1.103, gbs: 14343, limit: 0.9, down: aDown, mapped: { servers: 87, stale: 1 } },
-        { name: 'B', home: true, ratio: 0.032, gbs: 412, limit: 0.9, down: null, mapped: null },
-      ],
-      lastSync: { at: Date.now() - 3 * 60_000, errors: [] },
-      usage: { at: Date.now(), A: { gbs: 14343, ratio: 1.103 }, B: { gbs: 412, ratio: 0.032 } },
-      aDown,
-      mapped: { servers: 87, stale: 1 },
-    });
+    if (path === '/api/__gateway/status' && method === 'GET') return json(res, 200, gatewayStatus());
+    if (path === '/api/__gateway/settings' && (method === 'PUT' || method === 'DELETE')) {
+      const body = method === 'PUT' ? await readBody(req) : {};
+      gw.settings = method === 'PUT' ? { policy: body.policy, order: body.order, limits: body.limits } : null;
+      return json(res, 200, gatewayStatus());
+    }
+    if (path === '/api/__gateway/sync' && method === 'POST') {
+      gw.lastSync = Date.now();
+      return json(res, 200, { report: { at: gw.lastSync, nodes: {}, errors: [] }, status: gatewayStatus() });
+    }
+    if (path === '/api/__gateway/pause' && (method === 'POST' || method === 'DELETE')) {
+      const node = url.searchParams.get('node');
+      const minutes = Number(url.searchParams.get('minutes') ?? 60);
+      gw.down[node] = method === 'POST' ? { until: Date.now() + minutes * 60_000, reason: '手动暂停', manual: true } : null;
+      return json(res, 200, gatewayStatus());
+    }
+    if (path === '/api/__gateway/tokens') {
+      if (method === 'GET') return json(res, 200, gw.tokens.map(({ label, created, expires }) => ({ label, kind: 'api', created, expires })));
+      if (method === 'POST') {
+        const body = await readBody(req);
+        const days = Number(body.days ?? 365);
+        const token = { label: String(body.label || 'token'), created: Date.now(), expires: days > 0 ? Date.now() + days * 86_400_000 : 0 };
+        gw.tokens.push(token);
+        return json(res, 200, { ...token, token: `gw.mock-${crypto.randomBytes(12).toString('hex')}` });
+      }
+      if (method === 'DELETE') {
+        const before = gw.tokens.length;
+        gw.tokens = gw.tokens.filter((token) => token.label !== url.searchParams.get('label'));
+        return json(res, 200, { deleted: before - gw.tokens.length });
+      }
+    }
+    return json(res, 404, { error: 'Not Found' });
   }
   if (path === '/api/config') return json(res, 200, { turnstileEnabled: false, githubAuthEnabled: true, requireGithubAuth: false, authMode: 'github', sshSharingEnabled: true });
   // 调试：从外面断开所有 Shell 连接（像网络抖了一下，不发关闭帧），在 pager、nano 里或打了半行命令时也能测断线恢复。

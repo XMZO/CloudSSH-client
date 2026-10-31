@@ -68,6 +68,45 @@ interface CliSettings {
   instances: { name: string; url: string; signedIn: boolean }[];
 }
 
+type GatewayPolicy = 'fill' | 'even';
+
+/** 入口网关的状态（tools/gateway 的 GET /api/__gateway/status） */
+interface GatewayStatus {
+  gateway: true;
+  policy: GatewayPolicy;
+  next: string | null;
+  home: string;
+  nodes: {
+    name: string;
+    home: boolean;
+    ratio: number | null;
+    gbs: number | null;
+    limit: number | null;
+    down: { until: number; reason: string; manual?: boolean } | null;
+    mapped: { servers: number; stale: number } | null;
+  }[];
+  lastSync: { at: number; errors: string[] } | null;
+  /** 旧版网关没有 */
+  settings?: { policy: GatewayPolicy; order: string[]; limit: number; limits: Record<string, number>; custom: boolean };
+}
+
+interface GatewayToken {
+  label: string;
+  created: number;
+  expires: number;
+}
+
+type GatewayAction =
+  | { kind: 'status' }
+  | { kind: 'settings'; settings: { policy: GatewayPolicy; order: string[]; limits: Record<string, number> } | null }
+  | { kind: 'sync' }
+  | { kind: 'pause'; node: string; minutes: number | null }
+  | { kind: 'tokens' }
+  | { kind: 'issue-token'; label: string; days: number }
+  | { kind: 'revoke-token'; label: string };
+
+type GatewayResult = { ok: true; data: unknown } | { ok: false; reason: 'notGateway' | 'login' | 'error'; message: string };
+
 interface ManagerApi {
   state(): Promise<ManagerState>;
   saveInstance(input: Partial<InstanceConfig>): Promise<InstanceConfig>;
@@ -77,6 +116,8 @@ interface ManagerApi {
   login(id: string): Promise<void>;
   clearData(id: string): Promise<void>;
   testInstance(baseUrl: string, options?: { direct?: boolean }): Promise<TestResult>;
+  /** 实例是入口网关时的网关面板（旧版 preload 没有） */
+  gateway?(id: string, action: GatewayAction): Promise<GatewayResult>;
   setPreferences(patch: Partial<ManagerState['preferences']>): Promise<unknown>;
   setShortcutRecording(recording: boolean): Promise<void>;
   pickDirectory(): Promise<string | null>;
@@ -367,6 +408,9 @@ function fillForm(instance: InstanceConfig | null): void {
   importSource.replaceChildren(...others.map((item) => new Option(`${item.name}（${hostOf(item.baseUrl)}）`, item.id)));
   importSource.disabled = others.length === 0 || !api.importInstanceData;
   $<HTMLButtonElement>('import-data').disabled = importSource.disabled;
+  // 只有一个实例时没有可导入的，整行不显示
+  $('import-row').hidden = others.length === 0;
+  void loadGateway(instance);
   if (instance && state) {
     $<HTMLButtonElement>('set-default').disabled = instance.id === state.defaultInstanceId;
     $<HTMLButtonElement>('delete-instance').disabled = state.instances.length <= 1;
@@ -706,6 +750,339 @@ async function run(action: () => Promise<unknown>): Promise<void> {
     formError.textContent = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   }
 }
+
+// ---------- 入口网关（实例是 tools/gateway 时） ----------
+
+const gatewayCard = $('gateway-card');
+const gwNodes = $('gw-nodes');
+const gwSyncState = $('gw-sync-state');
+const gwSettingsState = $('gw-settings-state');
+const gwPolicyDesc = $('gw-policy-desc');
+const gwTokens = $('gw-tokens');
+const gwError = $('gw-error');
+const gwTokenNew = $('gw-token-new');
+const gwTokenValue = $<HTMLInputElement>('gw-token-value');
+const GW_POLICY_DESC: Record<GatewayPolicy, string> = {
+  fill: '按上面的顺序用：前一个节点今天用到上限、出错或暂停了才放下一个。主节点存着数据，建议排最后',
+  even: '每次放到今天用得最少的节点（都没到上限时）',
+};
+
+/** 正在显示哪个实例的网关；切换实例后，晚到的结果丢掉 */
+let gwInstanceId: string | null = null;
+let gwStatus: GatewayStatus | null = null;
+/** 还没保存的设置（改顺序、上限、策略时先改这里） */
+let gwDraft: { policy: GatewayPolicy; order: string[]; limits: Record<string, number> } | null = null;
+
+function gwPolicyRadios(): HTMLInputElement[] {
+  return Array.from(document.querySelectorAll<HTMLInputElement>('input[name="gw-policy"]'));
+}
+
+function gwTime(at: number): string {
+  return new Date(at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function gwDate(at: number): string {
+  return new Date(at).toLocaleDateString([], { year: 'numeric', month: 'numeric', day: 'numeric' });
+}
+
+/** 暂停原因写成一句短话；完整原文放悬停提示 */
+function gwReason(down: { reason: string; manual?: boolean }): string {
+  if (down.manual) return '手动暂停，到时间自动恢复';
+  if (/exceed/i.test(down.reason)) return '今天的额度用完了，UTC 0 点恢复';
+  return `出错：${down.reason}`;
+}
+
+function gwAgo(at: number): string {
+  const minutes = Math.round((Date.now() - at) / 60_000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  return `${Math.round(minutes / 60)} 小时前`;
+}
+
+async function gatewayCall(action: GatewayAction): Promise<unknown | null> {
+  const id = gwInstanceId;
+  if (!id || !api.gateway) return null;
+  gwError.textContent = '';
+  const result = await api.gateway(id, action).catch((error: unknown) => ({ ok: false as const, reason: 'error' as const, message: remoteMessage(error) }));
+  if (id !== gwInstanceId) return null;
+  if (!result.ok) {
+    gwError.textContent = result.message;
+    return null;
+  }
+  return result.data;
+}
+
+/** 选中实例时调用：是入口网关就显示面板，不是（或没登录、看不出来）就藏起来 */
+async function loadGateway(instance: InstanceConfig | null): Promise<void> {
+  gwInstanceId = instance?.id ?? null;
+  gwStatus = null;
+  gwDraft = null;
+  gatewayCard.hidden = true;
+  gwTokenNew.hidden = true;
+  gwTokenValue.value = '';
+  if (!instance || !api.gateway) return;
+  const result = await api.gateway(instance.id, { kind: 'status' }).catch(() => null);
+  if (instance.id !== gwInstanceId || !result?.ok) return;
+  applyGatewayStatus(result.data as GatewayStatus);
+  gatewayCard.hidden = false;
+  void loadGatewayTokens();
+}
+
+function applyGatewayStatus(status: GatewayStatus): void {
+  gwStatus = status;
+  const settings = status.settings;
+  gwDraft = {
+    policy: status.policy === 'even' ? 'even' : 'fill',
+    order: settings?.order ?? status.nodes.map((node) => node.name),
+    limits: { ...Object.fromEntries(status.nodes.map((node) => [node.name, node.limit ?? 0.9])), ...settings?.limits },
+  };
+  renderGateway();
+}
+
+function gwDirty(): boolean {
+  if (!gwStatus || !gwDraft) return false;
+  const settings = gwStatus.settings;
+  const order = settings?.order ?? gwStatus.nodes.map((node) => node.name);
+  return (
+    gwDraft.policy !== gwStatus.policy ||
+    gwDraft.order.join() !== order.join() ||
+    gwStatus.nodes.some((node) => Math.abs((gwDraft!.limits[node.name] ?? 0.9) - (node.limit ?? 0.9)) > 0.001)
+  );
+}
+
+function renderGateway(): void {
+  const status = gwStatus;
+  const draft = gwDraft;
+  if (!status || !draft) return;
+  const byName = new Map(status.nodes.map((node) => [node.name, node]));
+  // 按（草稿里的）顺序排；顺序里没有的节点放后面
+  const names = [...draft.order.filter((name) => byName.has(name)), ...status.nodes.map((node) => node.name).filter((name) => !draft.order.includes(name))];
+  gwNodes.replaceChildren(
+    ...names.map((name, index) => {
+      const node = byName.get(name)!;
+      const row = document.createElement('tr');
+
+      const nameCell = document.createElement('td');
+      const nameBox = document.createElement('div');
+      nameBox.className = 'gw-name';
+      if (draft.policy === 'fill' && names.length > 1) {
+        const move = document.createElement('span');
+        move.className = 'gw-move';
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.textContent = '▲';
+        up.title = '往前挪';
+        up.disabled = index === 0;
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.textContent = '▼';
+        down.title = '往后挪';
+        down.disabled = index === names.length - 1;
+        const swap = (offset: number) => {
+          const next = [...names];
+          [next[index], next[index + offset]] = [next[index + offset], next[index]];
+          draft.order = next;
+          renderGateway();
+        };
+        up.addEventListener('click', () => swap(-1));
+        down.addEventListener('click', () => swap(1));
+        move.append(up, down);
+        nameBox.append(move);
+      }
+      const label = document.createElement('strong');
+      label.textContent = name;
+      nameBox.append(label);
+      if (node.home) nameBox.append(badge('主节点', true));
+      if (status.next === name) nameBox.append(badge('新会话放这里'));
+      nameCell.append(nameBox);
+
+      const usageCell = document.createElement('td');
+      const usage = document.createElement('div');
+      usage.className = 'gw-usage';
+      const bar = document.createElement('div');
+      bar.className = 'gw-bar';
+      const fill = document.createElement('span');
+      const ratio = node.ratio ?? 0;
+      fill.style.width = `${Math.min(ratio, 1) * 100}%`;
+      bar.classList.toggle('over', ratio >= 1);
+      bar.classList.toggle('near', ratio < 1 && ratio >= (draft.limits[name] ?? 0.9));
+      bar.append(fill);
+      const usageText = document.createElement('small');
+      usageText.textContent = node.ratio == null ? '读不到用量' : `${Math.round(node.ratio * 100)}% · ${Math.round(node.gbs ?? 0).toLocaleString()} GB-s`;
+      usage.title = node.ratio == null ? '没配这个号的只读统计令牌' : `今天用了 ${Math.round(node.gbs ?? 0).toLocaleString()} / 13,000 GB-s（免费额度每天 UTC 0 点重置）`;
+      usage.append(bar, usageText);
+      usageCell.append(usage);
+
+      const limitCell = document.createElement('td');
+      const limit = document.createElement('input');
+      limit.type = 'number';
+      limit.min = '5';
+      limit.max = '100';
+      limit.step = '5';
+      limit.value = String(Math.round((draft.limits[name] ?? 0.9) * 100));
+      limit.title = '今天用到这么多（%）就不再放新会话';
+      limit.setAttribute('aria-label', `${name} 的上限（%）`);
+      limit.addEventListener('change', () => {
+        const value = Math.min(Math.max(Number(limit.value) || 90, 5), 100);
+        limit.value = String(value);
+        draft.limits[name] = value / 100;
+        renderGatewayState();
+      });
+      limitCell.append(limit);
+
+      const statusCell = document.createElement('td');
+      const state = document.createElement('div');
+      state.className = 'gw-status';
+      const main = document.createElement('span');
+      if (node.down) {
+        main.className = 'down';
+        main.textContent = `暂停到 ${gwTime(node.down.until)}`;
+        const reason = document.createElement('small');
+        reason.textContent = gwReason(node.down);
+        state.title = node.down.reason;
+        state.append(main, reason);
+      } else {
+        main.className = 'ok';
+        main.textContent = '正常';
+        state.append(main);
+      }
+      if (node.mapped && node.mapped.stale > 0) {
+        const stale = document.createElement('small');
+        stale.textContent = `${node.mapped.stale} 台改过还没同步过来`;
+        state.append(stale);
+      }
+      statusCell.append(state);
+
+      const actionCell = document.createElement('td');
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'link';
+      action.textContent = node.down ? '恢复' : '暂停 1 小时';
+      action.title = node.down ? '解除暂停：马上可以放新会话' : '这 1 小时内不放新会话（已经开着的不受影响），到时间自动恢复';
+      action.addEventListener('click', () => {
+        void gatewayCall({ kind: 'pause', node: name, minutes: node.down ? null : 60 }).then((data) => data && applyGatewayStatus(data as GatewayStatus));
+      });
+      actionCell.append(action);
+
+      row.append(nameCell, usageCell, limitCell, statusCell, actionCell);
+      return row;
+    })
+  );
+
+  const mapped = Math.max(0, ...status.nodes.map((node) => node.mapped?.servers ?? 0));
+  const sync = status.lastSync;
+  gwSyncState.className = sync?.errors?.length ? 'hint bad gw-sync-state' : 'hint gw-sync-state';
+  gwSyncState.textContent = sync?.at
+    ? `上次同步：${gwAgo(sync.at)}，各节点对应上 ${mapped} 台服务器（每 5 分钟、以及经网关改了数据后同步）` +
+      (sync.errors?.length ? `\n${sync.errors.length} 个问题，第一个：${sync.errors[0]}` : '')
+    : '还没同步过（每 5 分钟同步一次）';
+  gwPolicyRadios().forEach((radio) => {
+    radio.checked = radio.value === draft.policy;
+  });
+  gwPolicyDesc.textContent = GW_POLICY_DESC[draft.policy];
+  renderGatewayState();
+}
+
+function renderGatewayState(): void {
+  const dirty = gwDirty();
+  $<HTMLButtonElement>('gw-save').disabled = !dirty;
+  $<HTMLButtonElement>('gw-reset').disabled = !gwStatus?.settings?.custom && !dirty;
+  gwSettingsState.className = 'hint';
+  gwSettingsState.textContent = dirty ? '还没保存' : gwStatus?.settings?.custom ? '用的是这里改过的设置' : '用的是部署时的默认设置';
+}
+
+async function loadGatewayTokens(): Promise<void> {
+  const data = await gatewayCall({ kind: 'tokens' });
+  if (!Array.isArray(data)) return;
+  gwTokens.replaceChildren(
+    ...(data as GatewayToken[]).map((token) => {
+      const li = document.createElement('li');
+      const code = document.createElement('code');
+      code.textContent = token.label;
+      const meta = document.createElement('span');
+      meta.className = 'alias-target';
+      meta.textContent = `签发于 ${gwDate(token.created)} · ${token.expires ? `${gwDate(token.expires)} 过期` : '不过期'}`;
+      const revoke = document.createElement('button');
+      revoke.type = 'button';
+      revoke.className = 'link';
+      revoke.textContent = '吊销';
+      revoke.addEventListener('click', () => {
+        if (!confirm(`吊销长期令牌「${token.label}」？用它登录的命令行、MCP 会马上变成未登录。`)) return;
+        void gatewayCall({ kind: 'revoke-token', label: token.label }).then(() => loadGatewayTokens());
+      });
+      li.append(code, meta, revoke);
+      return li;
+    })
+  );
+}
+
+gwPolicyRadios().forEach((radio) =>
+  radio.addEventListener('change', () => {
+    if (!gwDraft || !radio.checked) return;
+    gwDraft.policy = radio.value === 'even' ? 'even' : 'fill';
+    renderGateway();
+  })
+);
+// 网关面板在实例表单里：回车不要提交（保存实例）
+gatewayCard.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+    event.preventDefault();
+    if (event.target.id === 'gw-token-label') $('gw-token-issue').click();
+    else event.target.dispatchEvent(new Event('change'));
+  }
+});
+$('gw-refresh').addEventListener('click', () => {
+  void gatewayCall({ kind: 'status' }).then((data) => data && applyGatewayStatus(data as GatewayStatus));
+  void loadGatewayTokens();
+});
+$('gw-sync').addEventListener('click', () => {
+  const button = $<HTMLButtonElement>('gw-sync');
+  button.disabled = true;
+  button.textContent = '同步中…';
+  void gatewayCall({ kind: 'sync' })
+    .then((data) => data && applyGatewayStatus((data as { status: GatewayStatus }).status))
+    .finally(() => {
+      button.disabled = false;
+      button.textContent = '立即同步';
+    });
+});
+$('gw-save').addEventListener('click', () => {
+  if (!gwDraft) return;
+  const { policy, order, limits } = gwDraft;
+  void gatewayCall({ kind: 'settings', settings: { policy, order, limits } }).then((data) => {
+    if (!data) return;
+    applyGatewayStatus(data as GatewayStatus);
+    gwSettingsState.className = 'hint ok';
+    gwSettingsState.textContent = '已保存，立即生效';
+  });
+});
+$('gw-reset').addEventListener('click', () => {
+  if (!confirm('恢复成网关部署时的默认设置（分流策略、顺序、上限）？')) return;
+  void gatewayCall({ kind: 'settings', settings: null }).then((data) => data && applyGatewayStatus(data as GatewayStatus));
+});
+$('gw-token-issue').addEventListener('click', () => {
+  const label = $<HTMLInputElement>('gw-token-label').value.trim();
+  if (!label) {
+    gwError.textContent = '给令牌起个名字（吊销时按名字找）';
+    return;
+  }
+  const days = Number($<HTMLSelectElement>('gw-token-days').value);
+  void gatewayCall({ kind: 'issue-token', label, days }).then((data) => {
+    const token = (data as { token?: unknown } | null)?.token;
+    if (typeof token !== 'string') return;
+    $<HTMLInputElement>('gw-token-label').value = '';
+    gwTokenValue.value = token;
+    gwTokenNew.hidden = false;
+    gwTokenValue.select();
+    void loadGatewayTokens();
+  });
+});
+$('gw-token-copy').addEventListener('click', () => {
+  void navigator.clipboard.writeText(gwTokenValue.value).then(
+    () => ($('gw-token-copy').textContent = '已复制'),
+    () => gwTokenValue.select()
+  );
+});
 
 // ---------- 事件 ----------
 

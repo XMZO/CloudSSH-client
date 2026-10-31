@@ -22,7 +22,10 @@
  * - 双向同步：每个节点都和主节点同步服务器（连同凭据、跳板关系）、命令片段、AI 设置，规则见 sync.js；定时（Cron）
  *   以及经网关改了数据之后马上一次。刚改过、还没同步到某节点的服务器，新会话固定放主节点
  * - 少占额度：网关自己不用 Durable Object，状态在 D1；节点的用量用只读统计令牌看，缓存 3 分钟
- * - 状态：GET /api/__gateway/status（要登录）返回各节点今天的用量、暂停情况、新会话会放哪个、最近一次同步
+ * - 状态：GET /api/__gateway/status（要登录）返回各节点今天的用量、暂停情况、新会话会放哪个、最近一次同步、当前设置
+ * - 管理（要浏览器 / 客户端的登录，长期令牌不行；客户端的实例管理里点）：分流策略、顺序、上限存在 D1，覆盖 wrangler 变量
+ *   （PUT /api/__gateway/settings，DELETE 恢复默认）；立即同步（POST /api/__gateway/sync）；手动暂停 / 恢复节点
+ *   （POST / DELETE /api/__gateway/pause?node=）；签发、列出、吊销长期令牌（/api/__gateway/tokens）
  *
  * 不同步：Agent 的工作记录和知识（留在会话所在的节点）、主机指纹的自动记录（各节点第一次连时自己记下）、分享（在主节点）。
  */
@@ -101,9 +104,14 @@ function sameBytes(a, b) {
 
 let nodesCache = null;
 
-/** NODES：[{ name, local?, origin?, agent?, routeKey, userId, auth: 'github' | 'password', limit? }] */
+/**
+ * NODES：[{ name, local?, origin?, agent?, routeKey, userId, auth: 'github' | 'password', limit? }]。
+ * 运行时设置（loadSettings 读到的）优先：order 节点顺序、limit 默认上限、limits 各节点上限
+ */
 function nodesOf(env) {
-  if (nodesCache?.raw === env.NODES) return nodesCache.value;
+  const settings = settingsCache.value;
+  const raw = `${env.NODES}\n${JSON.stringify(settings)}`;
+  if (nodesCache?.raw === raw) return nodesCache.value;
   const list = JSON.parse(env.NODES ?? '[]').map((node) => ({
     name: String(node.name),
     local: node.local === true,
@@ -112,17 +120,56 @@ function nodesOf(env) {
     routeKey: String(node.routeKey),
     userId: Number(node.userId ?? 1),
     auth: node.auth === 'password' ? 'password' : 'github',
-    limit: Number(node.limit ?? env.LIMIT ?? env.A_LIMIT ?? 0.9),
+    limit: Number(settings.limits?.[node.name] ?? node.limit ?? defaultLimit(env)),
   }));
   if (list.length === 0) throw new Error('没有配置节点（NODES）');
   const home = list.find((node) => node.name === env.HOME) ?? list.find((node) => node.local) ?? list[0];
-  const order = env.ORDER
-    ? env.ORDER.split(',').map((name) => list.find((node) => node.name === name.trim())).filter(Boolean)
+  const names = Array.isArray(settings.order) && settings.order.length ? settings.order : env.ORDER ? env.ORDER.split(',') : null;
+  const order = names
+    ? names.map((name) => list.find((node) => node.name === String(name).trim())).filter(Boolean)
     : [...list.filter((node) => node !== home), home];
   for (const node of list) if (!order.includes(node)) order.push(node);
   const value = { list, home, order, byName: new Map(list.map((node) => [node.name, node])) };
-  nodesCache = { raw: env.NODES, value };
+  nodesCache = { raw, value };
   return value;
+}
+
+/** 没给节点单独设上限时用的：运行时设置 > LIMIT 变量 > 90% */
+const defaultLimit = (env) => Number(settingsCache.value.limit ?? env.LIMIT ?? env.A_LIMIT ?? 0.9);
+
+// ---------- 运行时设置（客户端的实例管理里改，存在 D1 的 kv 'settings'；没设的用 wrangler 变量） ----------
+
+const SETTINGS_TTL_MS = 10_000;
+let settingsCache = { value: {}, at: 0 };
+
+/** 每个请求、每次定时任务开始时调用：同一个实例 10 秒内只读一次 D1 */
+async function loadSettings(env) {
+  if (Date.now() - settingsCache.at < SETTINGS_TTL_MS) return;
+  try {
+    const value = await kvGet(env, 'settings');
+    settingsCache = { value: value && typeof value === 'object' ? value : {}, at: Date.now() };
+  } catch {
+    settingsCache = { value: settingsCache.value, at: Date.now() };
+  }
+}
+
+/** 校验客户端发来的设置，只留认得的项 */
+function cleanSettings(env, body) {
+  const { byName } = nodesOf(env);
+  const ratio = (value) => (typeof value === 'number' && value >= 0.05 && value <= 1 ? Math.round(value * 100) / 100 : null);
+  const next = {};
+  if (body?.policy === 'fill' || body?.policy === 'even') next.policy = body.policy;
+  if (Array.isArray(body?.order)) {
+    const names = body.order.map(String).filter((name) => byName.has(name));
+    if (names.length && new Set(names).size === names.length) next.order = names;
+  }
+  if (ratio(body?.limit) != null) next.limit = ratio(body.limit);
+  if (body?.limits && typeof body.limits === 'object') {
+    const limits = {};
+    for (const [name, value] of Object.entries(body.limits)) if (byName.has(name) && ratio(value) != null) limits[name] = ratio(value);
+    if (Object.keys(limits).length) next.limits = limits;
+  }
+  return next;
 }
 
 // ---------- D1：会话、对照表与小状态 ----------
@@ -302,29 +349,32 @@ function credentialOf(request) {
   return cookieValue(request.headers.get('Cookie'), 'session') ?? bearer ?? null;
 }
 
-/** 网关自己的会话（gw. 开头，浏览器 7 天、长期令牌按签发时定）；过渡期也认本号节点（单管理员密码模式）原来的登录 */
+/**
+ * 网关自己的会话（gw. 开头，浏览器 7 天、长期令牌按签发时定）；过渡期也认本号节点（单管理员密码模式）原来的登录。
+ * 返回会话种类：'browser'（网页、客户端登录）、'api'（长期令牌）、'legacy'（本号节点原来的登录），没登录返回 false
+ */
 async function authed(request, env) {
   const token = credentialOf(request);
   if (!token) return false;
   const hit = authCache.get(token);
-  if (hit && hit > Date.now()) return true;
-  let ok = false;
+  if (hit && hit.until > Date.now()) return hit.kind;
+  let kind = false;
   if (token.startsWith('gw.')) {
     await ensureSchema(env);
-    const row = await env.DB.prepare('SELECT expires FROM sessions WHERE hash = ?').bind(await sha256Hex(token)).first();
-    ok = !!row && (row.expires === 0 || row.expires > Date.now());
+    const row = await env.DB.prepare('SELECT kind, expires FROM sessions WHERE hash = ?').bind(await sha256Hex(token)).first();
+    if (row && (row.expires === 0 || row.expires > Date.now())) kind = row.kind === 'api' ? 'api' : 'browser';
   } else {
     const local = nodesOf(env).list.find((node) => node.local);
     if (local) {
       const response = await env.LOCAL_APP.fetch(new Request(new URL('/api/auth/me', request.url), { headers: { Cookie: `session=${token}` } }));
-      ok = response.ok;
+      if (response.ok) kind = 'legacy';
     }
   }
-  if (ok) {
+  if (kind) {
     if (authCache.size > 200) authCache.clear();
-    authCache.set(token, Date.now() + AUTH_CACHE_MS);
+    authCache.set(token, { until: Date.now() + AUTH_CACHE_MS, kind });
   }
-  return ok;
+  return kind;
 }
 
 async function createSession(env, kind, label, ttlMs) {
@@ -500,7 +550,7 @@ async function wsAny(env, request, hint = null) {
   return last ?? json({ error: 'no node available' }, 502);
 }
 
-const policyOf = (env) => (env.POLICY === 'even' ? 'even' : 'fill');
+const policyOf = (env) => ((settingsCache.value.policy ?? env.POLICY) === 'even' ? 'even' : 'fill');
 
 // ---------- 新会话 ----------
 
@@ -999,6 +1049,14 @@ async function status(env) {
     gateway: true,
     version: 2,
     policy: policyOf(env),
+    // 当前生效的设置（custom：客户端里改过，不再是 wrangler 变量的默认值）
+    settings: {
+      policy: policyOf(env),
+      order: nodesOf(env).order.map((node) => node.name),
+      limit: defaultLimit(env),
+      limits: Object.fromEntries(list.map((node) => [node.name, node.limit])),
+      custom: Object.keys(settingsCache.value).length > 0,
+    },
     home: home.name,
     next: chooseNode(states, policyOf(env)),
     nodes: states.map((state) => ({ name: state.name, home: state.node === home, ratio: state.ratio, gbs: state.gbs, limit: state.limit, down: state.down, mapped: mapped[state.name] ?? null })),
@@ -1008,6 +1066,35 @@ async function status(env) {
     aDown: nodeA?.down ?? null,
     mapped: { servers: Object.values(mapped).reduce((sum, item) => Math.max(sum, item.servers), 0), stale: Object.values(mapped).reduce((sum, item) => sum + item.stale, 0) },
   };
+}
+
+/** 手动暂停（维护、想先省着它）minutes 分钟后自动恢复；minutes 为 null 时解除暂停（不管是手动的还是出错造成的） */
+async function setPause(env, node, minutes) {
+  if (minutes == null) return kvSet(env, `down:${node.name}`, null);
+  const span = Math.min(Math.max(Number(minutes) || 60, 1), 7 * 24 * 60);
+  await kvSet(env, `down:${node.name}`, { until: Date.now() + span * 60_000, reason: '手动暂停', at: Date.now(), manual: true });
+}
+
+/** 客户端实例管理用的管理接口（/api/__gateway/…，要浏览器 / 客户端的登录） */
+async function handleManage(request, env, url, path, method) {
+  if (path === '/api/__gateway/settings' && (method === 'PUT' || method === 'DELETE')) {
+    const next = method === 'PUT' ? cleanSettings(env, await request.json().catch(() => null)) : {};
+    await kvSet(env, 'settings', next);
+    settingsCache = { value: next, at: Date.now() };
+    return json(await status(env));
+  }
+  if (path === '/api/__gateway/sync' && method === 'POST') {
+    const report = await runSync(env);
+    return json({ report, status: await status(env) });
+  }
+  if (path === '/api/__gateway/pause' && (method === 'POST' || method === 'DELETE')) {
+    const node = nodesOf(env).byName.get(url.searchParams.get('node') ?? '');
+    if (!node) return json({ error: 'unknown node' }, 400);
+    await setPause(env, node, method === 'POST' ? Number(url.searchParams.get('minutes') ?? 60) : null);
+    return json(await status(env));
+  }
+  if (path === '/api/__gateway/tokens') return handleTokens(request, env, url);
+  return json({ error: 'Not Found' }, 404);
 }
 
 /** 管理：签发 / 列出 / 吊销给命令行、远程 MCP 用的长期令牌 */
@@ -1038,6 +1125,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    await loadSettings(env);
 
     // ---------- 管理接口（ADMIN_TOKEN） ----------
     if (path.startsWith('/__gateway/')) {
@@ -1046,13 +1134,7 @@ export default {
       if (path === '/__gateway/down' && (method === 'DELETE' || method === 'POST')) {
         const node = nodesOf(env).byName.get(url.searchParams.get('node') ?? '');
         if (!node) return json({ error: 'unknown node' }, 400);
-        // POST：手动暂停（维护、想先省着它），minutes 分钟后自动恢复；DELETE：解除暂停
-        if (method === 'POST') {
-          const minutes = Math.min(Math.max(Number(url.searchParams.get('minutes') ?? 60), 1), 7 * 24 * 60);
-          await kvSet(env, `down:${node.name}`, { until: Date.now() + minutes * 60_000, reason: '手动暂停', at: Date.now(), manual: true });
-        } else {
-          await kvSet(env, `down:${node.name}`, null);
-        }
+        await setPause(env, node, method === 'POST' ? Number(url.searchParams.get('minutes') ?? 60) : null);
         return json({ ok: true });
       }
       // 第一版的管理接口
@@ -1085,10 +1167,16 @@ export default {
       if (!(await authed(request, env)) && !(await adminAuthorized(request, env))) return json({ error: 'Authentication required' }, 401);
       return json(await status(env));
     }
-    if (!(await authed(request, env))) return json({ error: 'Authentication required' }, 401);
+    const kind = await authed(request, env);
+    if (!kind) return json({ error: 'Authentication required' }, 401);
     // 浏览器发来的写操作与 WebSocket 只认网关自己的页面（命令行不带 Origin 时放行）
     const origin = request.headers.get('Origin');
     if (origin && origin !== url.origin) return new Response('Forbidden', { status: 403 });
+    if (path.startsWith('/api/__gateway/')) {
+      // 改网关只认浏览器 / 客户端的登录：给命令行、远程 MCP 的长期令牌不能改设置、签新令牌
+      if (kind === 'api') return json({ error: '长期令牌不能管理网关，请在客户端或网页里登录后操作' }, 403);
+      return handleManage(request, env, url, path, method);
+    }
 
     if (path === '/api/ssh' || path === '/api/ssh/sftp') {
       if (!origin) return new Response('Forbidden', { status: 403 });
@@ -1123,6 +1211,7 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
+    await loadSettings(env);
     ctx.waitUntil(Promise.all([runSync(env), getUsage(env, true).catch(() => null)]));
   },
 };

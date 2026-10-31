@@ -21,6 +21,7 @@ import { applyManagerPalette, isManagerWebContents, notifyManager, openManagerWi
 import { refreshMenus } from './menus';
 import { cliSettings, cliStatus, type CliSettingsPatch, installCli, setCliMcp, uninstallCli, updateCliSettings } from './cli-install';
 import { applyCliSync } from './cli-sync';
+import { gatewayRequestById, type GatewayAction } from './gateway-admin';
 import { confirmAndImport } from './instance-import';
 import { probeOAuthRedirectUri } from './oauth';
 import { versionLabel } from './version';
@@ -352,6 +353,13 @@ export function registerIpc(): void {
     assertManager(event);
     if (typeof targetId !== 'string' || typeof sourceId !== 'string') throw new Error('参数错误');
     return confirmAndImport(BrowserWindow.fromWebContents(event.sender), sourceId, targetId);
+  });
+
+  // 实例是入口网关时的网关面板（./gateway-admin.ts）
+  ipcMain.handle('manager:gateway', async (event, id: unknown, action: unknown) => {
+    assertManager(event);
+    if (typeof id !== 'string' || !action || typeof action !== 'object') throw new Error('参数错误');
+    return gatewayRequestById(id, action as GatewayAction);
   });
 
   ipcMain.handle('manager:test-instance', async (event, baseUrl: string, options?: { direct?: boolean }) => {

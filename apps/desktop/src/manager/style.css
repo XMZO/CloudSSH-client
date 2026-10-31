@@ -759,6 +759,208 @@ textarea:focus {
 
 .data-text strong {
   font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* 全局的 select 是 width: 100%，放在一行里会把左边的说明挤成一字一行 */
+.data-row select {
+  flex: 0 1 220px;
+  width: auto;
+  min-width: 120px;
+}
+
+.data-row[hidden] {
+  display: none;
+}
+
+/* ---------- 入口网关（实例是 tools/gateway 时） ---------- */
+
+/* 列宽固定，内容再长也不撑出卡片 */
+.gw-nodes {
+  width: 100%;
+  margin: 2px 0 6px;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.gw-nodes th:nth-child(1) {
+  width: 27%;
+}
+
+.gw-nodes th:nth-child(2) {
+  width: 24%;
+}
+
+.gw-nodes th:nth-child(3) {
+  width: 62px;
+}
+
+.gw-nodes th:nth-child(5) {
+  width: 82px;
+}
+
+.gw-nodes th {
+  padding: 0 6px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.gw-nodes td {
+  padding: 5px 6px;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.gw-nodes td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gw-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.gw-name strong {
+  font-size: 12.5px;
+}
+
+.gw-move {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.gw-move button {
+  height: 12px;
+  padding: 0 3px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 12px;
+  cursor: pointer;
+}
+
+.gw-move button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.gw-move button:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.gw-usage {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.gw-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--track);
+}
+
+.gw-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.gw-bar.near span {
+  background: var(--warn);
+}
+
+.gw-bar.over span {
+  background: var(--danger);
+}
+
+.gw-usage small,
+.gw-status small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.gw-status span {
+  white-space: nowrap;
+}
+
+.gw-nodes input[type='number'] {
+  width: 54px;
+  height: 26px;
+  padding: 0 6px;
+}
+
+.gw-status {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gw-status .down {
+  color: var(--danger);
+}
+
+.gw-status .ok {
+  color: var(--ok);
+}
+
+.gw-sync-state {
+  margin-bottom: 8px;
+}
+
+.gw-policy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.gw-label {
+  font-size: 12px;
+}
+
+.gw-save-row {
+  margin-top: 6px;
+}
+
+.gw-subhead {
+  margin: 12px 0 4px;
+  font-size: 12.5px;
+}
+
+.gateway-card code {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.gw-token-add > input {
+  flex: 1;
+}
+
+.gw-token-add > select {
+  flex: 0 0 96px;
+  width: auto;
+}
+
+.gw-token-new {
+  margin-top: 8px;
+}
+
+.gw-token-new .row > input {
+  font-family: ui-monospace, Consolas, monospace;
 }
 
 .data-text small {

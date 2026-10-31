@@ -79,6 +79,73 @@
             </label>
           </section>
 
+          <!-- 实例是入口网关（tools/gateway）时显示：各节点今天的用量与暂停、分流设置、同步、长期令牌 -->
+          <section id="gateway-card" class="card gateway-card" hidden>
+            <div class="card-head">
+              <h3>入口网关</h3>
+              <div class="row">
+                <button id="gw-sync" class="btn btn-small" type="button">立即同步</button>
+                <button id="gw-refresh" class="btn btn-small" type="button">刷新</button>
+              </div>
+            </div>
+            <p class="hint">几个号上的 CloudSSH 作为节点合用免费额度，数据和主节点互相同步。这里的设置存在网关上，保存后立即生效，不用重新部署</p>
+            <table class="gw-nodes">
+              <thead>
+                <tr>
+                  <th>节点</th>
+                  <th>今天用量</th>
+                  <th title="今天用到这么多就不再放新会话">上限</th>
+                  <th>状态</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="gw-nodes"></tbody>
+            </table>
+            <small id="gw-sync-state" class="hint gw-sync-state"></small>
+            <div class="gw-policy">
+              <span class="gw-label">新会话</span>
+              <div class="segmented" role="radiogroup" aria-label="新会话放哪个节点">
+                <label class="seg">
+                  <input type="radio" name="gw-policy" value="fill" />
+                  <span>按顺序用</span>
+                </label>
+                <label class="seg">
+                  <input type="radio" name="gw-policy" value="even" />
+                  <span>用得少的优先</span>
+                </label>
+              </div>
+            </div>
+            <small id="gw-policy-desc" class="hint"></small>
+            <div class="row gw-save-row">
+              <small id="gw-settings-state" class="hint"></small>
+              <span class="spacer"></span>
+              <button id="gw-reset" class="btn btn-small" type="button">恢复默认</button>
+              <button id="gw-save" class="btn btn-small btn-primary" type="button">保存设置</button>
+            </div>
+
+            <h4 class="gw-subhead">长期令牌</h4>
+            <p class="hint">给命令行、远程 MCP 用：<code>cloudssh login 网关地址 --token-stdin</code> 从标准输入读入，不用每周重新登录。长期令牌不能改这里的设置</p>
+            <ul id="gw-tokens" class="alias-list"></ul>
+            <div class="row gw-token-add">
+              <input id="gw-token-label" type="text" maxlength="64" placeholder="名字，例如 远程 MCP" />
+              <select id="gw-token-days" aria-label="有效期">
+                <option value="30">30 天</option>
+                <option value="90">90 天</option>
+                <option value="365" selected>1 年</option>
+                <option value="0">不过期</option>
+              </select>
+              <button id="gw-token-issue" class="btn btn-small" type="button">签发</button>
+            </div>
+            <div id="gw-token-new" class="gw-token-new" hidden>
+              <small class="hint">令牌只显示这一次，复制后存好（存成文件时记得 chmod 600）：</small>
+              <div class="row">
+                <input id="gw-token-value" type="text" readonly aria-label="新签发的令牌" />
+                <button id="gw-token-copy" class="btn btn-small" type="button">复制</button>
+              </div>
+            </div>
+            <p id="gw-error" class="error" role="alert"></p>
+          </section>
+
           <section class="card">
             <div class="card-head">
             <h3>界面来源</h3>
@@ -118,7 +185,7 @@
           <p id="form-error" class="error" role="alert"></p>
 
           <section class="card card-data">
-            <div class="data-row">
+            <div id="import-row" class="data-row">
               <div class="data-text">
                 <strong>本地数据</strong>
                 <small title="节点排序、分组折叠、命令片段顺序、关键词高亮与各项开关、AI 对话历史、凭据预设关联都存在客户端本地、按实例分开。换了实例地址（比如改走入口网关）后，可以从原来的实例复制过来">从别的实例复制节点排序、AI 对话历史等本地数据</small>
