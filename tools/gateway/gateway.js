@@ -50,6 +50,9 @@ const NODE_SESSION_TTL_MS = 7 * 24 * 3600_000;
 const NODE_SESSION_REFRESH_MS = 24 * 3600_000;
 const BROWSER_SESSION_TTL_MS = 7 * 24 * 3600_000;
 const AUTH_CACHE_MS = 2 * 60_000;
+/** 本号节点的旧登录：确认有效后多久内不再问节点；节点出错时按记下的最多再认多久（和 CloudSSH 的会话一样 7 天） */
+const LEGACY_RECHECK_MS = 24 * 3600_000;
+const LEGACY_TTL_MS = 7 * 24 * 3600_000;
 const CONFIG_CACHE_MS = 5 * 60_000;
 const SYNC_LOCK_MS = 2 * 60_000;
 /** Durable Object 按 128 MB 计费；免费额度每天 13,000 GB-s */
@@ -364,10 +367,29 @@ async function authed(request, env) {
     const row = await env.DB.prepare('SELECT kind, expires FROM sessions WHERE hash = ?').bind(await sha256Hex(token)).first();
     if (row && (row.expires === 0 || row.expires > Date.now())) kind = row.kind === 'api' ? 'api' : 'browser';
   } else {
-    const local = nodesOf(env).list.find((node) => node.local);
-    if (local) {
-      const response = await env.LOCAL_APP.fetch(new Request(new URL('/api/auth/me', request.url), { headers: { Cookie: `session=${token}` } }));
-      if (response.ok) kind = 'legacy';
+    // 过渡期的本号节点旧登录：节点确认有效后记进 D1，一天内不再问节点；过了一天再问一次，节点说失效（401）就删掉，
+    // 节点出错（主节点额度用完、连不上）时按记下的算——这样主节点出问题时，还拿着旧登录的客户端照样能用
+    await ensureSchema(env);
+    const hash = await sha256Hex(token);
+    const now = Date.now();
+    const row = await env.DB.prepare("SELECT created, expires FROM sessions WHERE hash = ? AND kind = 'legacy'").bind(hash).first();
+    if (row && row.expires > now && now - row.created < LEGACY_RECHECK_MS) {
+      kind = 'legacy';
+    } else {
+      const local = nodesOf(env).list.find((node) => node.local);
+      const response = local
+        ? await env.LOCAL_APP.fetch(new Request(new URL('/api/auth/me', request.url), { headers: { Cookie: `session=${token}` } })).catch(() => null)
+        : null;
+      if (response?.ok) {
+        kind = 'legacy';
+        await env.DB.prepare("INSERT OR REPLACE INTO sessions (hash, kind, label, created, expires) VALUES (?, 'legacy', 'legacy', ?, ?)")
+          .bind(hash, now, now + LEGACY_TTL_MS)
+          .run();
+      } else if (response?.status === 401) {
+        if (row) await env.DB.prepare("DELETE FROM sessions WHERE hash = ? AND kind = 'legacy'").bind(hash).run();
+      } else if (row && row.expires > now) {
+        kind = 'legacy';
+      }
     }
   }
   if (kind) {
@@ -429,9 +451,10 @@ async function handleLogin(request, env) {
 
 async function handleLogout(request, env) {
   const token = credentialOf(request);
-  if (token?.startsWith('gw.')) {
+  if (token) {
+    // 网关自己的浏览器登录，或记下的旧登录（长期令牌只能在管理里吊销）
     await ensureSchema(env);
-    await env.DB.prepare("DELETE FROM sessions WHERE hash = ? AND kind = 'browser'").bind(await sha256Hex(token)).run();
+    await env.DB.prepare("DELETE FROM sessions WHERE hash = ? AND kind IN ('browser', 'legacy')").bind(await sha256Hex(token)).run();
     authCache.delete(token);
   }
   return json({ success: true }, 200, { 'Set-Cookie': sessionCookie(request, '', 0) });
