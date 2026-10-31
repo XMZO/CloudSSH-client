@@ -14,6 +14,7 @@
  * （先看到初始化的标记、再看到命令的标记）。初始化在限定时间内没完成就判定不是 POSIX Shell。
  * 只跑一条命令就走的调用方（命令行）可以让远端在命令后直接 exit：服务器那头主动断开，不用再等一次关闭的来回。
  */
+import { localizeAttachUrl } from '../gateway-attach';
 
 export interface ExecResult {
   output: string;
@@ -94,7 +95,7 @@ export class RemoteSession {
   private pendingInit: string | null = null;
   private initTimer: ReturnType<typeof setTimeout> | null = null;
   private initFailed = false;
-  /** SFTP 数据通道地址（Worker 在会话建立后发来） */
+  /** SFTP 数据通道地址（Worker 在会话建立后发来；入口网关背后别的节点给的换回网关的地址，见 ../gateway-attach.ts） */
   sftpUrl: string | null = null;
   readonly ready: Promise<void>;
 
@@ -149,10 +150,10 @@ export class RemoteSession {
             this.ackBytes = 0;
             break;
           case 'sftp_attach':
-            this.sftpUrl = typeof msg.url === 'string' ? msg.url : null;
+            this.sftpUrl = typeof msg.url === 'string' ? localizeAttachUrl(msg.url, url) : null;
             break;
           case 'session_resumed':
-            if (typeof msg.sftpAttachUrl === 'string' && msg.sftpAttachUrl) this.sftpUrl = msg.sftpAttachUrl;
+            if (typeof msg.sftpAttachUrl === 'string' && msg.sftpAttachUrl) this.sftpUrl = localizeAttachUrl(msg.sftpAttachUrl, url);
             break;
           case 'status':
             if (msg.event === 'shell_ready') {

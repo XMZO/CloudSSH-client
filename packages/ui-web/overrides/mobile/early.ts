@@ -9,6 +9,7 @@
 import { paletteCss } from './skin/palette-data';
 import { applySkinAttributes, loadSkinState } from './skin/state';
 import { installAuthRetry, installBootCore, skipBoot, type BootCore } from '../shared/boot-core';
+import { localizeAttachUrl } from '../shared/gateway-attach';
 import { Channel, isTauri, native, type MobileState, type WsEvent } from './tauri';
 
 declare global {
@@ -218,7 +219,9 @@ function install(): void {
   }
 
   const WebSocketShim = function (this: unknown, url: string | URL, protocols?: string | string[]) {
-    const target = new URL(String(url), location.href);
+    // 入口网关背后别的节点给的 SFTP 附加地址换回当前实例（网关）的，才会经 Rust 带着登录连出去（../shared/gateway-attach.ts）
+    const base = mobile.state?.current.baseUrl;
+    const target = new URL(base ? localizeAttachUrl(String(url), base) : String(url), location.href);
     if ((target.protocol === 'ws:' || target.protocol === 'wss:') && isApiSocket(target)) {
       return new TauriWebSocket(target.toString(), target.pathname + target.search);
     }

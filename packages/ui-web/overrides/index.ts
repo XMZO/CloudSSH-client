@@ -14,11 +14,13 @@
  * - desktop/：界面主题（工作台 / 经典）：自绘标题栏、表格化服务器列表、终端占满窗口
  * - shared/server-tags.ts：添加服务器时点选已有标签，标签重命名、复制（与手机端共用）
  * - shared/snippet-sort.ts：命令片段拖动调整顺序，顺序存在本地（与手机端共用）
+ * - shared/gateway-attach.ts：入口网关背后别的节点给的 SFTP 附加地址换回网关的地址
  */
 import './desktop.css';
 import './shared/web-fixes.css';
 import { installLanguagePicker, popoverLanguageMenu } from './shared/language-picker';
 import { installAgentOutput } from './shared/agent-output';
+import { installGatewayAttach } from './shared/gateway-attach';
 import { installCompactServerForm } from './shared/server-form';
 import { installTagPicker } from './shared/server-tags';
 import { installSnippetSort } from './shared/snippet-sort';
@@ -28,6 +30,8 @@ import { mountDesktopShell } from './desktop';
 import { mountSidebar } from './sidebar/sidebar';
 
 document.documentElement.dataset.cloudsshClient = 'desktop';
+// 实例是入口网关、会话在别的号的节点上时，SFTP 附加地址是那个节点的域名：换回网关的（shared/gateway-attach.ts）
+installGatewayAttach();
 // 要在网页版创建第一个终端之前装好（构建钩子在创建终端时回调）；电脑端终端贴着底边放（拖窗口改高度时文字跟着走）
 installTerminalEnhancements({ bottomAnchor: true });
 // 命令行里单击把光标移过去；nano 没开鼠标时第一次单击替它打开（shared/terminal/click-cursor.ts，与手机端轻点共用）
