@@ -12,6 +12,7 @@ import {
   loadCredentials,
   MAX_SKILL_NOTES,
   normalizeOrigin,
+  OUTPUT_LIMIT_KB,
   resolveInstance,
   saveConfig,
   saveCredential,
@@ -349,10 +350,11 @@ async function cmdConfig(argv: string[]): Promise<number> {
     else if (key === 'concurrency' && /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 32) config.concurrency = Number(value);
     else if (key === 'timeout' && /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 3600) config.timeout = Number(value);
     else if (key === 'notes' && value !== undefined) config.skillNotes = value.slice(0, MAX_SKILL_NOTES);
+    else if (key === 'output' && /^d+$/.test(value ?? '') && Number(value) >= OUTPUT_LIMIT_KB.min && Number(value) <= OUTPUT_LIMIT_KB.max) config.outputLimit = Number(value);
     else if (key === 'default' && value) {
       const hit = config.instances.find((item) => item.name === value);
       config.defaultInstance = hit?.url ?? normalizeOrigin(value);
-    } else throw new UsageError('可设置：confirm ask|never、concurrency 1-32、timeout 1-3600、notes "<给 AI 的补充说明>"、default <实例名或地址>');
+    } else throw new UsageError('可设置：confirm ask|never、concurrency 1-32、timeout 1-3600、output 4-256（MCP 每次结果最多多少 KB，默认 24）、notes "<给 AI 的补充说明>"、default <实例名或地址>');
     saveConfig(config);
     // 完全权限、超时、并发、补充说明都写在 skill 里：跟着更新已装的
     for (const line of syncSkills(config)) log(line);

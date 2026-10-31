@@ -35,7 +35,12 @@ export interface CliConfig {
   skills: Record<string, boolean>;
   /** 写进 skill 给 AI 的补充说明（例如“tag:prod 只做只读操作”） */
   skillNotes: string;
+  /** MCP 每次给 AI 的结果最多多少 KB（没设时 24；环境变量 CLOUDSSH_MCP_OUTPUT_KB 优先） */
+  outputLimit?: number;
 }
+
+/** MCP 结果上限（KB）的可选范围 */
+export const OUTPUT_LIMIT_KB = { min: 4, max: 256, default: 24 };
 
 export const MAX_SKILL_NOTES = 4000;
 
@@ -106,6 +111,10 @@ export function loadConfig(): CliConfig {
         ? Object.fromEntries(Object.entries(raw.skills).filter(([, value]) => typeof value === 'boolean'))
         : {},
     skillNotes: typeof raw.skillNotes === 'string' ? raw.skillNotes.slice(0, MAX_SKILL_NOTES) : '',
+    outputLimit:
+      Number.isInteger(raw.outputLimit) && raw.outputLimit! >= OUTPUT_LIMIT_KB.min && raw.outputLimit! <= OUTPUT_LIMIT_KB.max
+        ? raw.outputLimit
+        : undefined,
   };
 }
 

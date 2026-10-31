@@ -1,6 +1,6 @@
 /**
  * cloudssh mcp 对假 Worker 的端到端测试：协议（initialize 版本协商、tools/list、ping、错误码、批量）、
- * 五个工具、危险命令规则、64KB 有界输出、进度通知与取消。先 node build.mjs 打好 dist/cloudssh.mjs。
+ * 五个工具、危险命令规则、有界输出（默认 24KB，可调）、进度通知与取消。先 node build.mjs 打好 dist/cloudssh.mjs。
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,8 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { isolatedEnv, startMcp, startMock, tempDir } from './helpers.mjs';
 
-const LIMIT = 64 * 1024;
+/** MCP 每次结果的默认上限（config.ts 的 OUTPUT_LIMIT_KB.default） */
+const LIMIT = 24 * 1024;
 const bytes = (text) => Buffer.byteLength(text, 'utf8');
 
 describe('cloudssh mcp', { timeout: 120_000 }, () => {
@@ -178,7 +179,7 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     assert.equal(forced.isError, false, forced.text);
   });
 
-  test('输出有界：多台大输出合起来不超过 64KB，每台留末尾', async () => {
+  test('输出有界：多台大输出合起来不超过 24KB，每台留末尾，并说明怎么看完整输出', async () => {
     const local = tempDir('cloudssh-big-');
     const file = path.join(local, 'big.txt');
     const lines = Array.from({ length: 4000 }, (_, i) => `line ${String(i).padStart(5, '0')} ${'x'.repeat(40)}`);
@@ -191,6 +192,22 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     // 每台都留了最后一行
     assert.equal(result.text.match(/line 03999 x+/g).length, 3);
     assert.match(result.text, /只保留最后/);
+    assert.match(result.text, /要看完整输出/);
+  });
+
+  test('上限可调：环境变量 CLOUDSSH_MCP_OUTPUT_KB 改小后结果跟着变小，工具说明写的是实际上限', async () => {
+    const small = startMcp({ ...env, CLOUDSSH_MCP_OUTPUT_KB: '8' });
+    await small.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
+    const tools = await small.request('tools/list', {});
+    const exec = tools.result.tools.find((tool) => tool.name === 'exec');
+    assert.match(exec.description, /capped at 8KB/);
+    const result = await small.callTool('exec', { target: 'JP-A', command: 'cat /tmp/big.txt' });
+    const read = await small.callTool('read_file', { target: 'JP-A', path: '/tmp/big.txt' });
+    await small.close();
+    assert.ok(bytes(result.text) <= 8 * 1024, `exec 结果 ${bytes(result.text)} 字节`);
+    assert.match(result.text, /line 03999/);
+    assert.ok(bytes(read.text) <= 8 * 1024, `read_file 结果 ${bytes(read.text)} 字节`);
+    assert.match(read.text, /用 offset 从下一行接着读/);
   });
 
   test('取消：不再回复，用到的会话关掉，之后照常可用', async () => {

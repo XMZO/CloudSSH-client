@@ -25,6 +25,8 @@ services:
       CLOUDSSH_MCP_EXCLUDE: ${EXCLUDE:-}
       # 固定令牌（可选）：只存 SHA-256
       CLOUDSSH_MCP_STATIC_TOKENS: ${STATIC_TOKENS:-}
+      # 每次给 AI 的结果最多多少 KB（4～256）：连接器报结果太长时调小
+      CLOUDSSH_MCP_OUTPUT_KB: ${OUTPUT_KB:-24}
     volumes:
       - ./cloudssh.mjs:/app/cloudssh.mjs:ro
       - ./data:/data

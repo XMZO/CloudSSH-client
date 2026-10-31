@@ -8,7 +8,9 @@
  *   改过的完全权限与默认超时即时生效；服务器列表缓存 15 秒（list_servers 总是重取）
  * - 危险命令与命令行同一套判定：拦截级一律拒绝；危险命令要 confirm: true（相当于 --yes），完全权限（confirm never）时不用；
  *   start_job 的命令同样判定；copy 覆盖已有目标、write_file / edit_file 改已有文件同样要 confirm
- * - 结果有界：整段文字不超过 64KB（与远端输出上限一致），多台时按份额各留输出的末尾
+ * - 结果有界：整段文字默认不超过 24KB（cloudssh config set output <KB> 或环境变量 CLOUDSSH_MCP_OUTPUT_KB 可改），
+ *   中文或代码大约一万 token 上下，在常见 AI 客户端的单次工具结果上限以内（例如 Claude Code 默认超过 2.5 万 token 就报错）。
+ *   多台时按份额各留输出的末尾；截断时说明怎么拿到其余部分（read_file 分段、命令输出重定向到文件）
  * - 工具出错（没登录、找不到服务器、命令失败……）返回 isError 结果给模型；工具名不对之类的协议错误返回 JSON-RPC 错误；
  *   单次调用出错、未处理的异常都不会让进程退出
  * - 取消（notifications/cancelled）：不再回复，并关掉这次用到的服务器的后台会话（远端命令随之结束；同一台服务器上并行的
@@ -25,7 +27,7 @@ import type { ServerConfig } from '@cloudssh/core';
 import { CLIENT_VERSION } from '@cloudssh/core';
 import os from 'node:os';
 import { closeRemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
-import { loadConfig, UsageError, type CliConfig } from './config';
+import { loadConfig, OUTPUT_LIMIT_KB, UsageError, type CliConfig } from './config';
 import { commandVerdict, outcomeOk, outcomeStatus, runExec, type ExecOutcome } from './exec';
 import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes, localPath, progressText, shellPath, upload, type Progress } from './files';
 import { userGuidance } from './install';
@@ -36,8 +38,21 @@ import { activeInstance, filterServers, formatServerRow, hostId, loadServers, re
 
 /** 认识的协议版本，新的在前 */
 export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-/** 给模型的结果上限（与远端命令输出上限一致） */
-export const OUTPUT_LIMIT = 64 * 1024;
+/** 远端命令输出最多保留这么多（会话层的上限，见 exec.ts） */
+const REMOTE_OUTPUT_LIMIT = 64 * 1024;
+/** 给模型的结果上限：读配置时按 outputLimitOf 更新 */
+let outputLimit = OUTPUT_LIMIT_KB.default * 1024;
+
+/** 环境变量 CLOUDSSH_MCP_OUTPUT_KB → 配置 outputLimit → 默认 24KB（都限制在 4～256KB） */
+export function outputLimitOf(config: CliConfig | null): number {
+  const env = Number(process.env.CLOUDSSH_MCP_OUTPUT_KB);
+  const kb = Number.isFinite(env) && env > 0 ? env : (config?.outputLimit ?? OUTPUT_LIMIT_KB.default);
+  return Math.round(Math.min(OUTPUT_LIMIT_KB.max, Math.max(OUTPUT_LIMIT_KB.min, kb))) * 1024;
+}
+
+const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
+/** 命令输出被截断时，告诉模型怎么拿到完整的 */
+const FULL_OUTPUT_HINT = '要看完整输出：在命令后加 > /tmp/out.log 2>&1，再用 read_file 分段读（offset / limit），或用 grep / tail / head 过滤';
 const SERVER_CACHE_MS = 15_000;
 /** 一条消息最长 8MB（没有换行就一直攒着的输入直接丢掉） */
 const MAX_LINE = 8 * 1024 * 1024;
@@ -105,39 +120,39 @@ export function shareBudget(sizes: number[], budget: number): number[] {
 }
 
 /** 带行号的文件内容：超过上限时在整行处截断，提示用 offset / limit 分段读；more 是没超时附在末尾的说明 */
-function boundedLines(text: string, more: string, limit = OUTPUT_LIMIT): string {
+function boundedLines(text: string, more: string, limit = outputLimit): string {
   if (byteLength(text + more) <= limit) return text + more;
-  const note = '\n（超过 64KB，后面的行省略了：用 offset / limit 分段读）';
+  const note = `\n（超过 ${kb(limit)}，后面的行省略了：用 offset 从下一行接着读，或把 limit 调小）`;
   const clipped = clipBytes(text, limit - byteLength(note), 'head');
   return clipped.slice(0, Math.max(0, clipped.lastIndexOf('\n'))) + note;
 }
 
 /** 超过上限时只留开头（列表、说明之类） */
-function bounded(text: string, limit = OUTPUT_LIMIT): string {
+function bounded(text: string, limit = outputLimit): string {
   if (byteLength(text) <= limit) return text;
-  const note = '\n（结果超过 64KB，后面的省略了）';
+  const note = `\n（结果超过 ${kb(limit)}，后面的省略了）`;
   return clipBytes(text, limit - byteLength(note), 'head') + note;
 }
 
 /** exec 的结果：每台一段（标题带状态与耗时），总长不超过 limit；超出时每台按份额只留输出末尾 */
-export function formatExec(results: ExecOutcome[], limit = OUTPUT_LIMIT): string {
+export function formatExec(results: ExecOutcome[], limit = outputLimit): string {
   const heads = results.map(
     (item) =>
       `===== ${item.server.id} ${item.server.name} · ${outcomeStatus(item)}${item.timedOut ? '，命令已被结束' : ''}${item.error ? '' : ` · ${(item.durationMs / 1000).toFixed(1)} 秒`} =====`
   );
-  const notes = results.map((item) => (item.truncated ? '（输出超过 64KB，只保留了最后一段）' : ''));
+  const notes = results.map((item) => (item.truncated ? `（输出超过 ${kb(REMOTE_OUTPUT_LIMIT)}，服务器那边只保留了最后一段。${FULL_OUTPUT_HINT}）` : ''));
   const outputs = results.map((item) => item.output.replace(/\n+$/, ''));
   const ok = results.filter(outcomeOk).length;
   const summary = results.length > 1 ? `\n${results.length} 台：${ok} 台成功，${results.length - ok} 台失败或未完成` : '';
-  // 每段的截断说明最多约 80 字节
-  const fixed = [...heads, ...notes, summary].reduce((sum, text) => sum + byteLength(text) + 1, 0) + results.length * 96;
+  // 每段的截断说明（含怎么看完整输出）最多约 360 字节
+  const fixed = [...heads, ...notes, summary].reduce((sum, text) => sum + byteLength(text) + 1, 0) + results.length * 360;
   const alloc = shareBudget(outputs.map(byteLength), limit - fixed);
   const parts: string[] = [];
   results.forEach((item, index) => {
     parts.push(heads[index]);
     const output = outputs[index];
     if (!output) parts.push(item.error ? '' : '（没有输出）');
-    else if (byteLength(output) > alloc[index]) parts.push(`（输出太长，这里只保留最后 ${formatBytes(alloc[index])}）\n${clipBytes(output, alloc[index], 'tail')}`);
+    else if (byteLength(output) > alloc[index]) parts.push(`（输出太长，这里只保留最后 ${formatBytes(alloc[index])}。${FULL_OUTPUT_HINT}）\n${clipBytes(output, alloc[index], 'tail')}`);
     else parts.push(output);
     if (notes[index]) parts.push(notes[index]);
   });
@@ -287,7 +302,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
         `Run a shell command on one or more servers saved in CloudSSH. CloudSSH signs in with the stored credentials and handles jump hosts and tunnels; never ask the user for passwords or keys.`,
         `Several targets run in parallel (${concurrency} at a time).`,
         'The command runs in a non-interactive shell (no TTY, empty stdin) in the login user\'s home directory: use absolute paths, `sudo -n`, `-y` style flags, and no pagers, editors or follow modes (`tail -f`, `watch`, `top` without `-b -n1`).',
-        'Only the last 64 KB of output is kept: filter with grep, tail, head or wc.',
+        `Each result is capped at ${kb(outputLimit)} (the server keeps only the last ${kb(REMOTE_OUTPUT_LIMIT)} of output): filter with grep, tail, head or wc, or redirect to a file and page through it with read_file.`,
         readOnly
           ? READ_ONLY_DOC
           : fullAccess
@@ -309,7 +324,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       name: 'read_file',
       title: 'Read a file',
       description:
-        'Read a text file on one server, with line numbers (like cat -n). Transferred over SFTP, so it is not limited by the 64 KB command output; up to 20 MB, at most 64 KB of numbered lines per call: use offset / limit for the rest. Binary files are refused. Prefer this over exec cat for files you will edit.',
+        'Read a text file on one server, with line numbers (like cat -n). Transferred over SFTP, so it is not limited by command output; up to 20 MB, at most ' + kb(outputLimit) + ' of numbered lines per call: use offset / limit for the rest. Binary files are refused. Prefer this over exec cat for files you will edit.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -480,7 +495,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     return [
       `These tools work on the servers the user saved in CloudSSH${origin ? ` (${origin})` : ''}, through the CloudSSH server: it signs in with the stored credentials and handles jump hosts and Cloudflare tunnels.`,
       'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
-      'Commands run in a non-interactive shell and only the last 64 KB of output is kept. Batch independent read-only checks for one server into one exec with `echo \'== …\'` headers joined by `;`.',
+      `Commands run in a non-interactive shell; each tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. ` + 'Batch independent read-only checks for one server into one exec with `echo \'== …\'` headers joined by `;`.',
       'For files use read_file / list_dir' +
         (remote.access === 'read-only' ? '' : ' / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text)') +
         '; for anything that runs longer than a minute or two use start_job and check it with job_status.',
@@ -496,7 +511,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
   const base = [
     `These tools work on the servers the user saved in CloudSSH${origin ? ` (${origin})` : ''}, through the CloudSSH server: it signs in with the stored credentials and handles jump hosts and Cloudflare tunnels.`,
     'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
-    'Commands run in a non-interactive shell and only the last 64 KB of output is kept. Ask the user before risky commands and pass confirm: true only after they agree.',
+    `Commands run in a non-interactive shell; each tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. ` + 'Ask the user before risky commands and pass confirm: true only after they agree.',
     'For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.',
     'If a tool reports that the login expired or no instance is signed in, ask the user to run `cloudssh login` in a terminal, or to turn on "同步登录给命令行" in the CloudSSH desktop app.',
   ].join('\n');
@@ -880,9 +895,12 @@ function progressOf(context: CallContext): Progress {
 
 function tryLoadConfig(): CliConfig | null {
   try {
-    return loadConfig();
+    const config = loadConfig();
+    outputLimit = outputLimitOf(config);
+    return config;
   } catch (error) {
     log((error as Error).message);
+    outputLimit = outputLimitOf(null);
     return null;
   }
 }
