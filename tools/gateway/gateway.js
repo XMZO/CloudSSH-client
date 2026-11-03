@@ -44,6 +44,8 @@ import {
 } from './sync.js';
 
 const USAGE_TTL_MS = 3 * 60_000;
+/** 选节点用的用量：定时任务每 5 分钟刷新一次，这么旧以内的直接用，不在连接时现查 Cloudflare 的统计接口 */
+const USAGE_STALE_MS = 15 * 60_000;
 const DOWN_MS = 10 * 60_000;
 const NODE_SESSION_TTL_MS = 7 * 24 * 3600_000;
 /** 节点会话剩不到一天就换新的 */
@@ -202,15 +204,34 @@ function ensureSchema(env) {
   return schemaReady;
 }
 
+/**
+ * 每次连接、每个数据接口都要读的几项在实例内存里留一会儿：D1 只有一处（亚太），离用户远的机房读一次就是一两百毫秒，
+ * 以前连一台要串着读五六次。本实例写的马上生效；别的实例改的（暂停节点、换节点会话）最多晚这么久看到
+ */
+const KV_MEMO_MS = { 'session:': 10 * 60_000, 'down:': 15_000, usage: 60_000 };
+const kvMemo = new Map();
+
+function memoMs(key) {
+  for (const [prefix, ms] of Object.entries(KV_MEMO_MS)) if (key.startsWith(prefix)) return ms;
+  return 0;
+}
+
 async function kvGet(env, key) {
+  const hit = kvMemo.get(key);
+  if (hit && hit.until > Date.now()) return hit.value;
   await ensureSchema(env);
   const row = await env.DB.prepare('SELECT v FROM kv WHERE k = ?').bind(key).first();
-  return row ? JSON.parse(row.v) : null;
+  const value = row ? JSON.parse(row.v) : null;
+  const ms = memoMs(key);
+  if (ms) kvMemo.set(key, { value, until: Date.now() + ms });
+  return value;
 }
 
 async function kvSet(env, key, value) {
   await ensureSchema(env);
   await env.DB.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind(key, JSON.stringify(value)).run();
+  const ms = memoMs(key);
+  if (ms) kvMemo.set(key, { value, until: Date.now() + ms });
 }
 
 /** 某节点与主节点的对照：a 是节点的编号，b 是主节点的 */
@@ -288,10 +309,12 @@ async function accountUsage(token, account) {
   return { gbs: Math.round(gbs), ratio: gbs / FREE_GBS };
 }
 
-/** 各节点今天（UTC）的 Durable Object 时长，缓存 3 分钟；没配统计令牌（<节点名>_ACCOUNT_ID / _ANALYTICS_TOKEN）的不填 */
-async function getUsage(env, force = false) {
+/**
+ * 各节点今天（UTC）的 Durable Object 时长，缓存 3 分钟（maxAge 可放宽）；没配统计令牌（<节点名>_ACCOUNT_ID / _ANALYTICS_TOKEN）的不填
+ */
+async function getUsage(env, force = false, maxAge = USAGE_TTL_MS) {
   const cached = await kvGet(env, 'usage');
-  if (!force && cached && Date.now() - cached.at < USAGE_TTL_MS) return cached;
+  if (!force && cached && Date.now() - cached.at < maxAge) return cached;
   const result = { at: Date.now() };
   await Promise.all(
     nodesOf(env).list.map(async (node) => {
@@ -329,7 +352,7 @@ async function clearDown(env, node) {
 /** 按 ORDER 排好、带上用量和暂停情况，chooseNode 用 */
 async function nodeStates(env) {
   const { order } = nodesOf(env);
-  const usage = await getUsage(env).catch(() => null);
+  const usage = await getUsage(env, false, USAGE_STALE_MS).catch(() => null);
   return Promise.all(
     order.map(async (node) => ({ node, name: node.name, ratio: usage?.[node.name]?.ratio ?? null, gbs: usage?.[node.name]?.gbs ?? null, limit: node.limit, down: await downOf(env, node) }))
   );
@@ -581,7 +604,12 @@ async function handleConnect(request, env, ctx, homeId) {
   const self = new URL(request.url);
   const wsBase = `${self.protocol === 'https:' ? 'wss:' : 'ws:'}//${self.host}`;
   const { home } = nodesOf(env);
-  const states = await nodeStates(env);
+  // 这台在各节点上的编号与节点状态一起读（对照表不缓存：主节点上刚改过的要马上看到 stale）
+  const [states, mapped] = await Promise.all([
+    nodeStates(env),
+    ensureSchema(env).then(() => env.DB.prepare("SELECT node, a, stale FROM nodemap WHERE kind = 'server' AND b = ?").bind(homeId).all()),
+  ]);
+  const rowOf = new Map(mapped.results.map((row) => [row.node, row]));
   const tried = new Set();
   // 挑到的节点出错就暂停它、换下一个
   for (let attempt = 0; attempt < states.length; attempt++) {
@@ -593,8 +621,7 @@ async function handleConnect(request, env, ctx, homeId) {
     const node = state.node;
     let id = homeId;
     if (node !== home) {
-      await ensureSchema(env);
-      const row = await env.DB.prepare("SELECT a, stale FROM nodemap WHERE node = ? AND kind = 'server' AND b = ?").bind(node.name, homeId).first();
+      const row = rowOf.get(node.name);
       // 还没同步过去、或主节点上刚改过：这个节点上没有（或是旧的），换一个
       if (!row || row.stale) continue;
       id = row.a;
@@ -602,9 +629,9 @@ async function handleConnect(request, env, ctx, homeId) {
     try {
       const [result] = await nodeOps(env, node, [{ op: 'connect', id }]);
       if (result?.ok && typeof result.data?.token === 'string') {
-        // WebSocket 马上就来，先把节点会话备好
+        // WebSocket 马上就来，先把节点会话备好（一般已在内存里）
         await nodeSession(env, node);
-        await clearDown(env, node);
+        if (state.down) await clearDown(env, node);
         // 主节点的列表按最近连接排序：在主节点上也记一下（签的令牌没人用，60 秒后作废）
         if (node !== home) ctx.waitUntil(nodeOps(env, home, [{ op: 'connect', id: homeId }]).catch(() => {}));
         return json({ wsUrl: `${wsBase}/api/ssh?token=${result.data.token}&node=${encodeURIComponent(node.name)}`, backend: node.name });
