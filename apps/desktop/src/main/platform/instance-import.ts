@@ -228,8 +228,9 @@ async function autoImport(target: InstanceConfig): Promise<void> {
       const probe = await inPage<{ hasOrder: boolean; conversations: number }>(source, PROBE_SCRIPT);
       const score = (probe.hasOrder ? 1000 : 0) + probe.conversations;
       if (score > own.conversations && (!best || score > best.score)) best = { source, score };
-    } catch {
+    } catch (error) {
       // 那个实例没登录或连不上：说不准它有没有可导的，先不记“没有”
+      log.info('自动导入：读不了', source.name, (error as Error).message);
       unsure = true;
     }
   }
@@ -257,11 +258,9 @@ export async function autoImportOnFirstOpen(target: InstanceConfig): Promise<voi
   // 有标记就不再做；没登录等原因这次没做成的，本次运行里不再试（免得每开一个窗口都多等），下次启动再试
   if (readMarks()[target.id] || triedThisRun.has(target.id)) return;
   triedThisRun.add(target.id);
-  try {
-    await Promise.race([autoImport(target), new Promise((resolve) => setTimeout(resolve, 15_000))]);
-  } catch (error) {
-    log.warn('自动导入本地数据失败', target.name, (error as Error).message);
-  }
+  // 超过 15 秒就先打开页面，导入在后台接着做；之后出的错也要记下来
+  const running = autoImport(target).catch((error: Error) => log.warn('自动导入本地数据失败', target.name, error.message));
+  await Promise.race([running, new Promise((resolve) => setTimeout(resolve, 15_000))]);
 }
 
 /** 实例管理里点“导入”：先确认（目标实例的窗口会重新加载），再导入 */
