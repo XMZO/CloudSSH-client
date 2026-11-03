@@ -26,6 +26,7 @@ import { hostId } from '../shared/ai-remote/servers';
 import { mt, onLocaleChange } from './i18n';
 import { osIcon } from '../shared/os-icon';
 import { copyTagName, renameTag, TAG_RENAMED_EVENT, type TagRenamed } from '../shared/server-tags';
+import { scrollParent } from '../shared/sortable';
 import { gatewayStrip } from './gateway';
 import { nodeOrder, ORDER_CHANGED_EVENT, orderedGroups, RECENT_KEY, UNGROUPED_KEY } from './node-groups';
 import { openReorderSheet } from './reorder-sheet';
@@ -140,6 +141,8 @@ function renderGroup(key: string, label: string, servers: ServerConfig[], sessio
   group.append(header);
   if (!collapsed) {
     const body = el('div', 'cs-m-group-body');
+    // 屏幕外时的占位高度按行数估（mobile.css）
+    body.style.setProperty('--cs-m-rows', String(servers.length));
     for (const server of servers) body.append(renderRow(server, sessions, activeId));
     group.append(body);
   }
@@ -167,6 +170,66 @@ function contentSignature(servers: ServerConfig[], sessions: Map<number, string[
     orderVersion,
     localeVersion,
   ]);
+}
+
+// ---------- 重建列表时留在原处 ----------
+//
+// 屏幕外的分组只占位、不排版（mobile.css 里分组内容的 content-visibility）。每次重建都是新元素，记住的实际高度跟着没了，
+// 全按估的高度占位：以前一律估 480px，只有一两台的组实际才 100px 上下，从终端回来时滚动位置的数值没变、对应的内容却往下
+// 错了好几屏，分组多时直接到了列表最底下。现在占位按行数估，重建前记下屏幕顶上那一行，重建后把它放回原处。
+
+/** 屏幕顶上的那一行（或分组标题）和它离可视区顶端的距离 */
+interface TopAnchor {
+  group: string;
+  id: string | null;
+  offset: number;
+}
+
+/** 上次显示的搜索词：搜索变了列表整个换了，不用找回原处 */
+let renderedQuery = '';
+
+function viewTop(scroller: HTMLElement): number {
+  return scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top;
+}
+
+/** 从排好的一组量出行高（各皮肤不一样），给屏幕外的组估占位高度用 */
+function measureRows(body: HTMLElement): void {
+  const rows = body.children as HTMLCollectionOf<HTMLElement>;
+  if (rows.length < 2) return;
+  const step = rows[1].offsetTop - rows[0].offsetTop;
+  if (step <= 0) return;
+  const extra = body.offsetHeight - rows.length * step;
+  list.style.setProperty('--cs-m-row-step', `${step}px`);
+  if (extra >= 0 && extra < step) list.style.setProperty('--cs-m-body-extra', `${extra}px`);
+}
+
+function captureTop(scroller: HTMLElement): TopAnchor | null {
+  // 在最顶上就留在最顶上：横幅出现时不把它顶出可视区
+  if (scroller.scrollTop <= 0) return null;
+  const top = viewTop(scroller);
+  for (const group of list.children as HTMLCollectionOf<HTMLElement>) {
+    const key = group.dataset.groupKey;
+    if (!key || group.getBoundingClientRect().bottom <= top) continue;
+    const body = group.querySelector<HTMLElement>('.cs-m-group-body');
+    if (body) measureRows(body);
+    for (const item of group.querySelectorAll<HTMLElement>('.cs-m-group-header, .cs-m-row-item')) {
+      const rect = item.getBoundingClientRect();
+      if (rect.bottom > top) return { group: key, id: item.dataset.id ?? null, offset: rect.top - top };
+    }
+  }
+  return null;
+}
+
+function restoreTop(scroller: HTMLElement, anchor: TopAnchor): void {
+  const group = [...(list.children as HTMLCollectionOf<HTMLElement>)].find((item) => item.dataset.groupKey === anchor.group);
+  if (!group) return;
+  // 那台不在这组了或组被折起来了，就对齐分组标题
+  const item =
+    (anchor.id ? group.querySelector<HTMLElement>(`.cs-m-row-item[data-id="${anchor.id}"]`) : null) ??
+    group.querySelector<HTMLElement>('.cs-m-group-header');
+  if (!item) return;
+  const delta = item.getBoundingClientRect().top - viewTop(scroller) - anchor.offset;
+  if (Math.abs(delta) >= 1) scroller.scrollTop += delta;
 }
 
 function render(): void {
@@ -209,7 +272,11 @@ function render(): void {
   }
   for (const group of groups) fragment.append(renderGroup(group.key, group.label, group.servers, sessions, activeId));
   if (total === 0) fragment.append(el('div', 'cs-m-empty', servers.length ? mt('noMatch') : mt('empty')));
+  const scroller = pageVisible() && list.firstChild && state.query === renderedQuery ? scrollParent(list) : null;
+  const anchor = scroller ? captureTop(scroller) : null;
+  renderedQuery = state.query;
   list.replaceChildren(fragment);
+  if (scroller && anchor) restoreTop(scroller, anchor);
 }
 
 /** 节点页是否在显示：在终端页时不渲染（看不见，还会和终端抢主线程），回来时再补 */
@@ -224,7 +291,8 @@ let dirty = true;
 function flush(): void {
   if (frame) cancelAnimationFrame(frame);
   frame = 0;
-  if (!dirty) return;
+  // 排好这一帧时已经切到终端页：等回来再画，看不见时量不出该留在哪
+  if (!dirty || !pageVisible()) return;
   dirty = false;
   render();
 }

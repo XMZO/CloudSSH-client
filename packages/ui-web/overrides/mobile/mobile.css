@@ -211,9 +211,10 @@ html.cs-nodes-on .cs-m-nodes {
   border-radius: 12px;
   background: var(--bg-surface);
   /* 屏幕外的分组不排版、不绘制：节点多时回到节点页（要从头排版整个列表）和滚动都轻很多。
-     放在组的内容上而不是整组：它自己的阴影不受裁剪。auto 会记住上次的实际高度，滚动条不跳 */
+     放在组的内容上而不是整组：它自己的阴影不受裁剪。auto 会记住上次的实际高度；没排过的（列表重建后都是新的）
+     按行数估：行高由 nodes.ts 从排好的组里量出来，估得准，重建后同一个滚动位置还是同一处 */
   content-visibility: auto;
-  contain-intrinsic-block-size: auto 480px;
+  contain-intrinsic-block-size: auto calc(var(--cs-m-rows, 8) * var(--cs-m-row-step, 66px) + var(--cs-m-body-extra, 0px));
 }
 
 .cs-m-row-item {
