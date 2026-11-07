@@ -1631,8 +1631,15 @@ function attachShell(rawWs, url) {
           const changed = term.cols !== Number(msg.cols) || term.rows !== Number(msg.rows);
           Object.assign(term, { cols: Number(msg.cols), rows: Number(msg.rows) });
           // 像远端终端尺寸变了发 SIGWINCH：readline 在当前行重画提示符和没打完的命令（光标回到原来的字上），全屏程序整屏重画
-          if (changed && nano) drawNano();
-          else if (changed && pager) drawPager();
+          if (changed && nano) {
+            // 像真的 nano（ncurses 的 endwin + refresh）：先退出备用屏幕，稍后再进入并整屏重画，两段分开到达客户端
+            write('\x1b[?1049l');
+            setTimeout(() => {
+              if (!nano) return;
+              write('\x1b[?1049h');
+              drawNano();
+            }, Number(process.env.MOCK_NANO_WINCH_GAP_MS ?? 30));
+          } else if (changed && pager) drawPager();
           else if (changed && !winchTimer) {
             // 像真的 bash / readline：信号稍后才处理，连着来的几次合成一次；处理时读到的尺寸和它上次记下的一样就不重画
             // （客户端先窄一列再改回来、两次挨得太近时就是这样：等于没变，提示符不会重画）

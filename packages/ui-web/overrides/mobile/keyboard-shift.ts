@@ -30,6 +30,13 @@ const manager = () => (globalThis as { __cloudsshTabManager?: TabManagerLike }).
 /** 可视区域比完整高度矮这么多以内不算被挡（地址栏、取整误差） */
 const SHRINK_EPSILON = 2;
 
+/**
+ * 进出全屏程序要稳定这么久才换做法。nano 这类 ncurses 程序收到窗口变化时先退出备用屏幕、紧接着再进入并重画，
+ * 按瞬时状态换做法就会：退出 → 按普通屏幕保持原高度（行数变多）→ 进入 → 按键盘上方的高度（行数变少），
+ * 每次改尺寸程序又退出再进入一次，来回闪个不停
+ */
+const BUFFER_SETTLE_MS = 300;
+
 export function installKeyboardShift(): void {
   const area = document.getElementById('terminal-area');
   const viewport = window.visualViewport;
@@ -44,6 +51,9 @@ export function installKeyboardShift(): void {
   /** 已按“保持原高度”摆放的容器 */
   const held = new Set<HTMLElement>();
   const watched = new WeakSet<Terminal>();
+  /** 稳定下来的屏幕类型（见 BUFFER_SETTLE_MS）；还没开始盯的终端按当前的 */
+  const settled = new WeakMap<Terminal, 'normal' | 'alternate'>();
+  const screenType = (term: Terminal) => settled.get(term) ?? term.buffer.active.type;
 
   const editableFocused = () => {
     const el = document.activeElement as HTMLElement | null;
@@ -88,15 +98,23 @@ export function installKeyboardShift(): void {
     const term = tab.terminal?.terminal;
     if (!term || watched.has(term)) return;
     watched.add(term);
-    // 输出、光标移动、翻看历史时跟着调整位置；进出全屏程序时切换做法
+    settled.set(term, term.buffer.active.type);
+    // 输出、光标移动、翻看历史时跟着调整位置；进出全屏程序（稳定下来后）时切换做法
     term.onRender(() => active && schedule());
     term.onScroll(() => active && schedule());
+    let settleTimer = 0;
     term.buffer.onBufferChange(() => {
-      if (!active) return;
-      update();
-      // 换了做法（保持原高度 ↔ 按键盘上方的高度）后按容器的新高度重算行数
+      window.clearTimeout(settleTimer);
       // 不放在动画帧回调里：那里改尺寸，WebGL 画布会先被清空、下一帧才画上，空一帧
-      window.setTimeout(() => tab.terminal?.fit?.(), 0);
+      settleTimer = window.setTimeout(() => {
+        const type = term.buffer.active.type;
+        if (type === settled.get(term)) return;
+        settled.set(term, type);
+        if (!active) return;
+        update();
+        // 换了做法（保持原高度 ↔ 按键盘上方的高度）后按容器的新高度重算行数
+        tab.terminal?.fit?.();
+      }, BUFFER_SETTLE_MS);
     });
   }
 
@@ -131,7 +149,7 @@ export function installKeyboardShift(): void {
       const term = tab.terminal?.terminal;
       if (!container || !term) continue;
       watch(tab);
-      if (term.buffer.active.type === 'alternate') {
+      if (screenType(term) === 'alternate') {
         // 全屏程序：照旧按键盘上方的高度
         release(container);
         continue;
@@ -142,7 +160,8 @@ export function installKeyboardShift(): void {
       }
       const height = `${closedHeight}px`;
       if (container.style.height !== height) container.style.height = height;
-      if (tab === current) place(container, term);
+      // 刚进全屏程序、还没稳定下来时不往上移：程序的顶部留在原处，稳定后再按键盘上方的高度重排
+      if (tab === current && term.buffer.active.type === 'normal') place(container, term);
       else container.style.removeProperty('transform');
     }
   }
