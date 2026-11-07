@@ -4,6 +4,7 @@ import { getLocale, onLocaleChange } from '../../../upstream/frontend/src/i18n';
 const zhCN = {
   reconnectNow: '（按任意键立即重连）',
   reconnectManual: '（按任意键重新连接）',
+  connectStalled: '连接服务器 {seconds} 秒没有回应，换一条连接重试',
   title: '关键词高亮',
   manage: '管理高亮规则',
   enable: '启用关键词高亮',
@@ -89,6 +90,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
     ...zhCN,
     reconnectNow: '（按任意鍵立即重新連線）',
     reconnectManual: '（按任意鍵重新連線）',
+    connectStalled: '連線伺服器 {seconds} 秒沒有回應，換一條連線重試',
     title: '關鍵字高亮',
     manage: '管理高亮規則',
     enable: '啟用關鍵字高亮',
@@ -163,6 +165,7 @@ const dictionaries: Record<string, Record<Key, string>> = {
   'en-US': {
     reconnectNow: '(press any key to reconnect now)',
     reconnectManual: '(press any key to reconnect)',
+    connectStalled: 'No response from the server for {seconds}s, retrying with a new connection',
     title: 'Keyword highlighting',
     manage: 'Manage highlight rules',
     enable: 'Highlight keywords',

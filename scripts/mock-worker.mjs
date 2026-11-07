@@ -31,6 +31,12 @@ const desktopShim = args.includes('--desktop-shim');
 const shim = mobileShim ? 'mock-tauri.js' : desktopShim ? 'mock-desktop.js' : null;
 const anonymous = args.includes('--anon');
 const gateway = args.includes('--gateway');
+/**
+ * --tcp-stall <n>：前 n 次新连接像 Cloudflare 出站 TCP 连不上：连上后不发任何状态（心跳照回），不回应客户端的关闭，
+ * 20 秒后才报“连接失败”并以 1011 关闭。用来调试“新标签卡在第一行”
+ */
+const tcpStallArg = args.indexOf('--tcp-stall');
+let tcpStalls = tcpStallArg >= 0 ? Number(args[tcpStallArg + 1]) || 1 : 0;
 const now = Date.now();
 
 // ---------- 数据 ----------
@@ -567,6 +573,8 @@ function createSocket(socket, onMessage) {
       buffer = buffer.subarray(offset + length);
 
       if (opcode === 0x8) {
+        // --tcp-stall：Worker 卡在连接上时不回应关闭
+        if (api.ignoreClose) continue;
         api.close(1000);
         return;
       }
@@ -1457,6 +1465,25 @@ function resumeShell(rawWs, url) {
 let rebootingUntil = 0;
 
 function attachShell(rawWs, url) {
+  if (tcpStalls > 0) {
+    tcpStalls--;
+    console.log(`新连接卡在 TCP 连接（还剩 ${tcpStalls} 次）`);
+    rawWs.ignoreClose = true;
+    setTimeout(() => {
+      rawWs.sendJson({ type: 'error', message: '连接失败: proxy request failed, cannot connect to the specified address' });
+      rawWs.ignoreClose = false;
+      setTimeout(() => rawWs.close(1011), 50);
+    }, 20_000);
+    return (data) => {
+      if (typeof data !== 'string' || !data.startsWith('{')) return;
+      try {
+        const msg = JSON.parse(data);
+        if (msg.type === 'ping') rawWs.sendJson({ type: 'pong', ...(msg.id ? { id: msg.id } : {}) });
+      } catch {
+        // 不是 JSON
+      }
+    };
+  }
   if (Date.now() < rebootingUntil) {
     // Worker 连不到主机时：报“连接失败”（没有 event）后以 1011 关闭；连接超时要等一会儿
     setTimeout(() => {

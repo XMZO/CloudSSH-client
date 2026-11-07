@@ -144,6 +144,18 @@ const COMMON_HOOKS: Hook[] = [
     anchor: "      this.lastPingTime = null;\n      if (document.visibilityState === 'hidden') return;\n",
     inject: '      if ((globalThis as any).__cloudsshHeartbeatStall?.(this, socket) === true) return;\n',
   },
+  // 连上后迟迟不开始 SSH 握手就换一条连接（overrides/shared/terminal/connect-watch.ts）：新会话的两个连上入口
+  // （已保存的服务器 / 重连用一次性令牌，匿名连接发配置）；秒级恢复不经过这里
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: "      this.terminal.writeln(`\\x1b[32m[+] ${t('terminal.wsAuthenticating')}\\x1b[0m`);\n",
+    inject: '      (globalThis as any).__cloudsshConnectWatch?.(this, ws);\n',
+  },
+  {
+    file: '/upstream/frontend/src/terminal.ts',
+    anchor: "        this.terminal.writeln(`\\x1b[32m[+] ${t('terminal.wsSendingCredentials')}\\x1b[0m`);\n",
+    inject: '        (globalThis as any).__cloudsshConnectWatch?.(this, socket);\n',
+  },
   // 打开着时跟上别处的改动（overrides/shared/live-sync.ts）：把网页版只在启动时做一次的两个同步交出来，内容变了时再调用。
   // 主题只取“云端有主题 → 更新并应用”那一段：云端没有主题时网页版会把本机的主题回填上去，别处刚删掉的会被加回来，这里不做；
   // 本机选的是内置主题时只更新主题库、不切换（与网页版启动时一致）

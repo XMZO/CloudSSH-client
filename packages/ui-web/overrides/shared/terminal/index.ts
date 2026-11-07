@@ -17,6 +17,7 @@ import { installResumeRedraw } from './resume-redraw';
 import { installReconnectsExhausted } from './reboot-wait';
 import { installIdleReminder } from './idle-reminder';
 import { installHeartbeatGuard } from './heartbeat-guard';
+import { installConnectWatch } from './connect-watch';
 import { installSessionEnd } from '../session-end';
 import { installResizeSettle } from './resize-settle';
 import { installResizeRender } from './resize-render';
@@ -174,6 +175,8 @@ export function installTerminalEnhancements(options: { bottomAnchor?: boolean } 
   installIdleReminder();
   // 心跳超时前先看最近有没有收到过消息，不把还活着的慢连接当成卡死（./heartbeat-guard.ts）
   installHeartbeatGuard();
+  // 连上后 8 秒还没开始 SSH 握手（Cloudflare 出站 TCP 卡住）就换一条连接，不用关掉标签重开（./connect-watch.ts）
+  installConnectWatch();
   // 等待自动重连时：构建钩子在网页版写出“x 秒后重连”之后调用，把那一行换成精确到毫秒的实时倒计时并附上按键提示
   (globalThis as { __cloudsshReconnectCountdown?: typeof startReconnectCountdown }).__cloudsshReconnectCountdown =
     startReconnectCountdown;
