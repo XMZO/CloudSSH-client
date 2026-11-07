@@ -178,7 +178,7 @@ export function installTerminalEnhancements(options: { bottomAnchor?: boolean } 
   installHeartbeatGuard();
   // 连上后 8 秒还没开始 SSH 握手（Cloudflare 出站 TCP 卡住）就换一条连接，不用关掉标签重开（./connect-watch.ts）
   installConnectWatch();
-  // 输入法剪贴板栏这类当成打字送进来的多行文字，改走粘贴，不再一行一行地执行（./multiline-input.ts）
+  // 输入法剪贴板栏这类当成打字送进来的整段文字：多行改走粘贴，换行按回车送（./multiline-input.ts）
   installMultilineInput();
   // 等待自动重连时：构建钩子在网页版写出“x 秒后重连”之后调用，把那一行换成精确到毫秒的实时倒计时并附上按键提示
   (globalThis as { __cloudsshReconnectCountdown?: typeof startReconnectCountdown }).__cloudsshReconnectCountdown =

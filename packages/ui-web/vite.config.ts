@@ -328,12 +328,19 @@ const COMMON_HOOKS: Hook[] = [
     anchor: "  private processTerminalInput(\n    data: string,\n    source: 'keyboard' | 'focus-report' = 'keyboard'\n  ): void {\n",
     inject: "    if (!this.sessionReady && source === 'keyboard' && (this as any).__cloudsshReconnectNow?.() === true) return;\n",
   },
-  // 当成打字送进来的多行文字（输入法剪贴板栏、iOS 输入法补发）改走粘贴（overrides/shared/terminal/multiline-input.ts）
+  // 当成打字送进来的整段文字（输入法剪贴板栏、iOS 输入法补发）：多行改走粘贴，换行按回车送（overrides/shared/terminal/multiline-input.ts）
   {
     file: '/upstream/frontend/src/terminal.ts',
     anchor:
       '    if (!this.sessionReady || !this.trzszFilter) return;\n    // Focus/mouse reports must keep their encoding and not consume one-shot keyboard modifiers.\n',
-    inject: "    if (source === 'keyboard' && (globalThis as any).__cloudsshMultilineInput?.(this, data) === true) return;\n",
+    inject: [
+      "    if (source === 'keyboard') {",
+      '      const cloudsshText = (globalThis as any).__cloudsshTerminalText?.(this, data);',
+      '      if (cloudsshText === null) return;',
+      "      if (typeof cloudsshText === 'string') data = cloudsshText;",
+      '    }',
+      '',
+    ].join('\n'),
   },
   // 断线后秒级恢复（session_resumed）接上的是断线前那个 Shell：它早把提示符打印过了、不会再打印，而网页版在后面写了
   // “连接已关闭 / 正在重新连接 / 已成功恢复会话”，光标停在新的空行上，要按一下键才出现提示符。恢复后让远端终端尺寸
