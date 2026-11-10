@@ -267,6 +267,7 @@
 .cs-cp-input:focus {
   border-color: var(--accent);
   outline: none;
+  box-shadow: none;
 }
 
 .cs-cp-key {

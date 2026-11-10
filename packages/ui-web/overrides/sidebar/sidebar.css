@@ -141,6 +141,11 @@ html[data-ui-style='liquid'] :is(.cs-sb, .cs-sb-rail) {
   padding: 0;
 }
 
+/* 网页版的表单样式（Tailwind forms）给获得焦点的输入框加一圈蓝色阴影：外框已经变色，不要里面再一圈方框 */
+.cs-sb-search input:focus {
+  box-shadow: none;
+}
+
 .cs-sb-search input::placeholder {
   color: var(--on-surface-variant);
   opacity: 0.7;
