@@ -39,6 +39,13 @@ describe('groupServersByTag', () => {
     expect(groupServersByTag(servers, { query: '瑞士' }).groups.map((g) => g.key)).toEqual(['瑞士 🇨🇭']);
     expect(matchesServerQuery(servers[1], 'ROOT hk')).toBe(true);
     expect(matchesServerQuery(servers[1], 'root nothing')).toBe(false);
+    // 主机 ID 按编号精确匹配，大小写、有没有连字符都行
+    const id = (n: number | string) => `srv-${n}`;
+    expect(matchesServerQuery(servers[1], id(2))).toBe(true);
+    expect(matchesServerQuery(servers[1], 'SRV2')).toBe(true);
+    expect(matchesServerQuery(servers[0], id(2))).toBe(false);
+    expect(groupServersByTag(servers, { query: id(3) }).total).toBe(1);
+    expect(groupServersByTag(servers, { query: id(30) }).total).toBe(0);
     expect(groupServersByTag(servers, { query: 'zzz' })).toEqual({ groups: [], ungrouped: [], total: 0 });
   });
 });

@@ -54,7 +54,7 @@ export function serverTags(server: GroupableServer): string[] {
 
 /**
  * 关键字匹配：按空白拆成多个词，全部命中才算匹配（不区分大小写）。
- * 匹配范围：名称、主机、用户名、隧道域名、标签。
+ * 匹配范围：名称、主机、用户名、隧道域名、标签；主机 ID（srv-<编号>，命令行、skill、AI 用的那个）按编号精确匹配，编号 1 不会匹配到 12。
  */
 export function matchesServerQuery(server: GroupableServer, query: string): boolean {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -68,7 +68,10 @@ export function matchesServerQuery(server: GroupableServer, query: string): bool
   ]
     .join('\n')
     .toLowerCase();
-  return terms.every((term) => haystack.includes(term));
+  return terms.every((term) => {
+    const id = /^srv-?(\d+)$/.exec(term);
+    return id ? server.id === Number(id[1]) : haystack.includes(term);
+  });
 }
 
 function compareServers(sort: ServerGroupSort) {
