@@ -9,7 +9,8 @@
  *   Metadata Document（client_id 本身是 https 地址：抓它的元数据，只连公网地址、5 秒、64KB、不跟随跳转）
  * - 授权：/authorize 显示确认页，输入部署时设的口令（只存 scrypt 哈希：CLOUDSSH_MCP_PASSWORD_HASH，用
  *   cloudssh mcp http --hash-password 生成）后发授权码；只支持 PKCE S256，授权码 10 分钟、只能用一次
- * - 令牌：/token（authorization_code、refresh_token；刷新令牌每用一次就换新的），访问令牌 1 小时、刷新令牌 30 天；/revoke 吊销
+ * - 令牌：/token（authorization_code、refresh_token），访问令牌 24 小时、刷新令牌 90 天（每用一次往后顺延，不换新的：同一份
+ *   凭据常有好几处在用，例如 Claude Code 的每个远程会话各存一份，一换别处手里的就作废、只能重新授权）；/revoke 吊销整份授权
  * - 固定令牌（给只能填固定 Bearer、不会走 OAuth 的客户端）：环境变量 CLOUDSSH_MCP_STATIC_TOKENS 里只存令牌的 SHA-256，
  *   可带名字（名字:哈希，逗号隔开），用 cloudssh mcp http --new-token 生成；不过期，删掉那一项重启即吊销
  * - 口令连续输错 5 次后按指数退避锁定（1 分钟起，最长 15 分钟）；注册每小时最多 30 个客户端
@@ -43,8 +44,8 @@ export interface HttpOptions {
   staticTokens?: Map<string, string>;
 }
 
-const ACCESS_TTL = 3600_000;
-const REFRESH_TTL = 30 * 24 * 3600_000;
+const ACCESS_TTL = 24 * 3600_000;
+const REFRESH_TTL = 90 * 24 * 3600_000;
 const CODE_TTL = 10 * 60_000;
 const PENDING_TTL = 10 * 60_000;
 const MAX_BODY = 4 * 1024 * 1024;
@@ -170,6 +171,16 @@ class Store {
     const now = Date.now();
     this.state.tokens[sha256(access)] = { type: 'access', clientId, family, expiresAt: now + ACCESS_TTL };
     this.state.tokens[sha256(refresh)] = { type: 'refresh', clientId, family, expiresAt: now + REFRESH_TTL };
+    this.save();
+    return { access_token: access, token_type: 'Bearer', expires_in: ACCESS_TTL / 1000, refresh_token: refresh, scope: SCOPE };
+  }
+
+  /** 刷新：只发新的访问令牌，刷新令牌还是原来那个、有效期往后顺延 */
+  renew(record: TokenRecord, refresh: string): Json {
+    const access = randomToken();
+    const now = Date.now();
+    record.expiresAt = now + REFRESH_TTL;
+    this.state.tokens[sha256(access)] = { type: 'access', clientId: record.clientId, family: record.family, expiresAt: now + ACCESS_TTL };
     this.save();
     return { access_token: access, token_type: 'Bearer', expires_in: ACCESS_TTL / 1000, refresh_token: refresh, scope: SCOPE };
   }
@@ -591,9 +602,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
       if (!record || record.type !== 'refresh' || record.expiresAt < Date.now() || record.clientId !== clientId) {
         return oauthError(res, 400, 'invalid_grant', 'invalid or expired refresh token');
       }
-      // 换新的一对，旧的同一系作废（刷新令牌只能用一次）
-      store.revokeFamily(record.family);
-      return send(res, 200, store.issue(clientId));
+      return send(res, 200, store.renew(record, fields.refresh_token ?? ''));
     }
     return oauthError(res, 400, 'unsupported_grant_type', 'use authorization_code or refresh_token');
   }

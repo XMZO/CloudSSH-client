@@ -498,7 +498,7 @@ cloudssh mcp add cursor / cloudssh mcp remove codex
 - **工具**：上面除 `upload` / `download` 外的全部（只读时没有 `write_file`、`edit_file`、`copy`）；`upload` / `download` 读写的是那台服务器的磁盘，不提供
 - **权限**（`--access` / `CLOUDSSH_MCP_ACCESS`）：`full` 同命令行的完全权限（拦截级仍拒绝）；`ask` 危险命令要 `confirm: true`；`read-only`（默认）只放行查看类命令（`readonly.ts`：按词切开命令，命令名与参数逐个对清单，写文件的重定向、命令替换、子 Shell、heredoc、解释器一律拒绝；尽力而为的护栏，不是沙箱）
 - **不提供的服务器**（`--exclude srv-12`）：跑这个服务的机器自己，它上面存着 CloudSSH 的登录
-- **授权**：内置只认一个人的 OAuth 2.1：发现文档（RFC 9728 / 8414）、动态注册（RFC 7591）与 Client ID Metadata Document、授权页口令（scrypt 哈希，`mcp http --hash-password` 生成；连错 5 次锁定）、只支持 PKCE S256、访问令牌 1 小时、刷新令牌 30 天且每用一次换新；令牌只存 SHA-256
+- **授权**：内置只认一个人的 OAuth 2.1：发现文档（RFC 9728 / 8414）、动态注册（RFC 7591）与 Client ID Metadata Document、授权页口令（scrypt 哈希，`mcp http --hash-password` 生成；连错 5 次锁定）、只支持 PKCE S256、访问令牌 24 小时、刷新令牌 90 天（每用一次往后顺延、不换新的，几个会话各存一份也不会互相顶掉）；令牌只存 SHA-256
 - **固定令牌**（可选，给只能填固定 Bearer、不会走 OAuth 的应用）：`cloudssh mcp http --new-token --label 名字` 生成，第一行令牌只显示这一次（填进应用的 `Authorization: Bearer …`），第二行 `名字:SHA-256` 加进环境变量 `CLOUDSSH_MCP_STATIC_TOKENS`（只存哈希，逗号隔开，删掉即吊销）；不过期，权限同 `--access`
 - **传输**：Streamable HTTP，`POST /mcp` 回 JSON（只有通知时 202），不推送、不用会话；客户端断开时取消还在执行的调用；每次执行与拒绝在日志里记一行
 - **登录**：那台服务器上单独 `cloudssh login`（`--start` / `--callback`），会话 7 天过期，到期重新登录；实例是入口网关时用 `--token-stdin` 存它签发的长期令牌，不用定期重新登录

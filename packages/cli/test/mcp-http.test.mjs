@@ -295,13 +295,16 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.match(server.stderr, /exec 执行 srv-\d+：echo hello/);
   });
 
-  test('令牌刷新：换新的一对，旧的刷新令牌与旧访问令牌都作废；吊销后不能再用', async () => {
+  test('令牌刷新：发新的访问令牌，刷新令牌不换、可以再用（几处各存一份不互相顶掉）；吊销后整份都不能用', async () => {
     const { client, tokens } = await login(server.base);
+    assert.equal(tokens.expires_in, 24 * 3600);
     const refreshed = await tokenRequest(server.base, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id });
     assert.equal(refreshed.status, 200);
     assert.notEqual(refreshed.body.access_token, tokens.access_token);
-    assert.equal((await tokenRequest(server.base, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id })).body.error, 'invalid_grant');
-    assert.equal((await rpc(server.base, tokens.access_token, 'ping')).status, 401);
+    assert.equal(refreshed.body.refresh_token, tokens.refresh_token);
+    const again = await tokenRequest(server.base, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id });
+    assert.equal(again.status, 200);
+    assert.equal((await rpc(server.base, tokens.access_token, 'ping')).status, 200);
     assert.equal((await rpc(server.base, refreshed.body.access_token, 'ping')).status, 200);
     const revoked = await fetch(`${server.base}/revoke`, {
       method: 'POST',
@@ -310,6 +313,8 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     });
     assert.equal(revoked.status, 200);
     assert.equal((await rpc(server.base, refreshed.body.access_token, 'ping')).status, 401);
+    assert.equal((await rpc(server.base, again.body.access_token, 'ping')).status, 401);
+    assert.equal((await tokenRequest(server.base, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id })).body.error, 'invalid_grant');
   });
 
   test('有密钥的客户端：换令牌要带对密钥', async () => {
