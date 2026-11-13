@@ -21,15 +21,18 @@ export function tempDir(prefix) {
 export async function startMock(args = []) {
   const child = spawn(process.execPath, [MOCK, '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   child.stderr.resume();
+  /** 假 Worker 打印的每一行（执行了哪些命令、SFTP 传了什么） */
+  const lines = [];
   const url = await new Promise((resolve, reject) => {
     const rl = readline.createInterface({ input: child.stdout });
     rl.on('line', (line) => {
+      lines.push(line);
       const match = /http:\/\/127\.0\.0\.1:(\d+)/.exec(line);
       if (match) resolve(`http://127.0.0.1:${match[1]}`);
     });
     child.on('exit', (code) => reject(new Error(`假 Worker 退出了（${code}）`)));
   });
-  return { url, stop: () => child.kill() };
+  return { url, stop: () => child.kill(), output: () => lines.join('\n') };
 }
 
 /**

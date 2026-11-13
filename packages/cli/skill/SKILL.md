@@ -34,7 +34,7 @@ In PowerShell 7 use `@'` … `'@ | cloudssh exec --stdin srv-12`. In any shell y
 
 ## Files
 
-For files on a server use `read`, `edit` and `write` instead of `cat`, `sed -i`, heredocs or scripts in `exec`: they work over SFTP, so nothing passes through the remote shell's quoting.
+For files on a server use `read`, `edit` and `write` instead of `cat`, `sed -i`, heredocs or scripts in `exec`: they move the content as data, so nothing passes through the remote shell's quoting.
 
 ```bash
 cloudssh read web /etc/nginx/nginx.conf                                          # exact text, 2000 lines per call

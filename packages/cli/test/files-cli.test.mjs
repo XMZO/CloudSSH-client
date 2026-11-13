@@ -114,6 +114,28 @@ for (const agent of [false, true]) {
       assert.match(cli(['read', id, dir], env).stderr, /is a directory\n/);
     });
 
+    test('小文件一条命令读写（不开 SFTP 通道）；大文件照旧走 SFTP', async () => {
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+      await settle();
+      const start = mock.output().length;
+      assert.equal(cli(['write', '--stdin', id, `${dir}/small.txt`], env, 'small\n').code, 0);
+      assert.equal(cli(['read', id, `${dir}/small.txt`], env).stdout, 'small\n');
+      assert.equal(cli(['edit', '--yes', id, `${dir}/small.txt`, '--old', 'small', '--new', 'tiny'], env).code, 0);
+      assert.equal(cli(['read', id, `${dir}/small.txt`], env).stdout, 'tiny\n');
+      await settle();
+      const small = mock.output().slice(start);
+      assert.match(small, /ai-remote exec: : cs-write/);
+      assert.match(small, /ai-remote exec: : cs-read/);
+      assert.doesNotMatch(small, /SFTP (上传|下载)/);
+      const big = `${'x'.repeat(99)}\n`.repeat(400);
+      assert.equal(cli(['write', '--stdin', id, `${dir}/forty-kb.txt`], env, big).code, 0);
+      assert.equal(cli(['read', id, `${dir}/forty-kb.txt`], env).stdout, big);
+      await settle();
+      const large = mock.output().slice(start + small.length);
+      assert.match(large, /SFTP 上传 .*forty-kb\.txt/);
+      assert.match(large, /SFTP 下载 .*forty-kb\.txt/);
+    });
+
     if (agent) {
       test('几 MB 的内容经后台进程照样写入、读回；后台进程留着会话', () => {
         const big = `${'0123456789abcdef'.repeat(64)}\n`.repeat(3 * 1024);

@@ -56,7 +56,7 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
   read <目标> <路径>            读文本文件（原样输出，最大 20MB，一次 2000 行：--offset 起始行、--limit 行数）
   write <目标> <路径>           写文件（最大 10MB）：内容来自 --stdin 或 --file <本机文件>；--append 追加、--create 只建新文件
   edit <目标> <路径> --old <原文> --new <新文>   精确替换（原文要唯一，--all 全部替换；--old-file / --new-file 从文件读）
-                                write、edit 改动已有文件要 --yes；都走 SFTP，不经过远端 shell 的引号
+                                write、edit 改动已有文件要 --yes；内容按数据传，不经过远端 shell 的引号
 
 设置
   alias [set <名字> <目标> | rm <名字>]   目标的别名

@@ -1,9 +1,11 @@
 /**
  * 服务器上的文件与后台任务（MCP 的 read_file / list_dir / write_file / edit_file / start_job / job_status）。
  *
- * 文件内容走 SFTP（与 upload / download 同一条通道）：不受命令输出 64KB 的限制，写入不经过 Shell 转义。
- * - 读：先查类型、大小与真实路径（跟随符号链接），再整个下载到内存（上限 20MB），按行切出要看的部分；二进制文件不读
- * - 写：先传到同目录的临时文件，再改名过去；覆盖已有文件时沿用原来的权限与属主（stat -c），符号链接写到它指向的文件
+ * 内容不经过 Shell 转义：小文件（读 32KB、写约 12KB 以内）在一条命令里带 base64 往返一次，大的走 SFTP（与 upload /
+ * download 同一条通道），都不受命令输出 64KB 的限制。
+ * - 读：查类型、大小与真实路径（跟随符号链接），小文件的内容同一条命令里一起回来，大的再整个下载到内存（上限 20MB），
+ *   按行切出要看的部分；二进制文件不读
+ * - 写：先写到同目录的临时文件，再改名过去；覆盖已有文件时沿用原来的权限与属主（stat -c），符号链接写到它指向的文件
  * - 改（精确替换）：读出来、在内存里替换、写回；写回前核对文件的 SHA-256 与读时一致，被别人改过就不写
  * - 二进制：按字节写（内容是 base64，可分段）；按字节读（readBytes）时把整个文件留在内存里一会儿，同一个文件分段读不用每段都重新下载
  * 后台任务：命令写进 ~/.cloudssh-jobs/<任务>.cmd，用 setsid nohup 在新会话里跑（断开连接、会话关闭都不影响），
@@ -12,6 +14,7 @@
 import type { ServerConfig } from '@cloudssh/core';
 import { createHash, randomBytes } from 'node:crypto';
 import { UsageError } from './config';
+import { remoteExec } from '../../ui-web/overrides/shared/ai-remote/session';
 import { openSftp, quote, run, shellPath } from './files';
 
 export const READ_MAX_BYTES = 20 * 1024 * 1024;
@@ -101,6 +104,24 @@ export interface BinaryFile {
 }
 
 /** 按字节读到的整个文件在内存里留 10 分钟：分段读同一个文件时只下载一次（每次先 stat，大小或修改时间变了就重下） */
+/**
+ * 小文件一次往返：读时类型、大小与内容（base64）在同一条命令里回来，写时内容（base64）与核对、改名在同一条命令里，
+ * 比先查一趟、再开 SFTP 传少一两趟。读最多 32KB（base64 之后放得进 64KB 的命令输出）；写看整条命令不超过约 19000 字符
+ * （会话层的上限是 20000）。服务器上没有 base64 时照旧走 SFTP
+ */
+const INLINE_READ_MAX = 32 * 1024;
+const INLINE_COMMAND_MAX = 19_000;
+/** heredoc 的结束行：带下划线，base64 里不会出现 */
+const B64_END = 'CS_B64_END';
+
+/** base64，每 76 个字符一行（命令里每行都不能太长） */
+function base64Lines(bytes: Uint8Array): string {
+  const text = Buffer.from(bytes).toString('base64');
+  let out = '';
+  for (let index = 0; index < text.length; index += 76) out += `${text.slice(index, index + 76)}\n`;
+  return out;
+}
+
 const BYTES_TTL_MS = 10 * 60_000;
 const BYTES_CACHE_MAX = 64 * 1024 * 1024;
 const bytesCache = new Map<string, BinaryFile & { at: number }>();
@@ -124,21 +145,59 @@ export function readBytes(server: ServerConfig, path: string, maxBytes = READ_MA
   return fetchBytes(server, path, maxBytes, TERMS.big);
 }
 
-/** readBytes 与 readText 共用：tooBig 是文件超过 maxBytes 时给的建议 */
+/** 给的路径 → 上次查到的真实路径（读之前就知道缓存里有没有这个文件，有就不用让服务器再把内容发一遍） */
+const resolvedPaths = new Map<string, string>();
+
+/**
+ * readBytes 与 readText 共用：tooBig 是文件超过 maxBytes 时给的建议。
+ * 一条命令查类型、大小、修改时间与真实路径；小文件且和缓存里的修改时间不一样时，内容也在这条命令里回来
+ */
 async function fetchBytes(server: ServerConfig, path: string, maxBytes: number, tooBig: string): Promise<BinaryFile> {
-  const info = await statRemote(server, path);
-  if (!info) throw new UsageError(`${path} does not exist on ${server.name}`);
+  const asked = `${server.id}\u0000${path}`;
+  const known = bytesCache.get(`${server.id}\u0000${resolvedPaths.get(asked) ?? path}`);
+  let output: string;
+  try {
+    output = await run(
+      server,
+      `: cs-read; p=${shellPath(path)}; if [ -d "$p" ]; then echo dir; elif [ -f "$p" ]; then echo file; else echo missing; exit 3; fi;` +
+        ` s=0; [ -f "$p" ] && s=$(wc -c < "$p" | tr -d ' ');` +
+        ` m=$({ stat -c '%y %i' -- "$p" 2>/dev/null || date -r "$p" +%s 2>/dev/null || echo; } | head -n 1);` +
+        ` r=$(readlink -f -- "$p" 2>/dev/null) || r=$(cd "$(dirname -- "$p")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$p")");` +
+        ` printf '%s\\n%s\\n%s\\n' "$s" "$m" "$r";` +
+        ` if [ -f "$p" ] && [ "$s" -gt 0 ] && [ "$s" -le ${Math.min(INLINE_READ_MAX, maxBytes)} ] && [ "$m" != ${quote(known?.info.mtime ?? '')} ] &&` +
+        ` command -v base64 >/dev/null 2>&1; then echo ==b64; base64 < "$p"; fi`
+    );
+  } catch (error) {
+    if (/missing|exit 3\b/.test((error as Error).message)) throw new UsageError(`${path} does not exist on ${server.name}`);
+    throw error;
+  }
+  const lines = output.replace(/^\n+/, '').split('\n').map((line) => line.trim());
+  const marker = lines.indexOf('==b64');
+  // 类型、大小、修改时间（拿不到时是空行）、真实路径
+  const info: RemoteFileInfo = { kind: lines[0] === 'dir' ? 'dir' : 'file', size: Number(lines[1]) || 0, mtime: lines[2] ?? '', path: lines[3] || path };
   if (info.kind === 'dir') throw new UsageError(`${info.path} is a directory${TERMS.dir}`);
   if (info.size > maxBytes) {
     throw new UsageError(`${info.path} is ${info.size} bytes, over the ${Math.round(maxBytes / 1048576)} MB limit: ${tooBig}`);
   }
+  if (resolvedPaths.size > 1000) resolvedPaths.clear();
+  resolvedPaths.set(asked, info.path);
   const key = `${server.id}\u0000${info.path}`;
   const cached = bytesCache.get(key);
   if (cached && info.mtime && cached.info.mtime === info.mtime && cached.info.size === info.size && Date.now() - cached.at < BYTES_TTL_MS) {
     rememberBytes(key, cached);
     return cached;
   }
-  const bytes = info.size ? await downloadBytes(server, info.path, maxBytes) : new Uint8Array();
+  let bytes: Uint8Array | null = null;
+  if (marker >= 0) {
+    try {
+      const decoded = decodeBase64(lines.slice(marker + 1).join('')).bytes;
+      // 大小对不上（读的时候正好被改了、输出不完整）就不用它，改走 SFTP
+      if (decoded.length === info.size) bytes = decoded;
+    } catch {
+      // 同上
+    }
+  }
+  bytes ??= info.size ? await downloadBytes(server, info.path, maxBytes) : new Uint8Array();
   const file = { info: { ...info, size: bytes.length }, bytes, sha256: sha256Hex(bytes) };
   if (info.mtime) rememberBytes(key, file);
   return file;
@@ -222,6 +281,19 @@ export async function writeText(
 ): Promise<WriteResult> {
   const bytes = typeof content === 'string' ? encoder.encode(content) : content;
   if (bytes.length > WRITE_MAX_BYTES) throw new UsageError(`Content is ${bytes.length} bytes, over the ${WRITE_MAX_BYTES / 1048576} MB limit: use upload or copy for large files`);
+  // 小文件一条命令写完；已有文件而还没得到同意时那条命令什么都不写，照旧问一下（MCP 报要 confirm，命令行报要 --yes
+  // 或在终端里问），同意了再写一次
+  const allowed = !options.mayOverwrite || allows(options.mayOverwrite, path);
+  let inline = await writeInline(server, path, bytes, mode, options.expectSha256, allowed);
+  if (inline && 'refused' in inline) {
+    if (!options.mayOverwrite?.(inline.refused)) throw new UsageError(`${inline.refused} already exists on ${server.name}; not written`);
+    inline = await writeInline(server, path, bytes, mode, options.expectSha256, true);
+  }
+  if (inline && !('refused' in inline)) {
+    forgetBytes(server, inline.path);
+    return inline;
+  }
+  // 放不进一条命令、服务器上没有 base64：先传到临时文件（SFTP），再核对、改名
   let exists = true;
   let dest = options.existing ?? '';
   if (!options.existing) {
@@ -271,6 +343,67 @@ export async function writeText(
     forgetBytes(server, dest);
   }
   return { path: dest, bytes: bytes.length, created: !exists };
+}
+
+/** 能不能动已有文件（不能时回调会抛出各自的说法，这里只要结果） */
+function allows(mayOverwrite: (path: string) => boolean, path: string): boolean {
+  try {
+    return mayOverwrite(path);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 一条命令写完（内容是 heredoc 里的 base64）：查落点、建目录、核对（create、是否允许改已有文件、SHA-256）、写临时文件、
+ * 沿用权限与属主、改名。放不进一条命令或服务器上没有 base64 时返回 null；已有文件而 allowed 为 false 时什么都不写，
+ * 返回 refused（真实路径）
+ */
+async function writeInline(
+  server: ServerConfig,
+  path: string,
+  bytes: Uint8Array,
+  mode: WriteMode,
+  expectSha256: string | undefined,
+  allowed: boolean
+): Promise<WriteResult | { refused: string } | null> {
+  const body = bytes.length ? `base64 -d > "$t" <<'${B64_END}' || { rm -f "$t"; exit 10; }\n${base64Lines(bytes)}${B64_END}\n` : ': > "$t" || exit 10;';
+  const finish =
+    mode === 'append'
+      ? ' cat "$t" >> "$f"; rc=$?; rm -f "$t"; [ $rc = 0 ] || exit 11;'
+      : ' if [ $e = 1 ]; then m=$(stat -c %a "$f" 2>/dev/null) && chmod "$m" "$t"; o=$(stat -c %u:%g "$f" 2>/dev/null) && chown "$o" "$t" 2>/dev/null; fi;' +
+        ' mv -f "$t" "$f" || { rm -f "$t"; exit 11; };';
+  const script =
+    `: cs-write; p=${shellPath(path)}; case "$p" in /*) ;; *) p="$PWD/$p";; esac; if [ -d "$p" ]; then echo dir; exit 4; fi;` +
+    ` mkdir -p -- "$(dirname -- "$p")" || exit 5; f=$(readlink -f -- "$p" 2>/dev/null) || f="$p";` +
+    ' command -v base64 >/dev/null 2>&1 || exit 6; e=0; [ -e "$f" ] && e=1;' +
+    (mode === 'create' ? ` if [ $e = 1 ]; then echo "already exists; not written"; printf '%s\\n' "$f"; exit 8; fi;` : '') +
+    (allowed ? '' : ` if [ $e = 1 ]; then echo exists; printf '%s\\n' "$f"; exit 7; fi;`) +
+    (expectSha256 ? ` [ -f "$f" ] && [ "$(sha256sum < "$f" | cut -c1-64)" = ${quote(expectSha256)} ] || { echo "modified since read; not written"; exit 9; };` : '') +
+    ` t="$f.cs-part-${randomBytes(4).toString('hex')}"; ${body}` +
+    finish +
+    ` echo "written $e"; printf '%s\\n' "$f"`;
+  if (script.length > INLINE_COMMAND_MAX) return null;
+  const result = await remoteExec(server.id, script, 60);
+  if (result.timedOut) throw new Error(`${server.name}: timed out`);
+  const lines = result.output.trim().split('\n').map((line) => line.trim());
+  const last = lines[lines.length - 1] ?? '';
+  switch (result.exitCode) {
+    case 0:
+      return { path: last, bytes: bytes.length, created: !/^written 1$/m.test(result.output) };
+    case 4:
+      throw new UsageError(`${path} is a directory`);
+    case 6:
+      return null;
+    case 7:
+      return { refused: last };
+    case 8:
+      throw new UsageError(`${last} already exists on ${server.name}; not written (${TERMS.create} only creates new files)`);
+    case 9:
+      throw new UsageError(`${path} changed after it was read; not written. Read it again, then edit.`);
+    default:
+      throw new Error(`${server.name}: ${lines.slice(-3).join(' ').slice(0, 300) || `exit ${result.exitCode ?? '?'}`}`);
+  }
 }
 
 // ---------- 分段写入 ----------

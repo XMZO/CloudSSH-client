@@ -1270,6 +1270,40 @@ function mockExec(cmd) {
   if (cmd.startsWith('echo ')) return ok(cmd.slice(5));
   if ((m = /^cat ([^\s]+)$/.exec(cmd)) && sftpTree.get(m[1])?.data) return ok(sftpTree.get(m[1]).data.toString('utf8'));
   if (cmd === 'printf %s "$HOME"') return ok('/root');
+  // read_file / cloudssh read 一次往返：类型、大小、修改时间、真实路径；小文件且修改时间与缓存里的不一样时带上 base64
+  if ((m = new RegExp(`^: cs-read; p=(${word});`).exec(cmd))) {
+    const path = shellWord(m[1]).replace(/\/+$/, '') || '/';
+    const node = sftpTree.get(path);
+    if (!node) return { output: 'missing', rc: 3 };
+    const mtime = `${node.mtime ?? 0}.000000000 +0000 ${node.inode ?? 1}`;
+    if (node.type === 'dir') return ok(`dir\n0\n${mtime}\n${path}`);
+    const data = node.data ?? Buffer.alloc(0);
+    const size = node.data ? data.length : node.size || 0;
+    const limit = Number(/\[ "\$s" -le (\d+) \]/.exec(cmd)?.[1] ?? 0);
+    const known = shellWord(/\[ "\$m" != ('(?:[^']|'\\'')*') \]/.exec(cmd)?.[1] ?? "''");
+    const inline = size > 0 && size <= limit && mtime !== known && node.data;
+    return ok(`file\n${size}\n${mtime}\n${path}${inline ? `\n==b64\n${data.toString('base64').replace(/(.{76})/g, '$1\n')}` : ''}`);
+  }
+  // write_file / edit_file / cloudssh write、edit 一次往返：内容在 heredoc 里（base64），核对、改名都在这一条
+  if ((m = new RegExp(`^: cs-write; p=(${word});`).exec(cmd))) {
+    let path = shellWord(m[1]);
+    if (!path.startsWith('/')) path = `/root/${path}`;
+    if (sftpTree.get(path)?.type === 'dir') return { output: 'dir', rc: 4 };
+    mkdirp(sftpParent(path));
+    const current = sftpTree.get(path);
+    if (current && cmd.includes('exit 8; fi;')) return { output: `already exists; not written\n${path}`, rc: 8 };
+    if (current && cmd.includes('exit 7; fi;')) return { output: `exists\n${path}`, rc: 7 };
+    const expected = /\| cut -c1-64\)" = '([0-9a-f]{64})'/.exec(cmd)?.[1];
+    if (expected && crypto.createHash('sha256').update(current?.data ?? Buffer.alloc(0)).digest('hex') !== expected) {
+      return { output: 'modified since read; not written', rc: 9 };
+    }
+    const body = /<<'CS_B64_END'[^\n]*\n([\s\S]*?)CS_B64_END\n/.exec(cmd)?.[1] ?? '';
+    const data = Buffer.from(body.replace(/\s+/g, ''), 'base64');
+    const next = cmd.includes('cat "$t" >> "$f"') ? Buffer.concat([current?.data ?? Buffer.alloc(0), data]) : data;
+    sftpPut(path, 'file', next.length, next);
+    sftpTree.get(path).inode = ++mockInode;
+    return ok(`written ${current ? 1 : 0}\n${path}`);
+  }
   // 传文件：查源（AI 的 copy 与命令行的 download 共用：都输出类型、[大小]、绝对路径）
   if ((m = new RegExp(`^p=(${word}); if \\[ -d`).exec(cmd))) {
     const path = shellWord(m[1]).replace(/\/+$/, '') || '/';
@@ -1792,6 +1826,12 @@ function attachShell(rawWs, url) {
         continue;
       }
       if (ch === '\r' || ch === '\n') {
+        // 后台会话的多行命令（heredoc 之类，换行在引号里）：像 Shell 一样接着收，直到这一条的结束标记
+        if (line.includes('\\137\\137CSBEG') && !line.includes('\\137\\137CSEND')) {
+          line += '\n';
+          pos = line.length;
+          continue;
+        }
         // 客户端 AI 跨服务器操作的后台会话（ai-remote）：命令带 \137\137CS 标记，按协议回应，不打印提示符
         if (line.includes('\\137\\137CS')) {
           mockRemoteLine(line, write);
@@ -1850,6 +1890,8 @@ function attachShell(rawWs, url) {
 
 // SFTP：内存里的小文件系统（所有连接共用），支持列目录、新建目录、上传、下载，够调试拖放上传/拖出下载
 const sftpTree = new Map();
+/** 一次往返写入时换一个 inode：修改时间只到秒，同一秒里改两次也能看出变了（不然会读到缓存里的旧内容） */
+let mockInode = 1000;
 function sftpPut(path, type, size = 0, data = null) {
   sftpTree.set(path, { type, size, data, mtime: Math.floor(now / 1000) - 3600 });
 }

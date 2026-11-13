@@ -395,7 +395,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
         `Each result is capped at ${kb(outputLimit)}: longer output keeps its beginning and end with the middle left out (beyond ${kb(REMOTE_OUTPUT_LIMIT)} only the end survives). Filter with grep, tail, head or wc, or redirect to a file and page through it with read_file.`,
         readOnly
           ? 'Read files with read_file (exact text, up to 20 MB) rather than cat.'
-          : 'Read and change files with read_file, write_file and edit_file rather than cat, heredocs, sed -i or scripts: they work over SFTP, with no shell quoting.',
+          : 'Read and change files with read_file, write_file and edit_file rather than cat, heredocs, sed -i or scripts: they move the content as data, with no shell quoting.',
         readOnly
           ? READ_ONLY_DOC
           : fullAccess
@@ -417,7 +417,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       name: 'read_file',
       title: 'Read a file',
       description:
-        `Read a file on one server over SFTP (not limited by command output; up to 20 MB). Text comes back with line numbers (like cat -n), at most ${kb(outputLimit)} per call: use offset / limit (lines) for the rest; prefer this over exec cat for files you will edit.` +
+        `Read a file on one server byte for byte (not limited by command output; up to 20 MB). Text comes back with line numbers (like cat -n), at most ${kb(outputLimit)} per call: use offset / limit (lines) for the rest; prefer this over exec cat for files you will edit.` +
         ` Images (PNG, JPEG, GIF, WebP, up to ${IMAGE_MAX_MB} MB) come back as images you can view; shrink large ones on the server first while keeping the detail you need legible (${SHRINK_HINT}; PNG or WebP for text and UI), then read the smaller copy.` +
         ` Any file, binary included: encoding base64 returns the raw bytes as base64, and offset / limit then count bytes (at most ${kb(base64ChunkMax())} of file per call); each answer gives the total size, the next offset and the SHA-256 of the whole file to verify what you put together.`,
       inputSchema: {
@@ -454,7 +454,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       name: 'write_file',
       title: 'Write a file',
       description:
-        'Write a file on one server over SFTP: no shell quoting or heredoc needed. content is text (UTF-8), or with encoding base64 the raw bytes of any file (archives, images, binaries). mode overwrite (default) replaces the file atomically and keeps its permissions and owner; append adds to the end; create refuses if the file exists. Missing parent directories are created; symlinks are written through to their target. Up to 10 MB.' +
+        'Write a file on one server; the content travels as data, so no shell quoting or heredoc is needed. content is text (UTF-8), or with encoding base64 the raw bytes of any file (archives, images, binaries). mode overwrite (default) replaces the file atomically and keeps its permissions and owner; append adds to the end; create refuses if the file exists. Missing parent directories are created; symlinks are written through to their target. Up to 10 MB.' +
         ` Long content (more than about ${PART_HINT_KB} KB, e.g. a big script or any sizeable base64) must not go into one call, since clients limit how long a single tool call can be: split it into consecutive pieces and send them in order with part = 1, 2, … and the same parts (total), path, mode and encoding (base64 text may be split anywhere). The pieces are collected next to the file and the file is written only when the last part arrives, so an interrupted upload leaves the original untouched; a wrong order or a restart means starting again from part 1.` +
         writeConfirm,
       inputSchema: {
@@ -695,7 +695,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     `exec runs a non-interactive shell; every tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. Batch independent read-only checks for one server into one exec, each part headed by \`echo '== …'\` and joined with \`;\`. Run anything longer than a minute or two with start_job and poll job_status.`,
     readOnly
       ? 'Files: read them with read_file (shows images; encoding: base64 for any binary) and list_dir, not with cat in exec.'
-      : `Files: read and change them with read_file, write_file and edit_file (exact text replacement), not with cat, sed -i, heredocs or scripts in exec: these work over SFTP, so there is no shell quoting to get wrong. read_file shows images and takes encoding: base64 for any binary; list_dir lists a directory; send write_file content over about ${PART_HINT_KB} KB in pieces (part / parts). ` +
+      : `Files: read and change them with read_file, write_file and edit_file (exact text replacement), not with cat, sed -i, heredocs or scripts in exec: these move the content as data, so there is no shell quoting to get wrong. read_file shows images and takes encoding: base64 for any binary; list_dir lists a directory; send write_file content over about ${PART_HINT_KB} KB in pieces (part / parts). ` +
         (remote ? 'copy moves files between servers.' : 'upload / download move files between this computer and a server; copy moves them between servers.'),
     readOnly
       ? 'server_notes (read) shows what CloudSSH knows about a server (credentials, config locations, rules, recent work); snippets (list) shows the saved command snippets.'
