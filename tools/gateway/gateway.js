@@ -887,6 +887,9 @@ async function syncServers(env, pair, lists, dry, errors) {
     const a = nowA.get(copy.a);
     const b = nowB.get(copy.b);
     if (a && b) next.push({ a: a.id, b: b.id, ua: a.updated_at, ub: b.updated_at, stale: 0 });
+    // 同步途中一边被删了（这一轮开头读的列表里还在，抄完重新读时已经没了）：照样记下对照，下一轮把另一边这份也删掉。
+    // 不记的话，另一边这份成了没有对照的“新条目”，下一轮又被抄回来，删掉的服务器复活
+    else if (a || b) next.push({ a: copy.a, b: copy.b, ua: a?.updated_at ?? '', ub: b?.updated_at ?? '', stale: 0 });
   }
   for (const copy of failed) {
     const old = copy.b != null ? oldRows.get(copy.b) : null;
@@ -955,6 +958,8 @@ async function syncSnippets(env, pair, lists, dry, errors) {
     const a = nowA.get(copy.a);
     const b = nowB.get(copy.b);
     if (a && b) next.push({ a: a.id, b: b.id, ua: a.updated_at, ub: b.updated_at });
+    // 同步途中一边被删了：照样记下对照，下一轮把另一边这份也删掉（见 syncServers 的同一处）
+    else if (a || b) next.push({ a: copy.a, b: copy.b, ua: a?.updated_at ?? '', ub: b?.updated_at ?? '' });
   }
   await replaceMap(env, pair.node, 'snippet', next);
   return summary;

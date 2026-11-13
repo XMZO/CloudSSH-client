@@ -92,6 +92,18 @@ describe('planServers：已经对照过', () => {
   });
 });
 
+describe('同步途中一边被删了', () => {
+  // 一轮同步开头读到的条目在抄完之后已被删掉：网关照样记下对照（消失那边的 updated_at 记成空串），下一轮应把另一边的副本删掉，而不是当成新条目抄回去
+  test('命令片段：对照还在、B 那边没了、A 的副本没改过 → 删 A，不抄回 B', () => {
+    const plan = planSnippets([{ id: 7, name: '自检', command: 'echo', updated_at: T1 }], [], [{ a: 7, b: 18, ua: T1, ub: '' }]);
+    assert.deepEqual(brief(plan), { keep: [], copies: [], deletes: [['A', 7]] });
+  });
+  test('服务器：同样删掉另一边的副本', () => {
+    const plan = planServers([server(30)], [], [{ a: 30, b: 40, ua: T1, ub: '' }]);
+    assert.deepEqual(brief(plan), { keep: [], copies: [], deletes: [['A', 30]] });
+  });
+});
+
 describe('防误删', () => {
   test('少量删除放行；一下删很多（像读回了空列表）拒绝', () => {
     assert.equal(deletesLookSafe([{ side: 'A', id: 1 }], 87, 87), true);
