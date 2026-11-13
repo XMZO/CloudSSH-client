@@ -27,13 +27,33 @@ import type { ServerConfig } from '@cloudssh/core';
 import { CLIENT_VERSION } from '@cloudssh/core';
 import os from 'node:os';
 import { closeRemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
+import { HeadlessSftp } from '../../ui-web/overrides/shared/ai-remote/sftp';
 import { loadConfig, OUTPUT_LIMIT_KB, UsageError, type CliConfig } from './config';
 import { commandVerdict, outcomeOk, outcomeStatus, runExec, type ExecOutcome } from './exec';
 import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes, localPath, progressText, shellPath, upload, type Progress } from './files';
 import { userGuidance } from './install';
 import { ApiError } from './net';
 import { readOnlyCheck } from './readonly';
-import { editText, jobStatus, listDir, numberLines, readText, startJob, writeText, writeTextPart, type WriteMode } from './remote-files';
+import {
+  addWorkLog,
+  createServer,
+  deleteNote,
+  deleteServer,
+  deleteSnippet,
+  describeServer,
+  formatNotes,
+  formatSnippet,
+  listSnippets,
+  NOTE_CATEGORIES,
+  readNotes,
+  REGIONS,
+  saveSnippet,
+  setNote,
+  updateServer,
+  type NoteCategory,
+  type ServerInput,
+} from './manage';
+import { decodeBase64, editText, jobStatus, listDir, numberLines, readBytes, startJob, writeText, writeTextPart, type WriteMode } from './remote-files';
 import { activeInstance, filterServers, formatServerRow, hostId, loadServers, resolveSingle, resolveTargets } from './targets';
 
 /** 认识的协议版本，新的在前 */
@@ -53,6 +73,10 @@ export function outputLimitOf(config: CliConfig | null): number {
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
 /** 写文件时建议每段最多这么多 KB：AI 客户端对单次工具调用的长度有上限，大脚本一次写不下 */
 const PART_HINT_KB = 8;
+/** read_file 把图片交给模型看的大小上限 */
+const IMAGE_MAX_MB = 5;
+/** read_file 用 base64 时每次最多读多少字节：base64 之后连同说明放得进一次结果 */
+const base64ChunkMax = () => Math.max(3, Math.floor((outputLimit - 1024) / 4) * 3);
 /** 命令输出被截断时，告诉模型怎么拿到完整的 */
 const FULL_OUTPUT_HINT = '要看完整输出：在命令后加 > /tmp/out.log 2>&1，再用 read_file 分段读（offset / limit），或用 grep / tail / head 过滤';
 const SERVER_CACHE_MS = 15_000;
@@ -247,6 +271,8 @@ interface CallContext {
 interface ToolOutput {
   text: string;
   isError?: boolean;
+  /** 附带的图片（read_file 读到图片时）：客户端会把它交给模型看 */
+  images?: { data: string; mimeType: string }[];
 }
 
 const TARGET_DOC =
@@ -271,10 +297,13 @@ const READ_ONLY_DOC =
 export type RemoteAccess = 'full' | 'ask' | 'read-only';
 export const REMOTE_ACCESS: RemoteAccess[] = ['full', 'ask', 'read-only'];
 
-const READ_TOOLS = ['list_servers', 'exec', 'read_file', 'list_dir', 'start_job', 'job_status'];
+/** 只读时也有的工具（snippets、server_notes 只读时只能查看） */
+const READ_TOOLS = ['list_servers', 'exec', 'read_file', 'list_dir', 'start_job', 'job_status', 'snippets', 'server_notes'];
+/** 远程模式下改东西的工具：只读时没有 */
+const WRITE_TOOLS = ['write_file', 'edit_file', 'copy', 'add_server', 'update_server', 'delete_server'];
 
 function remoteTools(remote: RemoteOptions): string[] {
-  return remote.access === 'read-only' ? READ_TOOLS : [...READ_TOOLS, 'write_file', 'edit_file', 'copy'];
+  return remote.access === 'read-only' ? READ_TOOLS : [...READ_TOOLS, ...WRITE_TOOLS];
 }
 
 /** 危险命令按哪种确认方式：远程模式看 access，本机看 config.json */
@@ -312,6 +341,21 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
     ? ''
     : ' Overwriting or changing an existing file needs confirm: true: ask the user first.';
   const one = { type: 'string', description: 'One server: host ID (srv-12), name or alias' };
+  // add_server / update_server 共用的服务器字段
+  const serverProperties: Json = {
+    host: { type: 'string', description: 'IP address or domain name' },
+    port: { type: 'integer', minimum: 1, maximum: 65535, description: 'SSH port (default 22)' },
+    username: { type: 'string', description: 'Login user (default root)' },
+    auth: { type: 'string', enum: ['password', 'key', 'none'], description: 'How to log in (default: password if password is given, key if private_key is given)' },
+    password: { type: 'string', description: 'Login password (may be empty)' },
+    private_key: { type: 'string', description: 'Private key, the full text from -----BEGIN … PRIVATE KEY----- (without a passphrase)' },
+    tags: { type: 'array', items: { type: 'string' }, description: 'Tags (the groups in the CloudSSH list), at most 10' },
+    jump: { type: 'string', description: 'Connect through this saved server (host ID or name); "" for none' },
+    tunnel_host: { type: 'string', description: 'Cloudflare tunnel hostname such as ssh.example.com ("" for a direct connection)' },
+    access_client_id: { type: 'string', description: 'Cloudflare Access service token: client ID (tunnel protected by Access)' },
+    access_client_secret: { type: 'string', description: 'Cloudflare Access service token: client secret' },
+    region: { type: 'string', enum: [...REGIONS], description: 'Where CloudSSH runs the SSH session (a Cloudflare region); auto picks one near the server' },
+  };
   if (readOnly) {
     delete execProperties.confirm;
     execProperties.command = { type: 'string', description: 'A read-only shell command (see the tool description for what is allowed)' };
@@ -327,6 +371,10 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
         properties: {
           query: { type: 'string', description: 'Case-insensitive match on name, host ID, tags or OS' },
           tag: { type: 'string', description: 'Only servers with a tag containing this text' },
+          details: {
+            type: 'boolean',
+            description: 'Also show address and port, login user, auth method, jump host or tunnel, region and last connection (never credentials)',
+          },
         },
         additionalProperties: false,
       },
@@ -361,14 +409,17 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       name: 'read_file',
       title: 'Read a file',
       description:
-        'Read a text file on one server, with line numbers (like cat -n). Transferred over SFTP, so it is not limited by command output; up to 20 MB, at most ' + kb(outputLimit) + ' of numbered lines per call: use offset / limit for the rest. Binary files are refused. Prefer this over exec cat for files you will edit.',
+        `Read a file on one server over SFTP (not limited by command output; up to 20 MB). Text comes back with line numbers (like cat -n), at most ${kb(outputLimit)} per call: use offset / limit (lines) for the rest; prefer this over exec cat for files you will edit.` +
+        ` Images (PNG, JPEG, GIF, WebP up to ${IMAGE_MAX_MB} MB) come back as images you can look at.` +
+        ` Any file, binary included: encoding base64 returns the raw bytes as base64, and offset / limit then count bytes (at most ${kb(base64ChunkMax())} of file per call); each answer gives the total size, the next offset and the SHA-256 of the whole file to verify what you put together.`,
       inputSchema: {
         type: 'object',
         properties: {
           target: one,
           path: { type: 'string', description: 'File path; relative paths start in the login user\'s home directory, ~ works' },
-          offset: { type: 'integer', minimum: 1, description: 'First line to show (default 1)' },
-          limit: { type: 'integer', minimum: 1, maximum: 20000, description: 'How many lines to show (default 2000)' },
+          offset: { type: 'integer', minimum: 0, description: 'Text: first line to show (default 1). base64: first byte (default 0)' },
+          limit: { type: 'integer', minimum: 1, maximum: 1048576, description: 'Text: how many lines (default 2000, at most 20000). base64: how many bytes (default and maximum: what fits in one answer)' },
+          encoding: { type: 'string', enum: ['text', 'base64'], description: 'text (default; images come back as images) or base64 for the raw bytes of any file' },
         },
         required: ['target', 'path'],
         additionalProperties: false,
@@ -395,16 +446,17 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       name: 'write_file',
       title: 'Write a file',
       description:
-        'Write text (UTF-8) to a file on one server over SFTP: no shell quoting or heredoc needed. mode overwrite (default) replaces the file atomically and keeps its permissions and owner; append adds to the end; create refuses if the file exists. Missing parent directories are created; symlinks are written through to their target. Up to 10 MB.' +
-        ` Long content (more than about ${PART_HINT_KB} KB, e.g. a big script) must not go into one call, since clients limit how long a single tool call can be: split it into consecutive pieces and send them in order with part = 1, 2, … and the same parts (total), path and mode. The pieces are collected next to the file and the file is written only when the last part arrives, so an interrupted upload leaves the original untouched; a wrong order or a restart means starting again from part 1.` +
+        'Write a file on one server over SFTP: no shell quoting or heredoc needed. content is text (UTF-8), or with encoding base64 the raw bytes of any file (archives, images, binaries). mode overwrite (default) replaces the file atomically and keeps its permissions and owner; append adds to the end; create refuses if the file exists. Missing parent directories are created; symlinks are written through to their target. Up to 10 MB.' +
+        ` Long content (more than about ${PART_HINT_KB} KB, e.g. a big script or any sizeable base64) must not go into one call, since clients limit how long a single tool call can be: split it into consecutive pieces and send them in order with part = 1, 2, … and the same parts (total), path, mode and encoding (base64 text may be split anywhere). The pieces are collected next to the file and the file is written only when the last part arrives, so an interrupted upload leaves the original untouched; a wrong order or a restart means starting again from part 1.` +
         writeConfirm,
       inputSchema: {
         type: 'object',
         properties: {
           target: one,
           path: { type: 'string', description: 'File path; relative paths start in the login user\'s home directory' },
-          content: { type: 'string', description: `The text to write (or to append); with parts, just this piece (keep each piece under about ${PART_HINT_KB} KB)` },
+          content: { type: 'string', description: `The text (or base64) to write or append; with parts, just this piece (keep each piece under about ${PART_HINT_KB} KB)` },
           mode: { type: 'string', enum: ['overwrite', 'append', 'create'], description: 'Default overwrite' },
+          encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'utf8 (default): content is text. base64: content is base64 of the raw bytes' },
           part: { type: 'integer', minimum: 1, maximum: 1000, description: 'Which piece this is (1-based), when sending long content in pieces' },
           parts: { type: 'integer', minimum: 1, maximum: 1000, description: 'How many pieces in total (same in every call)' },
           ...(fullAccess ? {} : { confirm: { type: 'boolean', description: 'Set to true only after the user agreed to change an existing file' } }),
@@ -473,6 +525,101 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       annotations: { title: 'Background job status', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     {
+      name: 'add_server',
+      title: 'Add a server',
+      description:
+        'Save a new server in CloudSSH (the same list the CloudSSH app and website show) and return its host ID. Give the login password, or the private key (full text, without a passphrase): CloudSSH stores it encrypted and never shows it again. For a server that is only reachable through another saved server give jump; for a Cloudflare tunnel give tunnel_host (plus the Access service token when the tunnel is protected). Afterwards check the connection with exec, e.g. `uname -a`.',
+      inputSchema: {
+        type: 'object',
+        properties: { ...serverProperties, name: { type: 'string', description: 'Display name' } },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Add a server', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    {
+      name: 'update_server',
+      title: 'Change a server',
+      description:
+        'Change a server saved in CloudSSH; only the fields you give change. Leave password / private_key out to keep the stored credential; switching auth needs the new credential. tags replaces all tags, add_tags / remove_tags change some. jump "" removes the jump host; tunnel_host "" goes back to a direct connection. Changing host or port makes CloudSSH detect the OS again.' +
+        (fullAccess ? '' : ' Needs confirm: true: tell the user what will change and ask first.'),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          ...serverProperties,
+          name: { type: 'string', description: 'New display name' },
+          add_tags: { type: 'array', items: { type: 'string' }, description: 'Tags to add' },
+          remove_tags: { type: 'array', items: { type: 'string' }, description: 'Tags to remove' },
+          ...(fullAccess ? {} : { confirm: { type: 'boolean', description: 'Set to true only after the user agreed to this change' } }),
+        },
+        required: ['target'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Change a server', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'delete_server',
+      title: 'Delete a server',
+      description:
+        'Delete a server from CloudSSH together with its stored credentials and notes; this cannot be undone. Only when the user explicitly asked to delete this server: then pass confirm: true. A server that others use as their jump host cannot be deleted until they stop using it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          confirm: { type: 'boolean', description: 'Must be true: the user explicitly asked to delete this server' },
+        },
+        required: ['target', 'confirm'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Delete a server', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'snippets',
+      title: 'Command snippets',
+      description:
+        'The command snippets saved in CloudSSH (shown next to the terminal in the CloudSSH app and website, where the user fills in {{name}} placeholders and runs them). action list (optional query), save (new, or an existing one with id; name at most 50 characters, command at most 2000, optional category) or delete (id).' +
+        (readOnly ? ' Read-only mode: only list.' : fullAccess ? '' : ' delete needs confirm: true: ask the user first.'),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'save', 'delete'] },
+          query: { type: 'string', description: 'list: case-insensitive match on name, command or category' },
+          id: { type: 'string', description: 'save: the snippet to change (omit for a new one); delete: the snippet to delete' },
+          name: { type: 'string', description: 'save: short name' },
+          command: { type: 'string', description: 'save: the command; {{name}} marks a placeholder the user fills in' },
+          category: { type: 'string', description: 'save: optional group name' },
+          ...(readOnly || fullAccess ? {} : { confirm: { type: 'boolean', description: 'delete: true only after the user agreed' } }),
+        },
+        required: ['action'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Command snippets', readOnlyHint: readOnly, destructiveHint: !readOnly, idempotentHint: false, openWorldHint: false },
+    },
+    {
+      name: 'server_notes',
+      title: 'Server notes',
+      description:
+        'Notes CloudSSH keeps per server and shares with its built-in AI assistant: knowledge (category credential, config, rule or note; key → value, e.g. a database password, where the config lives, how a service must be restarted) and a short work log. action read shows them; set saves one knowledge item (the same key replaces it; key at most 64 characters, value at most 16384); delete removes one by key; log adds a work log entry (title at most 64 characters, summary at most 300). Read the notes before working on a server you do not know, and record what a later session should know.' +
+        (readOnly ? ' Read-only mode: only read.' : fullAccess ? '' : ' delete needs confirm: true: ask the user first.'),
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: one,
+          action: { type: 'string', enum: ['read', 'set', 'delete', 'log'] },
+          category: { type: 'string', enum: [...NOTE_CATEGORIES], description: 'set: kind of knowledge (default note)' },
+          key: { type: 'string', description: 'set / delete: the knowledge key' },
+          value: { type: 'string', description: 'set: the value' },
+          title: { type: 'string', description: 'log: what was done, in a few words' },
+          summary: { type: 'string', description: 'log: the result and anything worth knowing next time' },
+          ...(readOnly || fullAccess ? {} : { confirm: { type: 'boolean', description: 'delete: true only after the user agreed' } }),
+        },
+        required: ['target', 'action'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Server notes', readOnlyHint: readOnly, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    {
       name: 'upload',
       title: 'Upload',
       description: `Upload a file or directory from this computer to one server (directories are packed with tar). Destinations follow scp: an existing directory, or a path ending in /, receives the item under its own name; otherwise the path is the final name. Existing files are overwritten. Relative local paths resolve against ${cwd}; ~ is the user's home directory.`,
@@ -539,6 +686,10 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
       'For files use read_file / list_dir' +
         (remote.access === 'read-only' ? '' : ' / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text)') +
         `; write long content (more than about ${PART_HINT_KB} KB) with write_file in pieces (part / parts) instead of one huge call; for anything that runs longer than a minute or two use start_job and check it with job_status.`,
+      'read_file shows images; for any other binary file read_file / write_file take encoding: base64 (in pieces), so you can bring files from your side to a server and back; copy moves files between servers directly.',
+      remote.access === 'read-only'
+        ? 'server_notes (read) shows what CloudSSH knows about a server (credentials, config locations, rules, recent work); snippets (list) shows the saved command snippets.'
+        : 'CloudSSH itself: add_server / update_server / delete_server manage the saved servers, snippets the saved command snippets, server_notes the per-server knowledge and work log that CloudSSH\'s own AI assistant also uses: read them before working on an unfamiliar server and record what the next session should know.',
       remote.access === 'read-only'
         ? READ_ONLY_DOC
         : remote.access === 'full'
@@ -552,7 +703,8 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     `These tools work on the servers the user saved in CloudSSH${origin ? ` (${origin})` : ''}, through the CloudSSH server: it signs in with the stored credentials and handles jump hosts and Cloudflare tunnels.`,
     'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
     `Commands run in a non-interactive shell; each tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. ` + 'Ask the user before risky commands and pass confirm: true only after they agree.',
-    `For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text; long content, more than about ${PART_HINT_KB} KB, goes in pieces with part / parts); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.`,
+    `For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text; long content, more than about ${PART_HINT_KB} KB, goes in pieces with part / parts; read_file shows images, encoding: base64 handles any binary); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.`,
+    'CloudSSH itself: add_server / update_server / delete_server manage the saved servers, snippets the saved command snippets, server_notes the per-server knowledge and work log that CloudSSH\'s own AI assistant also uses.',
     'If a tool reports that the login expired or no instance is signed in, ask the user to run `cloudssh login` in a terminal, or to turn on "同步登录给命令行" in the CloudSSH desktop app.',
   ].join('\n');
   return base + (config ? userGuidance(config, '`confirm: true`') : '');
@@ -570,13 +722,18 @@ interface Inflight {
 
 export class McpServer {
   private cache: { key: string; at: number; servers: ServerConfig[] } | null = null;
+  /** 远程模式下排除的服务器（不能当目标；报错时说明原因用） */
+  private excluded: ServerConfig[] = [];
   private readonly inflight = new Map<string, Inflight>();
 
   constructor(
     private readonly instance: string | undefined,
     private readonly send: (message: unknown) => void,
     private readonly remote?: RemoteOptions
-  ) {}
+  ) {
+    // 常驻进程：SFTP 通道用完先留 15 秒，接连读写同一台的文件不用每次都重新打开（每次要几秒）
+    HeadlessSftp.keepAliveMs = 15_000;
+  }
 
   /** 处理一条消息（单条或批量）；要回复的通过 send 发出 */
   async handle(message: unknown): Promise<void> {
@@ -702,7 +859,7 @@ export class McpServer {
     try {
       const output = await run(args, context);
       if (state.cancelled) return CANCELLED;
-      return toolResult(output.text, !!output.isError);
+      return toolResult(output.text, !!output.isError, output.images);
     } catch (error) {
       if (state.cancelled) return CANCELLED;
       if (error instanceof ApiError && error.status === 401) this.cache = null;
@@ -721,7 +878,9 @@ export class McpServer {
     const key = `${origin}\n${session}`;
     if (!fresh && this.cache?.key === key && Date.now() - this.cache.at < SERVER_CACHE_MS) return { config, servers: this.cache.servers };
     const exclude = this.remote?.exclude;
-    const servers = (await loadServers()).filter((server) => !exclude?.has(server.id));
+    const all = await loadServers();
+    const servers = all.filter((server) => !exclude?.has(server.id));
+    this.excluded = all.filter((server) => exclude?.has(server.id));
     this.cache = { key, at: Date.now(), servers };
     return { config, servers };
   }
@@ -765,9 +924,15 @@ export class McpServer {
     list_servers: async (args) => {
       const query = optString(args, 'query');
       const tag = optString(args, 'tag');
+      const details = optBool(args, 'details');
       const { servers } = await this.prepare(true);
       const rows = filterServers(servers, query, tag);
       if (!rows.length) return { text: servers.length ? '（没有匹配的服务器）' : '（还没有保存任何服务器）' };
+      if (details) {
+        const byId = new Map(servers.map((server) => [hostId(server), server]));
+        const blocks = rows.map((row) => describeServer(byId.get(row.id)!, servers));
+        return { text: bounded(`共 ${rows.length} 台（主机 ID、名称；用户@地址、认证方式、线路；标签、系统、区域、最近连接）\n${blocks.join('\n')}`) };
+      }
       return { text: bounded(`共 ${rows.length} 台（主机 ID、名称、[标签]、系统、线路）\n${rows.map(formatServerRow).join('\n')}`) };
     },
 
@@ -778,7 +943,7 @@ export class McpServer {
       const cwd = optString(args, 'cwd');
       const confirm = optBool(args, 'confirm');
       const { config, servers } = await this.prepare();
-      const targets = resolveTargets(target, servers, config);
+      const targets = this.many(target, servers, config);
       this.allowCommand('exec', command, confirm, config, targets);
       context.use(targets);
       const timeout = timeoutArg ?? config.timeout;
@@ -799,15 +964,42 @@ export class McpServer {
     read_file: async (args, context) => {
       const target = reqString(args, 'target');
       const path = reqString(args, 'path');
-      const offset = optInt(args, 'offset', 1, Number.MAX_SAFE_INTEGER) ?? 1;
-      const limit = optInt(args, 'limit', 1, 20000) ?? 2000;
+      const encoding = optString(args, 'encoding') ?? 'text';
+      if (encoding !== 'text' && encoding !== 'base64') throw new ToolError('encoding 只能是 text 或 base64');
+      const offsetArg = optInt(args, 'offset', 0, Number.MAX_SAFE_INTEGER);
+      const limitArg = optInt(args, 'limit', 1, 1048576);
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
-      this.audit(`read_file ${hostId(server)}:${path}`);
-      const file = await readText(server, path);
-      const { body, total, from, to } = numberLines(file.text, offset, limit);
-      const head = `${hostId(server)} ${server.name}:${file.info.path}（${formatBytes(file.info.size)}，共 ${total} 行${total ? `，第 ${from}–${to} 行` : ''}）`;
+      this.audit(`read_file ${hostId(server)}:${path}${encoding === 'base64' ? '（base64）' : ''}`);
+      const file = await readBytes(server, path);
+      const where = `${hostId(server)} ${server.name}:${file.info.path}`;
+      if (encoding === 'base64') {
+        const size = file.bytes.length;
+        const from = Math.min(offsetArg ?? 0, size);
+        const to = Math.min(size, from + Math.min(limitArg ?? Number.MAX_SAFE_INTEGER, base64ChunkMax()));
+        const data = Buffer.from(file.bytes.subarray(from, to)).toString('base64');
+        const next = to < size ? `还有 ${size - to} 字节：offset: ${to}` : '已到末尾';
+        return { text: `${where}（${size} 字节，整个文件的 SHA-256 ${file.sha256}）第 ${from}–${to} 字节的 base64（${next}）：\n${data}` };
+      }
+      const image = imageType(file.bytes);
+      if (image) {
+        if (file.bytes.length > IMAGE_MAX_MB * 1024 * 1024) {
+          throw new ToolError(`${where} 是图片（${formatBytes(file.bytes.length)}），超过 ${IMAGE_MAX_MB}MB 不直接给你看：先在服务器上缩小（convert -resize），或用 encoding: base64 分段取`);
+        }
+        return {
+          text: `${where}（${image.replace('image/', '').toUpperCase()} 图片，${formatBytes(file.bytes.length)}）`,
+          images: [{ data: Buffer.from(file.bytes).toString('base64'), mimeType: image }],
+        };
+      }
+      if (file.bytes.subarray(0, 8192).includes(0)) {
+        throw new ToolError(`${where} 是二进制文件（${file.bytes.length} 字节）：要原样拿到内容用 encoding: base64（每次最多 ${kb(base64ChunkMax())}）；只想看看是什么用 exec 配合 file、strings、xxd`);
+      }
+      const text = decoder.decode(file.bytes);
+      const offset = Math.max(1, offsetArg ?? 1);
+      const limit = Math.min(limitArg ?? 2000, 20000);
+      const { body, total, from, to } = numberLines(text, offset, limit);
+      const head = `${where}（${formatBytes(file.info.size)}，共 ${total} 行${total ? `，第 ${from}–${to} 行` : ''}）`;
       const more = to < total ? `\n（还有第 ${to + 1}–${total} 行：offset: ${to + 1}）` : '';
       return { text: boundedLines(`${head}\n${body || '（空文件）'}`, more) };
     },
@@ -817,7 +1009,7 @@ export class McpServer {
       const path = optString(args, 'path')?.trim() || '~';
       const all = optBool(args, 'all');
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
       const listing = (await listDir(server, path, all)).replace(/\n+$/, '');
       const lines = listing.split('\n');
@@ -832,17 +1024,19 @@ export class McpServer {
       if (content === undefined) throw new ToolError('缺少参数 content');
       const mode = (optString(args, 'mode') ?? 'overwrite') as WriteMode;
       if (!['overwrite', 'append', 'create'].includes(mode)) throw new ToolError('mode 只能是 overwrite、append、create');
+      const encoding = optString(args, 'encoding') ?? 'utf8';
+      if (encoding !== 'utf8' && encoding !== 'base64') throw new ToolError('encoding 只能是 utf8 或 base64');
       const confirm = optBool(args, 'confirm');
       const part = optInt(args, 'part', 1, 1000);
       const parts = optInt(args, 'parts', 1, 1000);
       if ((part === undefined) !== (parts === undefined)) throw new ToolError('part 和 parts 要一起给');
       if (part !== undefined && parts !== undefined && part > parts) throw new ToolError(`part（${part}）不能大于 parts（${parts}）`);
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
       if (part !== undefined && parts !== undefined && parts > 1) {
         // 要不要确认只在第 1 段判断，后面的段接着写
-        const piece = await writeTextPart(server, path, content, part, parts, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
+        const piece = await writeTextPart(server, path, content, part, parts, mode, { mayOverwrite: this.mayChange(config, confirm, server), encoding });
         if (!piece.done) {
           return { text: `已收到 ${hostId(server)} ${server.name}:${piece.path} 的第 ${piece.received}/${parts} 段（共 ${formatBytes(piece.bytes)}），接着发第 ${piece.received + 1} 段；最后一段到了才写进文件` };
         }
@@ -850,8 +1044,9 @@ export class McpServer {
         const verb = mode === 'append' && !piece.created ? '追加到' : piece.created ? '新建' : '覆盖';
         return { text: `已${verb} ${hostId(server)} ${server.name}:${piece.path}（${parts} 段，共 ${formatBytes(piece.bytes)}）` };
       }
-      const result = await writeText(server, path, content, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
-      this.audit(`write_file ${hostId(server)}:${result.path}（${mode}，${result.bytes} 字节）`);
+      const data = encoding === 'base64' ? decodeBase64(content).bytes : content;
+      const result = await writeText(server, path, data, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
+      this.audit(`write_file ${hostId(server)}:${result.path}（${mode}，${result.bytes} 字节${encoding === 'base64' ? '，base64' : ''}）`);
       const action = mode === 'append' && !result.created ? '追加到' : result.created ? '新建' : '覆盖';
       return { text: `已${action} ${hostId(server)} ${server.name}:${result.path}（${formatBytes(result.bytes)}）` };
     },
@@ -865,7 +1060,7 @@ export class McpServer {
       const replaceAll = optBool(args, 'replace_all');
       const confirm = optBool(args, 'confirm');
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
       const result = await editText(server, path, oldText, newText, replaceAll, this.mayChange(config, confirm, server));
       this.audit(`edit_file ${hostId(server)}:${result.path}（替换 ${result.replaced} 处）`);
@@ -878,7 +1073,7 @@ export class McpServer {
       const cwd = optString(args, 'cwd')?.trim() || undefined;
       const confirm = optBool(args, 'confirm');
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       this.allowCommand('start_job', command, confirm, config, [server]);
       context.use([server]);
       const id = await startJob(server, command, cwd);
@@ -891,7 +1086,7 @@ export class McpServer {
       const tail = optInt(args, 'tail', 1, 2000) ?? 50;
       const stop = optBool(args, 'stop');
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
       if (stop) this.audit(`job_status 结束任务 ${hostId(server)} ${id ?? ''}`);
       const text = (await jobStatus(server, id, tail, stop && !!id)).replace(/\n+$/, '');
@@ -903,7 +1098,7 @@ export class McpServer {
       const local = reqString(args, 'local_path');
       const remote = reqString(args, 'remote_path');
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
       const result = await upload(server, localArg(local), remote, progressOf(context));
       return { text: `已上传到 ${hostId(server)} ${server.name}：${describeTransfer(result)}` };
@@ -915,7 +1110,7 @@ export class McpServer {
       const local = reqString(args, 'local_path');
       const maxMb = optInt(args, 'max_size_mb', 1, 1024 * 1024);
       const { config, servers } = await this.prepare();
-      const server = resolveSingle(target, servers, config);
+      const server = this.one(target, servers, config);
       context.use([server]);
       const result = await download(server, remote, localArg(local), maxMb ? maxMb * 1024 * 1024 : DEFAULT_MAX_BYTES, progressOf(context));
       return { text: `已从 ${hostId(server)} ${server.name} 下载：${describeTransfer(result)}` };
@@ -928,8 +1123,8 @@ export class McpServer {
       const toPath = reqString(args, 'to_path');
       const confirm = optBool(args, 'confirm');
       const { config, servers } = await this.prepare();
-      const source = resolveSingle(fromTarget, servers, config);
-      const target = resolveSingle(toTarget, servers, config);
+      const source = this.one(fromTarget, servers, config);
+      const target = this.one(toTarget, servers, config);
       this.audit(`copy ${hostId(source)}:${fromPath} → ${hostId(target)}:${toPath}`);
       context.use([source, target]);
       const allowed = confirm || confirmMode(config, this.remote) === 'never';
@@ -940,7 +1135,176 @@ export class McpServer {
       const result = await copyBetween(source, fromPath, target, toPath, overwrite, progressOf(context));
       return { text: `已从 ${hostId(source)} ${source.name} 传到 ${hostId(target)} ${target.name}：${describeTransfer(result)}` };
     },
+
+    add_server: async (args) => {
+      const { config, servers } = await this.prepare(true);
+      const created = await createServer(this.serverInput(args, servers, config));
+      this.cache = null;
+      this.audit(`add_server ${hostId(created)} ${created.name}（${created.username}@${created.host}:${created.port}）`);
+      const all = [...servers, created];
+      return { text: `已添加 ${hostId(created)} ${created.name}：\n${describeServer(created, all)}\n用 exec（target: ${hostId(created)}）试一下能不能连上，例如 uname -a` };
+    },
+
+    update_server: async (args) => {
+      const target = reqString(args, 'target');
+      const confirm = optBool(args, 'confirm');
+      const { config, servers } = await this.prepare(true);
+      const server = this.one(target, servers, config);
+      const input = this.serverInput(args, servers, config);
+      if (!confirm && confirmMode(config, this.remote) !== 'never') {
+        throw new ToolError(`要改 CloudSSH 里保存的 ${hostId(server)} ${server.name}，没有改动：先告诉用户要改什么，用户同意后带 confirm: true 再调用`);
+      }
+      await updateServer(server, input);
+      this.audit(`update_server ${hostId(server)} ${server.name}：${changedFields(args).join('、')}`);
+      const { servers: fresh } = await this.prepare(true);
+      const updated = fresh.find((item) => item.id === server.id);
+      return { text: updated ? `已修改 ${hostId(server)}：\n${describeServer(updated, fresh)}` : `已修改 ${hostId(server)} ${server.name}` };
+    },
+
+    delete_server: async (args) => {
+      const target = reqString(args, 'target');
+      const { config, servers } = await this.prepare(true);
+      const server = this.one(target, servers, config);
+      if (!optBool(args, 'confirm')) {
+        throw new ToolError(`没有删除 ${hostId(server)} ${server.name}：删除连同保存的凭据和笔记一起删掉、不能恢复，只有用户明确要求删这台时才带 confirm: true 调用`);
+      }
+      const users = servers.filter((item) => item.jump_server_id === server.id);
+      if (users.length) {
+        throw new ToolError(`${hostId(server)} ${server.name} 还是 ${users.map((item) => `${hostId(item)} ${item.name}`).join('、')} 的跳板机：先用 update_server 给它们换掉跳板（jump: ""）再删`);
+      }
+      await deleteServer(server);
+      this.cache = null;
+      this.audit(`delete_server ${hostId(server)} ${server.name}（${server.username}@${server.host}:${server.port}）`);
+      return { text: `已从 CloudSSH 删除 ${hostId(server)} ${server.name}（${server.username}@${server.host}:${server.port}）` };
+    },
+
+    snippets: async (args) => {
+      const action = reqString(args, 'action');
+      const { config } = await this.prepare();
+      if (action === 'list') {
+        const query = optString(args, 'query')?.trim().toLowerCase();
+        const all = await listSnippets();
+        const list = query ? all.filter((item) => [item.name, item.command, item.category ?? ''].some((text) => text.toLowerCase().includes(query))) : all;
+        if (!list.length) return { text: all.length ? '（没有匹配的命令片段）' : '（还没有命令片段）' };
+        return { text: bounded(`共 ${list.length} 条命令片段（#编号  名称  [分类]，下一行是命令）\n${list.map(formatSnippet).join('\n')}`) };
+      }
+      if (this.remote?.access === 'read-only') throw new ToolError('只读模式：命令片段只能查看（action: list）');
+      if (action === 'save') {
+        const id = optString(args, 'id')?.trim() || undefined;
+        const saved = await saveSnippet({ id, name: reqString(args, 'name'), command: reqString(args, 'command'), category: optString(args, 'category') });
+        this.audit(`snippets ${id ? '修改' : '新建'} #${saved.id} ${saved.name}`);
+        return { text: `已${id ? '修改' : '新建'}命令片段：\n${formatSnippet(saved)}` };
+      }
+      if (action === 'delete') {
+        const id = reqString(args, 'id').trim();
+        if (!optBool(args, 'confirm') && confirmMode(config, this.remote) !== 'never') {
+          throw new ToolError(`没有删除命令片段 #${id}：先问用户，同意后带 confirm: true 再调用`);
+        }
+        await deleteSnippet(id);
+        this.audit(`snippets 删除 #${id}`);
+        return { text: `已删除命令片段 #${id}` };
+      }
+      throw new ToolError('action 只能是 list、save、delete');
+    },
+
+    server_notes: async (args) => {
+      const target = reqString(args, 'target');
+      const action = reqString(args, 'action');
+      const { config, servers } = await this.prepare();
+      const server = this.one(target, servers, config);
+      if (action === 'read') return { text: bounded(formatNotes(server, await readNotes(server))) };
+      if (this.remote?.access === 'read-only') throw new ToolError('只读模式：笔记只能查看（action: read）');
+      if (action === 'set') {
+        const category = (optString(args, 'category') ?? 'note') as NoteCategory;
+        if (!NOTE_CATEGORIES.includes(category)) throw new ToolError(`category 只能是 ${NOTE_CATEGORIES.join('、')}`);
+        const key = reqString(args, 'key');
+        const value = optString(args, 'value');
+        if (value === undefined) throw new ToolError('缺少参数 value');
+        await setNote(server, category, key, value);
+        this.audit(`server_notes 记下 ${hostId(server)}：[${category}] ${key.trim()}`);
+        return { text: `已记下 ${hostId(server)} ${server.name} 的 [${category}] ${key.trim()}` };
+      }
+      if (action === 'delete') {
+        const key = reqString(args, 'key');
+        if (!optBool(args, 'confirm') && confirmMode(config, this.remote) !== 'never') {
+          throw new ToolError(`没有删除 ${hostId(server)} 的笔记“${key}”：先问用户，同意后带 confirm: true 再调用`);
+        }
+        await deleteNote(server, key);
+        this.audit(`server_notes 删除 ${hostId(server)}：${key.trim()}`);
+        return { text: `已删除 ${hostId(server)} ${server.name} 的笔记“${key.trim()}”` };
+      }
+      if (action === 'log') {
+        const title = reqString(args, 'title');
+        const summary = reqString(args, 'summary');
+        await addWorkLog(server, title, summary);
+        this.audit(`server_notes 工作历程 ${hostId(server)}：${title.trim()}`);
+        return { text: `已在 ${hostId(server)} ${server.name} 的工作历程里记下“${title.trim()}”` };
+      }
+      throw new ToolError('action 只能是 read、set、delete、log');
+    },
   };
+
+  /** add_server / update_server 的参数 → 要写进 CloudSSH 的字段（跳板按名称或主机 ID 找） */
+  private serverInput(args: Json, servers: ServerConfig[], config: CliConfig): ServerInput {
+    const auth = optString(args, 'auth');
+    if (auth !== undefined && !['password', 'key', 'none'].includes(auth)) throw new ToolError('auth 只能是 password、key、none');
+    const region = optString(args, 'region');
+    if (region !== undefined && !(REGIONS as readonly string[]).includes(region)) throw new ToolError(`region 只能是 ${REGIONS.join('、')}`);
+    const jump = optString(args, 'jump');
+    let jumpId: number | null | undefined;
+    if (jump !== undefined) {
+      jumpId = jump.trim() ? this.one(jump, servers, config).id : null;
+    }
+    return {
+      name: optString(args, 'name'),
+      host: optString(args, 'host'),
+      port: optInt(args, 'port', 1, 65535),
+      username: optString(args, 'username'),
+      auth: auth as ServerInput['auth'],
+      password: optString(args, 'password'),
+      privateKey: optString(args, 'private_key'),
+      tags: optStrings(args, 'tags'),
+      addTags: optStrings(args, 'add_tags'),
+      removeTags: optStrings(args, 'remove_tags'),
+      jumpId,
+      tunnelHost: optString(args, 'tunnel_host'),
+      accessClientId: optString(args, 'access_client_id'),
+      accessClientSecret: optString(args, 'access_client_secret'),
+      region: region as ServerInput['region'],
+    };
+  }
+
+  /** 一台目标：排除的机器给出原因，而不是“没有这台” */
+  private one(spec: string, servers: ServerConfig[], config: CliConfig): ServerConfig {
+    try {
+      return resolveSingle(spec, servers, config);
+    } catch (error) {
+      throw this.explainExcluded(spec, config, error);
+    }
+  }
+
+  private many(spec: string, servers: ServerConfig[], config: CliConfig): ServerConfig[] {
+    try {
+      return resolveTargets(spec, servers, config);
+    } catch (error) {
+      throw this.explainExcluded(spec, config, error);
+    }
+  }
+
+  private explainExcluded(spec: string, config: CliConfig, error: unknown): unknown {
+    if (!this.excluded.length) return error;
+    for (const part of spec.split(',')) {
+      try {
+        const hit = resolveSingle(part, this.excluded, config);
+        return new ToolError(
+          `${hostId(hit)} ${hit.name} 是运行这个连接器的机器，部署时设成了不提供（EXCLUDE）：它上面存着 CloudSSH 的登录。要在它上面操作，请用户自己处理，或在连接器的 .env 里去掉 EXCLUDE`
+        );
+      } catch {
+        // 不是排除的那台
+      }
+    }
+    return error;
+  }
 }
 
 function progressOf(context: CallContext): Progress {
@@ -965,8 +1329,35 @@ function errorResponse(id: Id | null, code: number, message: string): Json {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-function toolResult(text: string, isError: boolean): Json {
-  return { content: [{ type: 'text', text: bounded(text) }], ...(isError ? { isError: true } : {}) };
+function toolResult(text: string, isError: boolean, images: ToolOutput['images'] = []): Json {
+  return {
+    content: [{ type: 'text', text: bounded(text) }, ...images.map((image) => ({ type: 'image', data: image.data, mimeType: image.mimeType }))],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+/** 看文件开头的几个字节认图片（PNG、JPEG、GIF、WebP），认不出返回 null */
+export function imageType(bytes: Uint8Array): string | null {
+  const ascii = (from: number, to: number) => Buffer.from(bytes.subarray(from, to)).toString('latin1');
+  if (bytes.length >= 8 && bytes[0] === 0x89 && ascii(1, 4) === 'PNG') return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 6 && /^GIF8[79]a$/.test(ascii(0, 6))) return 'image/gif';
+  if (bytes.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+/** 字符串数组参数（也认逗号隔开的一个字符串） */
+function optStrings(args: Json, name: string): string[] | undefined {
+  const value = args[name];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new ToolError(`参数 ${name} 要是字符串数组`);
+  return value as string[];
+}
+
+/** 审计日志里写改了哪些字段（凭据只写字段名，不写值） */
+function changedFields(args: Json): string[] {
+  return Object.keys(args).filter((key) => key !== 'target' && key !== 'confirm' && args[key] !== undefined);
 }
 
 /** 在 stdin / stdout 上跑 MCP 服务器，stdin 关闭（客户端退出）时结束 */
@@ -1016,6 +1407,7 @@ export function serveStdio(instance?: string): Promise<void> {
     });
     process.stdin.on('end', () => {
       if (buffer.trim()) handleLine(buffer);
+      HeadlessSftp.closeIdle();
       resolve();
     });
   });

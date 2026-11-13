@@ -5,6 +5,7 @@
  * 先 node build.mjs 打好 dist/cloudssh.mjs。
  */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -144,6 +145,73 @@ describe('MCP 文件与后台任务工具', { timeout: 120_000 }, () => {
     assert.match((await full.callTool('read_file', { target: 'JP-A', path: '/root/mcp/blob.bin' })).text, /二进制文件/);
     assert.match((await full.callTool('read_file', { target: 'JP-A', path: '/root/mcp' })).text, /是目录：用 list_dir/);
     assert.match((await full.callTool('read_file', { target: 'JP-A', path: '/root/mcp/none.txt' })).text, /没有 \/root\/mcp\/none\.txt/);
+  });
+
+  test('二进制：base64 写入（一次、任意位置切开的分段）与按字节分段读出原样往返，SHA-256 对得上；没带 encoding 时提示用 base64', async () => {
+    const bytes = Buffer.alloc(50_000);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + 7) & 0xff;
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const b64 = bytes.toString('base64');
+
+    const once = await full.callTool('write_file', { target: 'JP-A', path: '/root/mcp/bin/once.bin', content: b64, encoding: 'base64' });
+    assert.equal(once.isError, false, once.text);
+    // 分段：切在不是 4 的倍数的位置（base64 的尾巴要接到下一段）
+    const cuts = [0, 1001, 30_003, 50_001, b64.length];
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const piece = await full.callTool('write_file', {
+        target: 'JP-A',
+        path: '/root/mcp/bin/parts.bin',
+        content: b64.slice(cuts[i], cuts[i + 1]),
+        encoding: 'base64',
+        part: i + 1,
+        parts: cuts.length - 1,
+      });
+      assert.equal(piece.isError, false, piece.text);
+    }
+
+    for (const file of ['/root/mcp/bin/once.bin', '/root/mcp/bin/parts.bin']) {
+      const chunks = [];
+      let offset = 0;
+      for (let round = 0; round < 20; round++) {
+        const read = await full.callTool('read_file', { target: 'JP-A', path: file, encoding: 'base64', offset });
+        assert.equal(read.isError, false, read.text);
+        assert.ok(read.text.includes(sha), read.text.slice(0, 300));
+        const [head, data] = read.text.split('\n');
+        chunks.push(Buffer.from(data, 'base64'));
+        const next = /offset: (\d+)/.exec(head);
+        if (!next) break;
+        offset = Number(next[1]);
+      }
+      assert.ok(chunks.length > 1, '应该分了几段读');
+      assert.equal(createHash('sha256').update(Buffer.concat(chunks)).digest('hex'), sha);
+    }
+
+    const plain = await full.callTool('read_file', { target: 'JP-A', path: '/root/mcp/bin/once.bin' });
+    assert.equal(plain.isError, true);
+    assert.match(plain.text, /二进制文件.*encoding: base64/);
+    const bad = await full.callTool('write_file', { target: 'JP-A', path: '/root/mcp/bin/bad.bin', content: '不是 base64!', encoding: 'base64' });
+    assert.equal(bad.isError, true);
+    assert.match(bad.text, /不是合法的 base64/);
+  });
+
+  test('read_file 读到图片时把图片交给模型（image 内容）', async () => {
+    // 1×1 的 PNG
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    await full.callTool('write_file', { target: 'JP-A', path: '/root/mcp/bin/dot.png', content: png.toString('base64'), encoding: 'base64' });
+    const read = await full.callTool('read_file', { target: 'JP-A', path: '/root/mcp/bin/dot.png' });
+    assert.equal(read.isError, false, read.text);
+    assert.match(read.raw.content[0].text, /PNG 图片/);
+    assert.deepEqual(read.raw.content[1], { type: 'image', data: png.toString('base64'), mimeType: 'image/png' });
+  });
+
+  test('同一台服务器同时读好几个文件：SFTP 排队，不再互相顶掉（SFTP 已经打开 / 连接已关闭）', async () => {
+    const names = ['c1', 'c2', 'c3', 'c4'];
+    for (const name of names) await full.callTool('write_file', { target: 'JP-A', path: `/root/mcp/con/${name}.txt`, content: `内容 ${name}\n` });
+    const reads = await Promise.all(names.map((name) => full.callTool('read_file', { target: 'JP-A', path: `/root/mcp/con/${name}.txt` })));
+    reads.forEach((read, index) => {
+      assert.equal(read.isError, false, read.text);
+      assert.ok(read.text.includes(`内容 ${names[index]}`), read.text);
+    });
   });
 
   test('list_dir：目录在前，隐藏项要 all；不存在时说明', async () => {

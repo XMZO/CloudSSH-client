@@ -14,7 +14,7 @@
  *    受客户端内存限制：电脑 512MB、手机 128MB。
  */
 import type { ServerConfig } from '@cloudssh/core';
-import { remoteExec, remoteSession, type ExecResult } from './session';
+import { readySession, remoteExec, type ExecResult } from './session';
 import { serverById } from './servers';
 import { HeadlessSftp } from './sftp';
 
@@ -272,8 +272,7 @@ async function copyDirect(plan: CopyPlan, path: ServerConfig[], onStatus: (text:
 }
 
 async function openSftp(server: ServerConfig): Promise<HeadlessSftp> {
-  const session = remoteSession(server.id);
-  await session.ready;
+  const session = await readySession(server.id);
   if (!session.sftpUrl) throw new Error(`${server.name}: 没有 SFTP 通道`);
   return HeadlessSftp.open(session.sftpUrl);
 }

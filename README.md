@@ -463,19 +463,22 @@ cloudssh alias set web srv-12         # 别名；cloudssh config set confirm nev
 
 ### MCP 服务器（给不支持 skill 的应用）
 
-Claude Desktop、Cursor、VS Code、Windsurf 等不认 skill 的应用用 MCP 接入同一套能力：`cloudssh mcp` 是 stdio 上的 MCP 服务器（JSON-RPC 2.0，一行一条消息，协议手写、不引入新依赖），提供 11 个工具，直接调命令行的 `targets` / `exec` / `files` / `remote-files` 实现：
+Claude Desktop、Cursor、VS Code、Windsurf 等不认 skill 的应用用 MCP 接入同一套能力：`cloudssh mcp` 是 stdio 上的 MCP 服务器（JSON-RPC 2.0，一行一条消息，协议手写、不引入新依赖），提供 16 个工具，直接调命令行的 `targets` / `exec` / `files` / `remote-files` / `manage` 实现：
 
 | 工具 | 参数 | 说明 |
 | ---- | ---- | ---- |
-| `list_servers` | `query`、`tag` | 主机 ID、名称、标签、系统、线路 |
+| `list_servers` | `query`、`tag`、`details` | 主机 ID、名称、标签、系统、线路；`details` 再加用户@地址:端口、认证方式、跳板或隧道、区域、最近连接（不含任何凭据） |
 | `exec` | `target`、`command`、`timeout`、`cwd`、`confirm` | 目标写法与命令行一样（`srv-12`、名称、别名、`tag:`、`all`、逗号隔开）；`cwd` 在指定目录执行（每次调用都是新 Shell，`cd` 不会留到下一次）；`confirm: true` 相当于 `--yes` |
-| `read_file` | `target`、`path`、`offset`、`limit` | 读文本文件，带行号（`cat -n` 的样子）。走 SFTP，不受命令输出 64KB 的限制（文件最大 20MB，每次最多一次结果上限（默认 24KB）的行，用 `offset` / `limit` 分段）；二进制文件不读 |
+| `read_file` | `target`、`path`、`offset`、`limit`、`encoding` | 走 SFTP，不受命令输出 64KB 的限制（文件最大 20MB）。文本带行号（`cat -n` 的样子），每次最多一次结果上限（默认 24KB）的行，用 `offset` / `limit`（行）分段；图片（PNG、JPEG、GIF、WebP，5MB 以内）作为图片交给模型看；任何文件（含二进制）用 `encoding: base64` 按字节取（`offset` / `limit` 是字节，每次约 17KB），每次都附整个文件的大小、下一段的 `offset` 与 SHA-256，整个文件在内存里留 10 分钟，分段读不用每段都重新下载 |
 | `list_dir` | `target`、`path`、`all` | `ls -l`（目录在前、ISO 时间），最多 1000 项 |
-| `write_file` | `target`、`path`、`content`、`mode`、`confirm`、`part`、`parts` | 经 SFTP 写文本，不用 Shell 转义与 heredoc。内容太长（大约 8KB 以上，比如大脚本，AI 客户端对单次工具调用的长度有上限）时分段：按顺序带 `part` = 1、2…与同样的 `parts`，各段先攒在目标旁边的 `<文件>.cs-upload`，最后一段到了才一次性写进去（中途断了原文件不动；顺序不对、超过 30 分钟或连接器重启过就从第 1 段重来；改已有文件的确认只在第 1 段）。`overwrite`（默认，先写临时文件再改名，沿用原文件的权限与属主）、`append`、`create`（已存在就不写）；自动建上级目录，符号链接写到它指向的文件；最大 10MB |
+| `write_file` | `target`、`path`、`content`、`mode`、`encoding`、`confirm`、`part`、`parts` | 经 SFTP 写文件，不用 Shell 转义与 heredoc；`encoding: base64` 时内容是任意文件的 base64（压缩包、图片、程序），分段时 base64 可以在任意位置切开。内容太长（大约 8KB 以上，比如大脚本，AI 客户端对单次工具调用的长度有上限）时分段：按顺序带 `part` = 1、2…与同样的 `parts`，各段先攒在目标旁边的 `<文件>.cs-upload`，最后一段到了才一次性写进去（中途断了原文件不动；顺序不对、超过 30 分钟或连接器重启过就从第 1 段重来；改已有文件的确认只在第 1 段）。`overwrite`（默认，先写临时文件再改名，沿用原文件的权限与属主）、`append`、`create`（已存在就不写）；自动建上级目录，符号链接写到它指向的文件；最大 10MB |
 | `edit_file` | `target`、`path`、`old_string`、`new_string`、`replace_all`、`confirm` | 精确替换：`old_string` 要唯一（否则报出现次数，或 `replace_all`）；写回前核对文件的 SHA-256 与读时一致，被别人改过就不写；返回改后附近几行 |
 | `start_job` / `job_status` | `target`、`command`、`cwd` / `job_id`、`tail`、`stop` | 长任务：`setsid nohup` 在新会话里跑，断开、会话关闭都不影响，输出与退出码记在 `~/.cloudssh-jobs/`（7 天后清理）；`job_status` 看状态与输出末尾、不带 `job_id` 列出最近的任务、`stop` 结束整个进程组。命令与 `exec` 同一套危险命令规则 |
 | `upload` / `download` | `target`、`local_path`、`remote_path`（download 另有 `max_size_mb`） | 文件或目录，落点规则同 scp；本机相对路径按 MCP 服务器的工作目录，`~` 是家目录 |
 | `copy` | `from_target`、`from_path`、`to_target`、`to_path`、`confirm` | 服务器之间，能直连就直连；覆盖已有目标要 `confirm` |
+| `add_server` / `update_server` / `delete_server` | 名称、`host`、`port`、`username`、`auth`、`password` / `private_key`、`tags`（修改另有 `add_tags` / `remove_tags`）、`jump`、`tunnel_host` 与 Access 服务令牌、`region`；修改与删除带 `target`、`confirm` | 管理 CloudSSH 里保存的服务器（与网页版、客户端同一份）。凭据只写不读、加密存在 CloudSSH；修改时不给凭据就保留原来的，换认证方式要同时给新凭据；带密码的私钥要先解开。修改在要确认时要 `confirm`；删除一律要 `confirm: true`（只在用户明确要求时），被别的服务器当跳板时先说明 |
+| `snippets` | `action`（list / save / delete）、`query`、`id`、`name`、`command`、`category`、`confirm` | 网页版终端旁的命令片段：列出、新建或修改（名称 ≤ 50 字、命令 ≤ 2000 字）、删除 |
+| `server_notes` | `target`、`action`（read / set / delete / log）、`category`、`key`、`value`、`title`、`summary`、`confirm` | CloudSSH 内置 AI 助手按服务器记的笔记：知识（凭据、配置、规则、备注，同名覆盖）与工作历程；外部 AI 和内置助手读写的是同一份 |
 
 ```bash
 cloudssh install --mcp claude-desktop,codex   # 安装命令与 skill，并把 MCP 服务器登记给这些应用（all = 这台电脑上有的全部）
@@ -489,15 +492,16 @@ cloudssh mcp add cursor / cloudssh mcp remove codex
 - **登记**：只在明确要求时写应用的配置（`install --mcp`、`mcp add`、桌面端开关），写前把原文件备份成 `<文件>.cloudssh-backup-<时间>`，只动名为 `cloudssh` 的一项。配置位置：Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`、Cursor `~/.cursor/mcp.json`、VS Code `%APPDATA%\Code\User\mcp.json`（允许注释，写回时注释保留在备份里）、Windsurf `~/.codeium/windsurf/mcp_config.json`、Codex `~/.codex/config.toml`（`[mcp_servers.cloudssh]`）；macOS / Linux 换成对应的应用配置目录。登记的是“运行时 + 程序 + `mcp`”（不经 `.cmd`，Windows 上很多应用起不了批处理），与命令指向同一个程序；在登记项里自己加的参数（如 `--instance 名称`）与环境变量更新时保留。重新安装时更新已登记的，`uninstall` 移除。改完重启那个应用生效
 - **桌面客户端**：实例管理 → 命令行与 Skill → 设置… 的“MCP”卡片，这台电脑上有的应用每个一个开关（打开即登记、关掉即移除）；客户端换了位置时启动后随命令一起更新
 - **还没有**：读取桌面客户端里已打开标签的终端内容（外部 AI 看不到你终端里刚才的输出，只能自己再跑命令），见[计划清单](docs/roadmap.md)
-- **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、各工具、危险命令、结果上限（默认 24KB、可调）、取消与进度；`mcp-files.test.mjs` 测文件读写改、确认规则与后台任务）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
+- **连接与文件通道**：后台会话连不上时换一条再试（最多 3 次，只限命令还没发出去：连接被拒、Shell 就绪超时、连上 8 秒还没开始 SSH 握手、发命令前会话已断；认证失败、主机指纹变化不重试）；同一台服务器的 SFTP 操作排队（CloudSSH 每个会话只有一条 SFTP 通道，同时开两条会互相顶掉），MCP 里通道用完留 15 秒，接连读写同一台的文件不用每次重新打开
+- **测试**：`pnpm --filter @cloudssh/cli test` 先构建，再对假 Worker（端口由系统分配、临时 `CLOUDSSH_HOME` 与家目录）跑 MCP 端到端测试（协议、各工具、危险命令、结果上限（默认 24KB、可调）、取消与进度；`mcp-files.test.mjs` 测文件读写改（含 base64 与图片、同一台并发读）、确认规则与后台任务；`mcp-manage.test.mjs` 测服务器、命令片段与笔记的管理；`session-retry.test.mjs` 测连接卡住时换一条）和登记测试（各应用配置的写入、备份、更新与移除），不碰本机真实配置
 
 ### 远程 MCP（给云端 AI，如 Meta Muse 的自定义连接器）
 
 云端助手装不了 skill、也碰不到本机的 `cloudssh`，但能接公网 HTTPS 的远程 MCP（OAuth 授权）。`cloudssh mcp http`（`mcp-http.ts`）就是这样一个服务器，放在一台常开的服务器上、Caddy 后面跑，部署文件与步骤在 [`tools/mcp-remote/`](tools/mcp-remote/README.md)（Docker：非 root、只读文件系统）。
 
-- **工具**：上面除 `upload` / `download` 外的全部（只读时没有 `write_file`、`edit_file`、`copy`）；`upload` / `download` 读写的是那台服务器的磁盘，不提供
+- **工具**：上面除 `upload` / `download` 外的全部（只读时没有 `write_file`、`edit_file`、`copy`、`add_server`、`update_server`、`delete_server`，`snippets` 与 `server_notes` 只能查看）；`upload` / `download` 读写的是那台服务器的磁盘，不提供。云端 AI 和服务器之间传文件用 `write_file` / `read_file` 的 `encoding: base64`（分段）
 - **权限**（`--access` / `CLOUDSSH_MCP_ACCESS`）：`full` 同命令行的完全权限（拦截级仍拒绝）；`ask` 危险命令要 `confirm: true`；`read-only`（默认）只放行查看类命令（`readonly.ts`：按词切开命令，命令名与参数逐个对清单，写文件的重定向、命令替换、子 Shell、heredoc、解释器一律拒绝；尽力而为的护栏，不是沙箱）
-- **不提供的服务器**（`--exclude srv-12`）：跑这个服务的机器自己，它上面存着 CloudSSH 的登录
+- **不提供的服务器**（`--exclude srv-<编号>`，可选）：通常是跑这个服务的机器自己，它上面存着 CloudSSH 的登录；对它调用时说明是被排除了，而不是“没有这台”
 - **授权**：内置只认一个人的 OAuth 2.1：发现文档（RFC 9728 / 8414）、动态注册（RFC 7591）与 Client ID Metadata Document、授权页口令（scrypt 哈希，`mcp http --hash-password` 生成；连错 5 次锁定）、只支持 PKCE S256、访问令牌 24 小时、刷新令牌 90 天（每用一次往后顺延、不换新的，几个会话各存一份也不会互相顶掉）；令牌只存 SHA-256
 - **固定令牌**（可选，给只能填固定 Bearer、不会走 OAuth 的应用）：`cloudssh mcp http --new-token --label 名字` 生成，第一行令牌只显示这一次（填进应用的 `Authorization: Bearer …`），第二行 `名字:SHA-256` 加进环境变量 `CLOUDSSH_MCP_STATIC_TOKENS`（只存哈希，逗号隔开，删掉即吊销）；不过期，权限同 `--access`
 - **传输**：Streamable HTTP，`POST /mcp` 回 JSON（只有通知时 202），不推送、不用会话；客户端断开时取消还在执行的调用；每次执行与拒绝在日志里记一行

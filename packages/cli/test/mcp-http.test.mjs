@@ -273,7 +273,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.equal(note.status, 202);
 
     const tools = await rpc(server.base, token, 'tools/list');
-    assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'read_file', 'list_dir', 'write_file', 'edit_file', 'start_job', 'job_status', 'copy']);
+    assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'read_file', 'list_dir', 'write_file', 'edit_file', 'start_job', 'job_status', 'add_server', 'update_server', 'delete_server', 'snippets', 'server_notes', 'copy']);
     const exec = tools.body.result.tools.find((tool) => tool.name === 'exec');
     assert.match(exec.description, /Full access is on/);
     const upload = await rpc(server.base, token, 'tools/call', { name: 'upload', arguments: {} });
@@ -282,7 +282,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     const list = await callTool(server.base, token, 'list_servers', {});
     assert.match(list.text, /JP-A/);
     assert.doesNotMatch(list.text, /JP-B/);
-    assert.match((await callTool(server.base, token, 'exec', { target: `srv-${excluded.id}`, command: 'echo hi' })).text, /找不到|没有|不认识/);
+    assert.match((await callTool(server.base, token, 'exec', { target: `srv-${excluded.id}`, command: 'echo hi' })).text, /不提供（EXCLUDE）/);
 
     const hello = await callTool(server.base, token, 'exec', { target: 'JP-A', command: 'echo hello' });
     assert.equal(hello.isError, false, hello.text);
@@ -373,7 +373,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
 
     test('只有查看类工具（没有 write_file、edit_file、copy），exec 没有 confirm 参数', async () => {
       const tools = await rpc(readonly.base, token, 'tools/list');
-      assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'read_file', 'list_dir', 'start_job', 'job_status']);
+      assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), ['list_servers', 'exec', 'read_file', 'list_dir', 'start_job', 'job_status', 'snippets', 'server_notes']);
       const exec = tools.body.result.tools.find((tool) => tool.name === 'exec');
       assert.equal(exec.inputSchema.properties.confirm, undefined);
       assert.match(exec.description, /Read-only mode/);

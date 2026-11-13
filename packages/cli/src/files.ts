@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { remoteExec, remoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
+import { readySession, remoteExec } from '../../ui-web/overrides/shared/ai-remote/session';
 import { HeadlessSftp } from '../../ui-web/overrides/shared/ai-remote/sftp';
 import { planCopy, runCopy, type CopyResult } from '../../ui-web/overrides/shared/ai-remote/transfer';
 import { UsageError } from './config';
@@ -48,8 +48,7 @@ export async function run(server: ServerConfig, command: string, timeout = 60): 
 }
 
 export async function openSftp(server: ServerConfig): Promise<HeadlessSftp> {
-  const session = remoteSession(server.id);
-  await session.ready;
+  const session = await readySession(server.id);
   if (!session.sftpUrl) throw new Error(`${server.name}: 没有 SFTP 通道`);
   return HeadlessSftp.open(session.sftpUrl);
 }

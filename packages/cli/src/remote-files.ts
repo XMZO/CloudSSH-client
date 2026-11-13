@@ -5,6 +5,7 @@
  * - 读：先查类型、大小与真实路径（跟随符号链接），再整个下载到内存（上限 20MB），按行切出要看的部分；二进制文件不读
  * - 写：先传到同目录的临时文件，再改名过去；覆盖已有文件时沿用原来的权限与属主（stat -c），符号链接写到它指向的文件
  * - 改（精确替换）：读出来、在内存里替换、写回；写回前核对文件的 SHA-256 与读时一致，被别人改过就不写
+ * - 二进制：按字节写（内容是 base64，可分段）；按字节读（readBytes）时把整个文件留在内存里一会儿，同一个文件分段读不用每段都重新下载
  * 后台任务：命令写进 ~/.cloudssh-jobs/<任务>.cmd，用 setsid nohup 在新会话里跑（断开连接、会话关闭都不影响），
  * 输出写 .log、退出码写 .exit、进程号写 .pid；7 天前的任务文件启动新任务时顺手删掉。
  */
@@ -25,6 +26,8 @@ export interface RemoteFileInfo {
   size: number;
   /** 绝对路径（符号链接已解析） */
   path: string;
+  /** 修改时间与 inode（stat 的原样输出，带纳秒）；拿不到时为空串 */
+  mtime: string;
 }
 
 /** 查类型、大小与真实路径；不存在返回 null */
@@ -35,6 +38,7 @@ export async function statRemote(server: ServerConfig, path: string): Promise<Re
       server,
       `p=${shellPath(path)}; if [ -d "$p" ]; then echo dir; elif [ -f "$p" ]; then echo file; else echo missing; exit 3; fi;` +
         ` if [ -f "$p" ]; then wc -c < "$p"; else echo 0; fi;` +
+        ` { stat -c '%y %i' -- "$p" 2>/dev/null || date -r "$p" +%s 2>/dev/null || echo; } | head -n 1;` +
         ` r=$(readlink -f -- "$p" 2>/dev/null) || r=$(cd "$(dirname -- "$p")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$p")"); printf '%s\\n' "$r"`
     );
   } catch (error) {
@@ -42,7 +46,13 @@ export async function statRemote(server: ServerConfig, path: string): Promise<Re
     throw error;
   }
   const lines = output.trim().split('\n').map((line) => line.trim());
-  return { kind: lines[0] === 'dir' ? 'dir' : 'file', size: Number(lines[1]) || 0, path: lines[lines.length - 1] };
+  // 类型、大小、[修改时间]、真实路径
+  return {
+    kind: lines[0] === 'dir' ? 'dir' : 'file',
+    size: Number(lines[1]) || 0,
+    mtime: lines.length >= 4 ? lines[2] : '',
+    path: lines[lines.length - 1],
+  };
 }
 
 async function downloadBytes(server: ServerConfig, path: string, maxBytes: number): Promise<Uint8Array> {
@@ -55,6 +65,68 @@ async function downloadBytes(server: ServerConfig, path: string, maxBytes: numbe
 }
 
 const sha256Hex = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+// ---------- 按字节读（带缓存） ----------
+
+export interface BinaryFile {
+  info: RemoteFileInfo;
+  bytes: Uint8Array;
+  sha256: string;
+}
+
+/** 按字节读到的整个文件在内存里留 10 分钟：分段读同一个文件时只下载一次（每次先 stat，大小或修改时间变了就重下） */
+const BYTES_TTL_MS = 10 * 60_000;
+const BYTES_CACHE_MAX = 64 * 1024 * 1024;
+const bytesCache = new Map<string, BinaryFile & { at: number }>();
+
+function rememberBytes(key: string, file: BinaryFile): void {
+  bytesCache.delete(key);
+  bytesCache.set(key, { ...file, at: Date.now() });
+  let total = 0;
+  for (const entry of bytesCache.values()) total += entry.bytes.length;
+  // 先丢过期的，再从最早放进去的开始丢，直到不超过上限（刚放进去的留着）
+  for (const [old, entry] of bytesCache) {
+    if (old === key) continue;
+    if (total <= BYTES_CACHE_MAX && Date.now() - entry.at < BYTES_TTL_MS) continue;
+    bytesCache.delete(old);
+    total -= entry.bytes.length;
+  }
+}
+
+/** 读整个文件的字节（任何类型）；同一文件 10 分钟内大小与修改时间都没变时用缓存 */
+export async function readBytes(server: ServerConfig, path: string, maxBytes = READ_MAX_BYTES): Promise<BinaryFile> {
+  const info = await statRemote(server, path);
+  if (!info) throw new UsageError(`${server.name} 上没有 ${path}`);
+  if (info.kind === 'dir') throw new UsageError(`${info.path} 是目录：用 list_dir 查看`);
+  if (info.size > maxBytes) {
+    throw new UsageError(`${info.path} 有 ${info.size} 字节，超过 ${Math.round(maxBytes / 1048576)}MB：大文件用 copy 传到别的服务器，或在服务器上切开（split）再分别读`);
+  }
+  const key = `${server.id}\u0000${info.path}`;
+  const cached = bytesCache.get(key);
+  if (cached && info.mtime && cached.info.mtime === info.mtime && cached.info.size === info.size && Date.now() - cached.at < BYTES_TTL_MS) {
+    rememberBytes(key, cached);
+    return cached;
+  }
+  const bytes = info.size ? await downloadBytes(server, info.path, maxBytes) : new Uint8Array();
+  const file = { info: { ...info, size: bytes.length }, bytes, sha256: sha256Hex(bytes) };
+  if (info.mtime) rememberBytes(key, file);
+  return file;
+}
+
+/** 写过的文件从缓存里拿掉（修改时间的精度不够时也不会读到旧的） */
+function forgetBytes(server: ServerConfig, path: string): void {
+  bytesCache.delete(`${server.id}\u0000${path}`);
+}
+
+/** base64（也认 base64url，忽略空白），不合法就报错；allowTail 时末尾凑不满 4 个字符的部分不解，留给下一段 */
+export function decodeBase64(text: string, allowTail = false): { bytes: Uint8Array; tail: string } {
+  const clean = text.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new UsageError('content 不是合法的 base64');
+  const usable = allowTail && !clean.endsWith('=') ? clean.length - (clean.length % 4) : clean.length;
+  const head = clean.slice(0, usable);
+  if (head.length % 4 === 1) throw new UsageError('content 不是合法的 base64（长度不对，可能少了一段）');
+  return { bytes: new Uint8Array(Buffer.from(head, 'base64')), tail: clean.slice(usable) };
+}
 
 export interface TextFile {
   info: RemoteFileInfo;
@@ -115,11 +187,11 @@ export interface WriteResult {
 export async function writeText(
   server: ServerConfig,
   path: string,
-  content: string,
+  content: string | Uint8Array,
   mode: WriteMode,
   options: { expectSha256?: string; mayOverwrite?: (path: string) => boolean } = {}
 ): Promise<WriteResult> {
-  const bytes = encoder.encode(content);
+  const bytes = typeof content === 'string' ? encoder.encode(content) : content;
   if (bytes.length > WRITE_MAX_BYTES) throw new UsageError(`内容有 ${bytes.length} 字节，超过 ${WRITE_MAX_BYTES / 1048576}MB：大文件用 upload 或 copy`);
   let where: string;
   try {
@@ -162,6 +234,8 @@ export async function writeText(
     if (/被改过|退出码 9/.test(message)) throw new UsageError(`${dest} 在读取之后被改过，没有写入：重新读一遍再改`);
     if (/已存在|退出码 8/.test(message)) throw new UsageError(`${server.name} 上已有 ${dest}，没有写入（mode: create 只建新文件）`);
     throw error;
+  } finally {
+    forgetBytes(server, dest);
   }
   return { path: dest, bytes: bytes.length, created: !exists };
 }
@@ -182,6 +256,9 @@ interface PartState {
   bytes: number;
   created: boolean;
   at: number;
+  encoding: 'utf8' | 'base64';
+  /** base64 分段时上一段末尾凑不满 4 个字符的部分 */
+  carry: string;
 }
 
 const PART_TTL_MS = 30 * 60_000;
@@ -201,10 +278,10 @@ export async function writeTextPart(
   part: number,
   parts: number,
   mode: WriteMode,
-  options: { mayOverwrite?: (path: string) => boolean } = {}
+  options: { mayOverwrite?: (path: string) => boolean; encoding?: 'utf8' | 'base64' } = {}
 ): Promise<PartResult> {
   const key = `${server.id}\u0000${path}`;
-  const bytes = encoder.encode(content);
+  const encoding = options.encoding ?? 'utf8';
   let state = partStates.get(key);
   if (state && Date.now() - state.at > PART_TTL_MS) {
     partStates.delete(key);
@@ -228,11 +305,22 @@ export async function writeTextPart(
     const dest = lines[lines.length - 1];
     if (exists && mode === 'create') throw new UsageError(`${server.name} 上已有 ${dest}，没有写入（mode: create 只建新文件）`);
     if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${server.name} 上已有 ${dest}，没有写入`);
-    state = { dest, stage: `${dest}.cs-upload`, mode, parts, next: 1, bytes: 0, created: !exists, at: Date.now() };
+    state = { dest, stage: `${dest}.cs-upload`, mode, parts, next: 1, bytes: 0, created: !exists, at: Date.now(), encoding, carry: '' };
   } else if (!state) {
     throw new UsageError(`没有正在写的 ${path}（第 1 段没写过、超过 30 分钟或连接器重启过）：从 part 1 重新开始`);
-  } else if (part !== state.next || parts !== state.parts || mode !== state.mode) {
-    throw new UsageError(`${path} 应该写第 ${state.next}/${state.parts} 段（mode ${state.mode}），收到的是第 ${part}/${parts} 段：按顺序发，或从 part 1 重新开始`);
+  } else if (part !== state.next || parts !== state.parts || mode !== state.mode || encoding !== state.encoding) {
+    throw new UsageError(
+      `${path} 应该写第 ${state.next}/${state.parts} 段（mode ${state.mode}、encoding ${state.encoding}），收到的是第 ${part}/${parts} 段：按顺序发，或从 part 1 重新开始`
+    );
+  }
+  // base64 的段可以在任意位置切开：凑不满 4 个字符的尾巴接到下一段前面再解
+  let bytes: Uint8Array;
+  if (encoding === 'base64') {
+    const decoded = decodeBase64(state.carry + content, part < parts);
+    bytes = decoded.bytes;
+    state.carry = decoded.tail;
+  } else {
+    bytes = encoder.encode(content);
   }
   if (state.bytes + bytes.length > WRITE_MAX_BYTES) {
     partStates.delete(key);
@@ -276,6 +364,8 @@ export async function writeTextPart(
     await run(server, `rm -f ${stage}`).catch(() => undefined);
     if (/已存在|退出码 8/.test((error as Error).message)) throw new UsageError(`${server.name} 上已有 ${state.dest}，没有写入（mode: create 只建新文件）`);
     throw error;
+  } finally {
+    forgetBytes(server, state.dest);
   }
   return { path: state.dest, bytes: state.bytes, created: state.created, done: true, received: part };
 }

@@ -13,6 +13,10 @@
  * 省往返：Shell 就绪后初始化行发出去就算就绪，不等它的回应；第一条命令紧跟着发，等结果时一并确认初始化完成
  * （先看到初始化的标记、再看到命令的标记）。初始化在限定时间内没完成就判定不是 POSIX Shell。
  * 只跑一条命令就走的调用方（命令行）可以让远端在命令后直接 exit：服务器那头主动断开，不用再等一次关闭的来回。
+ *
+ * 连不上时换一条再试（最多 3 次）：只限命令还没发出去的情况——连接被拒、Shell 就绪超时、连上后 8 秒还没开始 SSH 握手
+ * （Cloudflare 出站 TCP 偶尔卡住，Worker 那边要 20 秒才报错）、会话在发命令前断了。认证失败、主机指纹变化、
+ * 要交互式认证的不重试；命令发出去之后断线也不重试（可能已经执行了一部分）。
  */
 import { localizeAttachUrl } from '../gateway-attach';
 
@@ -32,16 +36,41 @@ export interface ExecOptions {
 }
 
 export class RemoteError extends Error {
+  /** 命令还没发出去（连接、等 Shell 就绪阶段，或发之前会话已断）：换一条会话重试不会重复执行 */
+  unsent = false;
+
   constructor(
     message: string,
-    readonly code: 'connect' | 'auth' | 'host_key' | 'closed' | 'shell' | 'timeout' | 'too_long' = 'connect'
+    /** denied：连接接口直接拒绝（没登录、没有这台服务器……），重试没用 */
+    readonly code: 'connect' | 'auth' | 'host_key' | 'closed' | 'shell' | 'timeout' | 'too_long' | 'denied' = 'connect'
   ) {
     super(message);
   }
+
+  /** 换一条会话重试有没有用：命令没发出去，且不是认证、指纹、被拒这类再试也一样的 */
+  get retryable(): boolean {
+    return this.unsent && (this.code === 'connect' || this.code === 'timeout' || this.code === 'closed');
+  }
+}
+
+/** 标成“命令还没发出去”（原样返回同一个错误；不是 RemoteError 的包成连接错误） */
+function unsent(error: unknown): RemoteError {
+  const remote = error instanceof RemoteError ? error : new RemoteError(error instanceof Error ? error.message : String(error));
+  remote.unsent = true;
+  return remote;
+}
+
+/** Worker 发来的 error（连接阶段）：认证类的不重试，其余（连不上、隧道出错……）按连接错误重试 */
+function connectError(message: string): RemoteError {
+  return new RemoteError(message, /认证|authenticat|permission denied|password|密码|密钥|publickey|private key/i.test(message) ? 'auth' : 'connect');
 }
 
 const OUTPUT_LIMIT = 64 * 1024;
 const READY_TIMEOUT_MS = 30_000;
+/** 连上后这么久还没有任何状态（Worker 卡在连 SSH 服务器的 TCP 上）就换一条：正常第一条状态在 0.01–2 秒内到 */
+const STALL_MS = 8_000;
+/** 连接阶段失败时最多试几次（含第一次） */
+export const CONNECT_ATTEMPTS = 3;
 const INIT_TIMEOUT_MS = 15_000;
 const PING_MS = 20_000;
 const IDLE_CLOSE_MS = 180_000;
@@ -74,7 +103,9 @@ async function requestWsUrl(serverId: number): Promise<string> {
   }
   const body = (await response.json().catch(() => null)) as { wsUrl?: unknown; error?: unknown } | null;
   if (!response.ok || typeof body?.wsUrl !== 'string' || !/^wss?:\/\//.test(body.wsUrl)) {
-    throw new RemoteError(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`);
+    const message = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
+    // 4xx（没登录、没有这台服务器、没权限）再试也一样；5xx 与网络错误可以重试
+    throw new RemoteError(message, response.status >= 400 && response.status < 500 ? 'denied' : 'connect');
   }
   return body.wsUrl;
 }
@@ -114,14 +145,20 @@ export class RemoteSession {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new RemoteError('Shell 就绪超时', 'timeout')), READY_TIMEOUT_MS);
+      const timer = setTimeout(() => fail(new RemoteError('Shell 就绪超时', 'timeout')), READY_TIMEOUT_MS);
+      let stall: ReturnType<typeof setTimeout> | null = null;
       const fail = (error: RemoteError) => {
         clearTimeout(timer);
+        if (stall) clearTimeout(stall);
         reject(error);
       };
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'resize', cols: 200, rows: 50 }));
         this.pingTimer = setInterval(() => this.sendJson({ type: 'ping', id: randomId() }), PING_MS);
+        stall = setTimeout(
+          () => fail(new RemoteError(`连上 ${STALL_MS / 1000} 秒还没开始 SSH 握手（Cloudflare 连 SSH 服务器卡住了）`, 'connect')),
+          STALL_MS
+        );
       };
       ws.onerror = () => fail(new RemoteError('WebSocket 连接失败'));
       ws.onclose = (event) => {
@@ -156,6 +193,9 @@ export class RemoteSession {
             if (typeof msg.sftpAttachUrl === 'string' && msg.sftpAttachUrl) this.sftpUrl = localizeAttachUrl(msg.sftpAttachUrl, url);
             break;
           case 'status':
+            // 有任何状态就说明 Worker 已经连上 SSH 服务器、开始握手了
+            if (stall) clearTimeout(stall);
+            stall = null;
             if (msg.event === 'shell_ready') {
               clearTimeout(timer);
               resolve();
@@ -170,7 +210,7 @@ export class RemoteSession {
             fail(new RemoteError('主机指纹已变化，请先在终端里连接一次并确认', 'host_key'));
             break;
           case 'error':
-            fail(new RemoteError(typeof msg.message === 'string' ? msg.message : String(msg.event ?? 'error'), 'auth'));
+            fail(connectError(typeof msg.message === 'string' ? msg.message : String(msg.event ?? 'error')));
             break;
         }
       };
@@ -271,7 +311,11 @@ export class RemoteSession {
 
   private async execNow(command: string, timeoutSec: number, options: ExecOptions): Promise<ExecResult> {
     if (command.length > 20_000) throw new RemoteError('命令太长，请拆分或改用文件', 'too_long');
-    await this.ready;
+    try {
+      await this.ready;
+    } catch (error) {
+      throw unsent(error);
+    }
     if (this.initFailed) throw new RemoteError('无法初始化远程 Shell（可能不是 POSIX Shell）', 'shell');
     this.touch();
     const id = randomId();
@@ -293,7 +337,11 @@ export class RemoteSession {
     const pattern = new RegExp(init ? `__CSRDY${init}\\n[\\s\\S]*?${result}` : result);
     const started = Date.now();
     if (!init) this.text = '';
-    this.input(line);
+    try {
+      this.input(line);
+    } catch (error) {
+      throw unsent(error);
+    }
     let match: RegExpExecArray;
     try {
       match = await this.waitFor(pattern, (seconds + 15) * 1000);
@@ -364,9 +412,28 @@ export function remoteSession(serverId: number): RemoteSession {
   return session;
 }
 
-/** 执行一条命令（中途断线不自动重试：命令可能已经执行了一部分） */
-export function remoteExec(serverId: number, command: string, timeoutSec = 60, options: ExecOptions = {}): Promise<ExecResult> {
-  return remoteSession(serverId).exec(command, timeoutSec, options);
+/** 取一条已经就绪的会话：连接阶段失败（见 RemoteError.retryable）换一条再试，最多 CONNECT_ATTEMPTS 次 */
+export async function readySession(serverId: number): Promise<RemoteSession> {
+  for (let attempt = 1; ; attempt++) {
+    const session = remoteSession(serverId);
+    try {
+      await session.ready;
+      return session;
+    } catch (error) {
+      if (attempt >= CONNECT_ATTEMPTS || !unsent(error).retryable) throw error;
+    }
+  }
+}
+
+/** 执行一条命令：命令发出去之前连接失败就换一条会话重试；发出去之后断线不重试（可能已经执行了一部分） */
+export async function remoteExec(serverId: number, command: string, timeoutSec = 60, options: ExecOptions = {}): Promise<ExecResult> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await remoteSession(serverId).exec(command, timeoutSec, options);
+    } catch (error) {
+      if (attempt >= CONNECT_ATTEMPTS || !(error instanceof RemoteError) || !error.retryable) throw error;
+    }
+  }
 }
 
 /** 关闭到这台服务器的后台会话（没有就什么都不做）：用户取消时用来结束正在跑的远程命令 */

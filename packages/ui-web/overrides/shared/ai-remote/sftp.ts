@@ -6,6 +6,11 @@
  *   上传 sftp_upload_start → sftp_upload_ready → 按窗口发送二进制分块、等 sftp_upload_progress 确认
  *   → sftp_upload_end（带 SHA-256）→ sftp_upload_complete（Worker 校验哈希）。
  * 分块大小与窗口用网页版同一份策略（直连 / 隧道不同）。中转的文件整个放在内存里，调用方负责限制大小。
+ *
+ * 一个 SSH 会话同时只能有一条 SFTP 通道：Worker 让新连上来的 SFTP WebSocket 顶掉旧的（旧的报“SFTP 连接已关闭（1000）”），
+ * 已打开时再 sftp_init 回“SFTP 已经打开”。所以同一会话（同一个附加地址）上的 open 排队：前一个 close 之后才轮到下一个。
+ * 打开一条要几秒（经入口网关时更久）：常驻的调用方（MCP）可以设 keepAliveMs，close 后通道先留着，这段时间里同一会话的
+ * 下一个 open 直接接着用；出过错的、已断开的不留。
  */
 import { StreamingSHA256 } from '../../../upstream/frontend/src/sha256-stream';
 import { getSFTPUploadPolicy } from '../../../upstream/src/sftp-upload-policy';
@@ -15,6 +20,10 @@ type Message = Record<string, unknown> & { type?: string };
 const OPEN_TIMEOUT_MS = 20_000;
 const STEP_TIMEOUT_MS = 60_000;
 const PING_MS = 20_000;
+/** 每个附加地址上排着的队：最后一个打开者释放时完成 */
+const queues = new Map<string, Promise<void>>();
+/** close 之后留着等下一个 open 接着用的通道 */
+const parked = new Map<string, { sftp: HeadlessSftp; timer: ReturnType<typeof setTimeout> }>();
 
 export class HeadlessSftp {
   private ws: WebSocket | null = null;
@@ -24,9 +33,48 @@ export class HeadlessSftp {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private closedReason: string | null = null;
   private isTunnel = false;
+  /** 轮到下一个打开者（close 时调用） */
+  private release: (() => void) | null = null;
+  /** 这次用的时候出过错：通道状态说不准，close 时不留 */
+  private broken = false;
+  private url = '';
+
+  /** close 之后通道留多久等下一个 open（0：马上关）；常驻进程（MCP）里设上 */
+  static keepAliveMs = 0;
+
+  /** 关掉所有留着的通道（进程要退出时） */
+  static closeIdle(): void {
+    for (const [url, idle] of parked) {
+      parked.delete(url);
+      clearTimeout(idle.timer);
+      idle.sftp.shutdown();
+    }
+  }
 
   static async open(url: string): Promise<HeadlessSftp> {
+    const previous = queues.get(url) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = previous.then(() => new Promise<void>((resolve) => (release = resolve)));
+    queues.set(url, mine);
+    await previous;
+    const done = () => {
+      release();
+      if (queues.get(url) === mine) queues.delete(url);
+    };
+    const idle = parked.get(url);
+    if (idle) {
+      parked.delete(url);
+      clearTimeout(idle.timer);
+      if (idle.sftp.alive) {
+        idle.sftp.release = done;
+        idle.sftp.inbox = [];
+        return idle.sftp;
+      }
+      idle.sftp.shutdown();
+    }
     const sftp = new HeadlessSftp();
+    sftp.url = url;
+    sftp.release = done;
     try {
       await sftp.connect(url);
     } catch (error) {
@@ -65,9 +113,17 @@ export class HeadlessSftp {
       this.send({ type: 'sftp_init' });
       this.pingTimer = setInterval(() => this.send({ type: 'ping' }), PING_MS);
     };
-    return this.take((msg) => msg.type === 'sftp_ready', OPEN_TIMEOUT_MS).then((msg) => {
-      this.isTunnel = msg.isTunnel === true;
-    });
+    return this.take((msg) => msg.type === 'sftp_ready', OPEN_TIMEOUT_MS)
+      .catch((error: Error) => {
+        // 前一个打开者的通道还没关完（排队之外的残留）：关掉再开一次
+        if (!/已经打开/.test(error.message) || this.closedReason) throw error;
+        this.send({ type: 'sftp_close' });
+        this.send({ type: 'sftp_init' });
+        return this.take((msg) => msg.type === 'sftp_ready', OPEN_TIMEOUT_MS);
+      })
+      .then((msg) => {
+        this.isTunnel = msg.isTunnel === true;
+      });
   }
 
   private send(value: Message | Uint8Array): void {
@@ -105,8 +161,21 @@ export class HeadlessSftp {
     });
   }
 
+  private get alive(): boolean {
+    return !this.closedReason && !this.broken && this.ws?.readyState === WebSocket.OPEN;
+  }
+
   /** 下载整个文件到内存；超过 maxBytes 时取消 */
   async download(path: string, maxBytes: number, onProgress?: (loaded: number, total: number) => void): Promise<Blob> {
+    try {
+      return await this.downloadNow(path, maxBytes, onProgress);
+    } catch (error) {
+      this.broken = true;
+      throw error;
+    }
+  }
+
+  private async downloadNow(path: string, maxBytes: number, onProgress?: (loaded: number, total: number) => void): Promise<Blob> {
     const chunks: Uint8Array[] = [];
     let received = 0;
     let overflow = false;
@@ -146,6 +215,15 @@ export class HeadlessSftp {
 
   /** 上传（覆盖目标文件，是否允许覆盖由调用方事先决定） */
   async upload(path: string, blob: Blob, onProgress?: (loaded: number, total: number) => void): Promise<void> {
+    try {
+      await this.uploadNow(path, blob, onProgress);
+    } catch (error) {
+      this.broken = true;
+      throw error;
+    }
+  }
+
+  private async uploadNow(path: string, blob: Blob, onProgress?: (loaded: number, total: number) => void): Promise<void> {
     const policy = getSFTPUploadPolicy(this.isTunnel);
     const hasher = new StreamingSHA256();
     const size = blob.size;
@@ -214,7 +292,24 @@ export class HeadlessSftp {
     this.pingTimer = null;
   }
 
+  /** 用完了：设了 keepAliveMs 且通道好好的就先留着给下一个 open，否则关掉；都会轮到下一个打开者 */
   close(): void {
+    const release = this.release;
+    this.release = null;
+    if (HeadlessSftp.keepAliveMs > 0 && this.alive && this.url && !parked.has(this.url)) {
+      const timer = setTimeout(() => {
+        if (parked.get(this.url)?.sftp === this) parked.delete(this.url);
+        this.shutdown();
+      }, HeadlessSftp.keepAliveMs);
+      (timer as { unref?: () => void }).unref?.();
+      parked.set(this.url, { sftp: this, timer });
+    } else {
+      this.shutdown();
+    }
+    release?.();
+  }
+
+  private shutdown(): void {
     this.closedReason ??= 'SFTP 已关闭';
     this.stopPing();
     const ws = this.ws;

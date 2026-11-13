@@ -2,9 +2,10 @@
 
 Meta Muse 这类云端助手不能安装 skill，也碰不到你电脑上的 `cloudssh`，但能接**自定义连接器**：一个公网 HTTPS 的远程 MCP 地址，用 OAuth 授权。`cloudssh mcp http` 就是这样一个服务器，放在一台常开的服务器上，经 CloudSSH 操作你保存的服务器（与命令行同一套：跳板、隧道、主机 ID、每次结果默认 24KB，`.env` 里 `OUTPUT_KB` 可调）。
 
-- **工具**：`list_servers`、`exec`（可带 `cwd`）、`read_file`、`list_dir`、`write_file`、`edit_file`、`start_job`、`job_status`、`copy`（只读时没有 `write_file`、`edit_file`、`copy`）。文件内容走 SFTP：读写不受命令输出 64KB 的限制、不用 Shell 转义；长任务用 `start_job` 在后台跑、`job_status` 查看。`upload` / `download` 读写的是这台服务器的磁盘，对远程客户端没意义，不提供
+- **工具**：`list_servers`（`details` 看地址、认证方式、跳板、区域）、`exec`（可带 `cwd`）、`read_file`、`list_dir`、`write_file`、`edit_file`、`start_job`、`job_status`、`copy`，以及管理 CloudSSH 本身的 `add_server`、`update_server`、`delete_server`、`snippets`（命令片段）、`server_notes`（CloudSSH 内置 AI 助手按服务器记的知识与工作历程）。只读时没有 `write_file`、`edit_file`、`copy` 和增改删服务器，`snippets`、`server_notes` 只能查看。文件内容走 SFTP：读写不受命令输出 64KB 的限制、不用 Shell 转义；长任务用 `start_job` 在后台跑、`job_status` 查看
+- **传文件**：`upload` / `download` 读写的是这台服务器的磁盘，对远程客户端没意义，不提供。云端 AI 和服务器之间传任意文件（压缩包、图片、程序）用 `write_file` / `read_file` 的 `encoding: base64`（分段，每次约 17KB，附 SHA-256 核对）；`read_file` 读到图片直接把图片交给 AI 看；服务器之间用 `copy`
 - **权限**（`ACCESS`）：`full` 与命令行的完全权限一样，危险命令直接执行（`rm -rf /` 这类拦截级仍拒绝）；`ask` 危险命令要 AI 先问你、再带 `confirm: true`；`read-only` 只放行查看类命令（文件、日志、状态、进程、网络、磁盘、容器），写文件、重定向到文件、安装、重启、删除、命令替换、子 Shell、heredoc、解释器一律拒绝。只读判定是尽力而为的护栏，不是沙箱
-- **不提供的服务器**（`EXCLUDE`）：跑这个服务的机器自己。它上面存着 CloudSSH 的登录，能在它上面执行命令就能读到登录
+- **不提供的服务器**（`EXCLUDE`，可选）：通常是跑这个服务的机器自己。它上面存着 CloudSSH 的登录（入口网关的长期令牌）；放开后 AI 也能操作它，但也能读到这份登录、能改坏连接器自己，按需取舍，能在它上面执行命令就能读到登录
 - **授权**：只认一个人。Muse 添加连接器时打开授权页，输入部署时设的口令（只存 scrypt 哈希）；连续输错 5 次后锁定，1 分钟起、最长 15 分钟。令牌只存 SHA-256，访问令牌 24 小时、刷新令牌 90 天（每用一次往后顺延、不换新的：Claude Code 的每个远程会话各存一份，换新会把别处手里的顶掉）
 - **固定令牌**（可选）：有的应用添加自定义 MCP 时只能填一个固定的 Bearer 令牌或请求头，不会走 OAuth（也就不会自动刷新 24 小时的访问令牌）。给它们生成固定令牌：`.env` 的 `STATIC_TOKENS` 里只存令牌的 SHA-256，可以带名字（`名字:哈希`，多个逗号隔开），不过期，删掉那一项再 `docker compose up -d` 即吊销；权限与 `ACCESS` 一样。令牌本身只在生成时显示一次，在应用里填请求头 `Authorization: Bearer <令牌>`。第一次使用时日志记一行 `固定令牌 名字 开始使用`
 - **审计**：每次执行、拒绝都在容器日志里记一行（工具、主机 ID、命令前 300 字）：`docker compose logs -f`

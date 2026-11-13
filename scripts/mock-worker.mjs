@@ -58,6 +58,8 @@ const server = (name, tags, host, extra = {}) => ({
   updated_at: '2026-10-01T00:00:00Z',
   ...extra,
 });
+/** 服务器笔记：服务器 id → 知识与工作历程（POST/DELETE /api/servers/:id/knowledge、work-logs，GET …/memory） */
+const serverNotes = new Map();
 const servers = [
   server('HK-A 香港一号', ['香港 🇭🇰'], '203.0.113.1', { last_connected_at: now - 1000, os: 'ubuntu' }),
   server('HK-B 香港二号', ['香港 🇭🇰'], '203.0.113.2', { os: 'alpine' }),
@@ -347,6 +349,59 @@ async function handleHttp(req, res) {
     return json(res, 200, { id: 1, github_id: 1, username: 'tester', avatar_url: null });
   }
   if (path === '/api/servers' && method === 'GET') return json(res, 200, servers);
+  // 新增服务器：与 Worker 一样校验认证方式与凭据、跳板要存在，凭据不回传
+  if (path === '/api/servers' && method === 'POST') {
+    const body = await readBody(req);
+    if (!body.name || !body.host) return json(res, 400, { error: '名称与地址不能为空' });
+    if (!['password', 'publickey', 'none'].includes(body.auth_method)) return json(res, 400, { error: '不支持的认证方式' });
+    if (body.auth_method !== 'none' && (typeof body.credential !== 'string' || (body.auth_method === 'publickey' && !body.credential))) {
+      return json(res, 400, { error: '认证凭据不能为空' });
+    }
+    if (body.jump_server_id != null && !servers.some((s) => s.id === body.jump_server_id)) return json(res, 400, { error: '跳板服务器不存在' });
+    const created = server(String(body.name), Array.isArray(body.tags) ? body.tags.map(String) : [], String(body.host), {
+      port: Number(body.port) || 22,
+      username: String(body.username || 'root'),
+      auth_method: body.auth_method,
+      jump_server_id: body.jump_server_id ?? null,
+      transport_type: body.transport_type === 'cf_tunnel' ? 'cf_tunnel' : 'direct',
+      cf_tunnel_host: body.cf_tunnel_host ?? null,
+      region: body.region || null,
+      os: null,
+    });
+    servers.push(created);
+    console.log('新增服务器', created.id, created.name, `${created.username}@${created.host}:${created.port}`, `凭据 ${String(body.credential ?? '').length} 字符`);
+    return json(res, 201, created);
+  }
+  // 服务器笔记（内置 AI 助手的知识与工作历程）：存在内存里
+  const memory = /^\/api\/servers\/(\d+)\/(memory|knowledge|work-logs)(?:\/(\d+))?$/.exec(path);
+  if (memory) {
+    const id = Number(memory[1]);
+    if (!servers.some((s) => s.id === id)) return json(res, 404, { error: 'Server not found' });
+    const store = serverNotes.get(id) ?? { knowledge: [], workLogs: [], next: 1 };
+    serverNotes.set(id, store);
+    if (memory[2] === 'memory' && method === 'GET') return json(res, 200, { knowledge: store.knowledge, workLogs: store.workLogs, revision: store.next });
+    if (memory[2] === 'knowledge' && method === 'POST' && !memory[3]) {
+      const body = await readBody(req);
+      if (!['credential', 'config', 'rule', 'note'].includes(body.category)) return json(res, 400, { error: 'invalidCategory' });
+      if (!String(body.key ?? '').trim()) return json(res, 400, { error: 'keyRequired' });
+      const existing = store.knowledge.find((item) => item.key === body.key);
+      const item = existing ?? { id: store.next++, server_id: id, created_at: Date.now() };
+      Object.assign(item, { category: body.category, key: body.key, value: String(body.value ?? ''), updated_at: Date.now() });
+      if (!existing) store.knowledge.push(item);
+      return json(res, 201, item);
+    }
+    if (memory[2] === 'knowledge' && method === 'DELETE' && memory[3]) {
+      store.knowledge = store.knowledge.filter((item) => item.id !== Number(memory[3]));
+      return json(res, 200, { success: true });
+    }
+    if (memory[2] === 'work-logs' && method === 'POST' && !memory[3]) {
+      const body = await readBody(req);
+      if (!String(body.title ?? '').trim() || !String(body.summary ?? '').trim()) return json(res, 400, { error: 'titleRequired' });
+      const log = { id: store.next++, server_id: id, title: body.title, summary: body.summary, created_at: Date.now(), updated_at: Date.now() };
+      store.workLogs = [log, ...store.workLogs].slice(0, 10);
+      return json(res, 201, log);
+    }
+  }
   // 模拟 AI 增强代理的检测接口（客户端直接访问，要带 CORS）；--proxy-v3 模拟没有长上下文的旧版
   if (path === '/mock-proxy/cloudssh-reasoning') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -1222,6 +1277,8 @@ function mockExec(cmd) {
       const bytes = [...sftpTree.entries()].filter(([p]) => p.startsWith(`${path}/`)).reduce((sum, [, n]) => sum + (n.size || 0), 0);
       return ok(`dir\n${Math.ceil(bytes / 1024) || 4}\n${path}`);
     }
+    // read_file 的 stat 多一行修改时间（与 inode）；复制、下载的同类命令没有这一行
+    if (cmd.includes("stat -c '%y %i'")) return ok(`file\n${node.size}\n${node.mtime ?? 0}.000000000 +0000 ${node.inode ?? 1}\n${path}`);
     return ok(`file\n${node.size}\n${path}`);
   }
   // 传文件：查目标落点
@@ -1833,7 +1890,22 @@ function sftpEntries(dir) {
     });
 }
 
-function attachSftp(ws) {
+/**
+ * 像 Worker：一个会话只有一条 SFTP 通道。新的 SFTP WebSocket 顶掉旧的（旧的以 1000 关闭，但通道还开着），
+ * 通道开着时再 sftp_init 回“SFTP 已经打开”；sftp_close 或当前那条断开时关掉通道
+ */
+const sftpChannels = new Map();
+
+function attachSftp(ws, session) {
+  const channel = sftpChannels.get(session) ?? { ws: null, open: false };
+  sftpChannels.set(session, channel);
+  if (channel.ws && channel.ws !== ws) channel.ws.close(1000);
+  channel.ws = ws;
+  ws.onClose(() => {
+    if (channel.ws !== ws) return;
+    channel.ws = null;
+    channel.open = false;
+  });
   ws.sendJson({ type: 'sftp_socket_ready' });
   let upload = null;
   return (data) => {
@@ -1851,7 +1923,12 @@ function attachSftp(ws) {
       return;
     }
     const error = (operation, message) => ws.sendJson({ type: 'sftp_error', operation, message });
-    if (msg.type === 'sftp_init') ws.sendJson({ type: 'sftp_ready', isTunnel: false });
+    if (msg.type === 'sftp_init') {
+      if (channel.open) return error('init', 'SFTP 已经打开');
+      channel.open = true;
+      // 像真的 SFTP 子系统：打开要一点时间（同一会话同时打开两条时才会撞上）
+      setTimeout(() => ws.sendJson({ type: 'sftp_ready', isTunnel: false }), 150);
+    }
     else if (msg.type === 'sftp_list') {
       const path = !msg.path || msg.path === '~' ? '/root' : msg.path;
       if (sftpTree.get(path)?.type !== 'dir') return error('list', 'No such file');
@@ -1891,7 +1968,10 @@ function attachSftp(ws) {
       }
       ws.sendJson({ type: 'sftp_download_done', filename });
       console.log('SFTP 下载', msg.path, bytes.length, 'bytes');
-    } else if (msg.type === 'sftp_close') ws.close(1000);
+    } else if (msg.type === 'sftp_close') {
+      channel.open = false;
+      ws.close(1000);
+    }
   };
 }
 
@@ -1919,7 +1999,7 @@ http
     socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${acceptKey(req.headers['sec-websocket-key'])}`, '', ''].join('\r\n'));
     let handler = () => {};
     const ws = createSocket(socket, (data) => handler(data));
-    if (url.pathname === '/api/ssh/sftp') handler = attachSftp(ws);
+    if (url.pathname === '/api/ssh/sftp') handler = attachSftp(ws, url.searchParams.get('session') ?? '');
     else if (url.pathname === '/api/ssh') handler = url.searchParams.has('session') ? resumeShell(ws, url) : attachShell(ws, url);
     else ws.close(1008);
   })
