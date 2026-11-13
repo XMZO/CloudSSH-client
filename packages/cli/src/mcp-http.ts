@@ -687,9 +687,19 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
     const initializing = items.some((item) => !!item && typeof item === 'object' && (item as Json).method === 'initialize');
     const fingerprint = mcp.fingerprint();
     const session = req.headers['mcp-session-id'];
+    const who = staticLabel ? `固定令牌 ${staticLabel}` : 'OAuth';
     // 回 MCP SDK 服务端同样的报错（有的客户端按这句话判断会话失效、自动重连）
     if (!initializing && typeof session === 'string' && !session.startsWith(`${fingerprint}.`)) {
+      log(`会话 ${session.slice(0, 8)}… 的工具已变（${who}），回 404 让客户端重新初始化`);
       return send(res, 404, { jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Session not found' } });
+    }
+    if (initializing) {
+      // 看得出客户端什么时候重新初始化（取到新的工具列表）
+      const init = items.find((item) => !!item && typeof item === 'object' && (item as Json).method === 'initialize') as Json;
+      const info = (init.params as Json | undefined)?.clientInfo as Json | undefined;
+      const name = typeof info?.name === 'string' ? info.name.slice(0, 60) : '?';
+      const version = typeof info?.version === 'string' ? info.version.slice(0, 30) : '';
+      log(`客户端初始化：${name}${version ? ` ${version}` : ''}（${who}${typeof session === 'string' ? '，带着旧会话' : ''}）`);
     }
     const requestIds = items.filter((item) => item && typeof item === 'object' && 'method' in item && 'id' in item).map((item) => (item as Json).id);
     // 客户端断开：取消还在执行的调用
