@@ -25,6 +25,7 @@
  */
 import type { ServerConfig } from '@cloudssh/core';
 import { CLIENT_VERSION } from '@cloudssh/core';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { closeRemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
 import { HeadlessSftp, SFTP_KEEP_MS } from '../../ui-web/overrides/shared/ai-remote/sftp';
@@ -393,6 +394,9 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
         'The command runs in a non-interactive shell (no TTY, empty stdin) in the login user\'s home directory: use absolute paths, `sudo -n`, `-y` style flags, and no pagers, editors or follow modes (`tail -f`, `watch`, `top` without `-b -n1`).',
         `Each result is capped at ${kb(outputLimit)}: longer output keeps its beginning and end with the middle left out (beyond ${kb(REMOTE_OUTPUT_LIMIT)} only the end survives). Filter with grep, tail, head or wc, or redirect to a file and page through it with read_file.`,
         readOnly
+          ? 'Read files with read_file (exact text, up to 20 MB) rather than cat.'
+          : 'Read and change files with read_file, write_file and edit_file rather than cat, heredocs, sed -i or scripts: they work over SFTP, with no shell quoting.',
+        readOnly
           ? READ_ONLY_DOC
           : fullAccess
             ? 'Full access is on: risky commands run without confirm, but still tell the user before deleting data, stopping services or rebooting.'
@@ -690,8 +694,8 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     'Start with list_servers and use host IDs (srv-12) as targets. Never ask the user for SSH passwords, private keys or passphrases.',
     `exec runs a non-interactive shell; every tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. Batch independent read-only checks for one server into one exec, each part headed by \`echo '== …'\` and joined with \`;\`. Run anything longer than a minute or two with start_job and poll job_status.`,
     readOnly
-      ? 'Files: read_file (shows images; encoding: base64 for any binary) and list_dir.'
-      : `Files: read_file (shows images; encoding: base64 for any binary), list_dir, write_file and edit_file (exact text replacement) work over SFTP without shell quoting; send content over about ${PART_HINT_KB} KB to write_file in pieces (part / parts). ` +
+      ? 'Files: read them with read_file (shows images; encoding: base64 for any binary) and list_dir, not with cat in exec.'
+      : `Files: read and change them with read_file, write_file and edit_file (exact text replacement), not with cat, sed -i, heredocs or scripts in exec: these work over SFTP, so there is no shell quoting to get wrong. read_file shows images and takes encoding: base64 for any binary; list_dir lists a directory; send write_file content over about ${PART_HINT_KB} KB in pieces (part / parts). ` +
         (remote ? 'copy moves files between servers.' : 'upload / download move files between this computer and a server; copy moves them between servers.'),
     readOnly
       ? 'server_notes (read) shows what CloudSSH knows about a server (credentials, config locations, rules, recent work); snippets (list) shows the saved command snippets.'
@@ -738,6 +742,22 @@ export class McpServer {
   async handle(message: unknown): Promise<void> {
     const response = await this.respond(message);
     if (response) this.send(response);
+  }
+
+  /**
+   * 现在给客户端的工具与说明的指纹（HTTP 传输放进会话 ID）：升级或改了设置后工具变了，旧会话的请求回 404，
+   * 客户端按规范重新 initialize、重新取工具列表；否则它会一直用连上时拿到的旧列表，看不到新工具
+   */
+  fingerprint(): string {
+    const config = tryLoadConfig();
+    let origin: string | null = null;
+    try {
+      origin = activeInstance(this.instance).origin;
+    } catch {
+      // 还没登录
+    }
+    const shown = [CLIENT_VERSION, toolDefinitions(config, this.remote), instructions(config, origin, this.remote)];
+    return createHash('sha256').update(JSON.stringify(shown)).digest('hex').slice(0, 16);
   }
 
   /** 处理一条消息（单条或批量），返回要回复的内容（只有通知时为 null）；HTTP 传输用 */

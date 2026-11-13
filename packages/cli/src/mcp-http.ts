@@ -15,8 +15,10 @@
  *   可带名字（名字:哈希，逗号隔开），用 cloudssh mcp http --new-token 生成；不过期，删掉那一项重启即吊销
  * - 口令连续输错 5 次后按指数退避锁定（1 分钟起，最长 15 分钟）；注册每小时最多 30 个客户端
  * - 状态文件 <CLOUDSSH_HOME>/mcp-http.json（权限 600）只存客户端与令牌的 SHA-256，不存令牌本身
- * MCP：POST /mcp 收 JSON-RPC（单条或批量），回 application/json；只有通知时回 202。不推送服务器消息（GET 回 405）、
- * 不用会话。客户端断开时取消还在执行的调用（关掉用到的服务器的后台会话，远端命令随之结束）。
+ * MCP：POST /mcp 收 JSON-RPC（单条或批量），回 application/json；只有通知时回 202。不推送服务器消息（GET 回 405）。
+ * 会话只用来让客户端发现工具变了：initialize 时给 Mcp-Session-Id（前面是工具与说明的指纹），之后带着旧指纹来的请求回 404，
+ * 客户端照规范重新 initialize、重新取工具列表（升级、改设置之后不会一直用旧列表）；不带会话 ID 的客户端照常处理。
+ * 客户端断开时取消还在执行的调用（关掉用到的服务器的后台会话，远端命令随之结束）。
  */
 import crypto from 'node:crypto';
 import dns from 'node:dns';
@@ -682,6 +684,13 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
       return send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
     }
     const items = Array.isArray(message) ? message : [message];
+    const initializing = items.some((item) => !!item && typeof item === 'object' && (item as Json).method === 'initialize');
+    const fingerprint = mcp.fingerprint();
+    const session = req.headers['mcp-session-id'];
+    // 回 MCP SDK 服务端同样的报错（有的客户端按这句话判断会话失效、自动重连）
+    if (!initializing && typeof session === 'string' && !session.startsWith(`${fingerprint}.`)) {
+      return send(res, 404, { jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Session not found' } });
+    }
     const requestIds = items.filter((item) => item && typeof item === 'object' && 'method' in item && 'id' in item).map((item) => (item as Json).id);
     // 客户端断开：取消还在执行的调用
     let finished = false;
@@ -696,7 +705,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
       res.end();
       return;
     }
-    send(res, 200, response);
+    send(res, 200, response, initializing ? { 'Mcp-Session-Id': `${fingerprint}.${randomToken(16)}` } : {});
   }
 
   // ----- 路由 -----
@@ -754,7 +763,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
         return revoke(req, res);
       case 'POST /mcp':
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Expose-Headers', 'WWW-Authenticate');
+        res.setHeader('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id');
         return mcpPost(req, res);
       case 'GET /mcp':
       case 'DELETE /mcp':

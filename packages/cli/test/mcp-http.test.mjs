@@ -288,11 +288,30 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.equal(hello.isError, false, hello.text);
     assert.match(hello.text, /hello/);
     const risky = await callTool(server.base, token, 'exec', { target: 'JP-A', command: 'rm -rf /tmp/old-logs' });
-    assert.doesNotMatch(risky.text, /危险命令/);
+    assert.doesNotMatch(risky.text, /Risky command/);
     const blocked = await callTool(server.base, token, 'exec', { target: 'JP-A', command: 'rm -rf /' });
     assert.equal(blocked.isError, true);
     assert.match(blocked.text, /Refused/);
     assert.match(server.stderr, /exec 执行 srv-\d+：echo hello/);
+  });
+
+  test('会话 ID：initialize 时给一个（前面是工具指纹），带着它照常调用；指纹对不上（升级后工具变了）回 404 让客户端重新 initialize；不带的照常', async () => {
+    const { tokens } = await login(server.base);
+    const token = tokens.access_token;
+    const init = await rpc(server.base, token, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+    const session = init.headers.get('mcp-session-id');
+    assert.match(session ?? '', /^[0-9a-f]{16}\.[\w-]{20,}$/);
+    const list = (id) =>
+      fetch(`${server.base}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Mcp-Session-Id': id },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      });
+    assert.equal((await list(session)).status, 200);
+    const stale = await list(`0000000000000000.${'a'.repeat(22)}`);
+    assert.equal(stale.status, 404);
+    assert.match((await stale.json()).error.message, /Session not found/);
+    assert.equal((await rpc(server.base, token, 'tools/list')).status, 200);
   });
 
   test('令牌刷新：发新的访问令牌，刷新令牌不换、可以再用（几处各存一份不互相顶掉）；吊销后整份都不能用', async () => {
