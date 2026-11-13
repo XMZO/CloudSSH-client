@@ -5,6 +5,7 @@
 import type { ServerConfig } from '@cloudssh/core';
 import { CLIENT_CODENAME, CLIENT_VERSION } from '@cloudssh/core';
 import { closeAllRemoteSessions, remoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
+import { english } from './english';
 import { bool, COMMON, int, parseArgs, str, type FlagSpec, type Parsed } from './args';
 import {
   expiresAt,
@@ -112,7 +113,7 @@ async function cmdServers(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv, flagsWith({ query: { type: 'string', short: 'q' }, tag: { type: 'string', short: 't' } }));
   const { servers } = await connect(parsed);
   const rows = filterServers(servers, str(parsed, 'query'), str(parsed, 'tag'));
-  out(rows, bool(parsed, 'json'), () => (rows.length ? rows.map(formatServerRow).join('\n') : '（没有匹配的服务器）'));
+  out(rows, bool(parsed, 'json'), () => (rows.length ? rows.map(formatServerRow).join('\n') : '(no matching servers)'));
   return 0;
 }
 
@@ -128,15 +129,15 @@ async function cmdExec(argv: string[]): Promise<number> {
     1
   );
   const [spec] = parsed.positionals;
-  if (!spec) throw new UsageError('用法：cloudssh exec <目标> "<命令>"（或 --stdin、--file <文件>）');
+  if (!spec) throw new UsageError('Usage: cloudssh exec <target> "<command>" (or --stdin, --file <file>)');
   let command = parsed.rest.join(' ');
   const file = str(parsed, 'file');
-  if (file && bool(parsed, 'stdin')) throw new UsageError('--stdin 和 --file 只能用一个');
+  if (file && bool(parsed, 'stdin')) throw new UsageError('Use only one of --stdin and --file');
   if (file || bool(parsed, 'stdin')) {
-    if (command) throw new UsageError(`用了 ${file ? '--file' : '--stdin'} 就不要再在参数里写命令`);
+    if (command) throw new UsageError(`With ${file ? '--file' : '--stdin'}, do not also pass the command as an argument`);
     command = (file ? readCommandFile(localPath(file)) : await readStdin()).replace(/\r\n/g, '\n').replace(/\n+$/, '');
   }
-  if (!command.trim()) throw new UsageError('没有要执行的命令');
+  if (!command.trim()) throw new UsageError('No command to run');
   const { config, origin } = activeInstance(str(parsed, 'instance'));
   const timeout = int(parsed, 'timeout', 1, 3600) ?? config.timeout;
   const yes = bool(parsed, 'yes');
@@ -158,25 +159,25 @@ async function cmdExec(argv: string[]): Promise<number> {
 async function cmdUpload(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv, COMMON);
   const [spec, local, remote] = parsed.positionals;
-  if (!spec || !local || !remote) throw new UsageError('用法：cloudssh upload <目标> <本机路径> <远程路径>');
+  if (!spec || !local || !remote) throw new UsageError('Usage: cloudssh upload <target> <local-path> <remote-path>');
   const { config, servers } = await connect(parsed);
   const server = resolveSingle(spec, servers, config);
   const progress = progressPrinter(bool(parsed, 'json'));
   const result = await upload(server, localPath(local), remote, progress).finally(() => progress.end());
-  out({ server: hostId(server), ...result }, bool(parsed, 'json'), () => `已上传到 ${hostId(server)} ${server.name}：${describeTransfer(result)}`);
+  out({ server: hostId(server), ...result }, bool(parsed, 'json'), () => `Uploaded to ${hostId(server)} ${server.name}: ${describeTransfer(result)}`);
   return 0;
 }
 
 async function cmdDownload(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv, flagsWith({ 'max-size': { type: 'string' } }));
   const [spec, remote, local] = parsed.positionals;
-  if (!spec || !remote || !local) throw new UsageError('用法：cloudssh download <目标> <远程路径> <本机路径>');
+  if (!spec || !remote || !local) throw new UsageError('Usage: cloudssh download <target> <remote-path> <local-path>');
   const maxMb = int(parsed, 'max-size', 1, 1024 * 1024);
   const { config, servers } = await connect(parsed);
   const server = resolveSingle(spec, servers, config);
   const progress = progressPrinter(bool(parsed, 'json'));
   const result = await download(server, remote, localPath(local), maxMb ? maxMb * 1024 * 1024 : DEFAULT_MAX_BYTES, progress).finally(() => progress.end());
-  out({ server: hostId(server), ...result }, bool(parsed, 'json'), () => `已从 ${hostId(server)} ${server.name} 下载：${describeTransfer(result)}`);
+  out({ server: hostId(server), ...result }, bool(parsed, 'json'), () => `Downloaded from ${hostId(server)} ${server.name}: ${describeTransfer(result)}`);
   return 0;
 }
 
@@ -185,7 +186,7 @@ async function cmdCopy(argv: string[]): Promise<number> {
   const [fromSpec, toSpec] = parsed.positionals;
   const from = fromSpec ? splitRemote(fromSpec) : null;
   const to = toSpec ? splitRemote(toSpec) : null;
-  if (!from || !to) throw new UsageError('用法：cloudssh copy <目标:路径> <目标:路径>（例如 srv-12:/root/a.tgz srv-34:/tmp/）');
+  if (!from || !to) throw new UsageError('Usage: cloudssh copy <target:path> <target:path> (e.g. web:/root/a.tgz db:/tmp/)');
   const { config, servers } = await connect(parsed);
   const source = resolveSingle(from.target, servers, config);
   const target = resolveSingle(to.target, servers, config);
@@ -194,7 +195,7 @@ async function cmdCopy(argv: string[]): Promise<number> {
   const progress = progressPrinter(bool(parsed, 'json'));
   const result = await copyBetween(source, from.path, target, to.path, overwrite, progress).finally(() => progress.end());
   out({ from: hostId(source), to: hostId(target), ...result }, bool(parsed, 'json'), () =>
-    `已从 ${hostId(source)} ${source.name} 传到 ${hostId(target)} ${target.name}：${describeTransfer(result)}`
+    `Copied from ${hostId(source)} ${source.name} to ${hostId(target)} ${target.name}: ${describeTransfer(result)}`
   );
   return 0;
 }
@@ -604,7 +605,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     default:
-      throw new UsageError(`不认识的命令 ${command}（cloudssh --help 查看）`);
+      throw new UsageError(`Unknown command ${command} (see cloudssh --help)`);
   }
 }
 
@@ -612,8 +613,8 @@ main(process.argv.slice(2))
   .catch((error: unknown) => {
     // 漏网的网络错误（Node 只说 “fetch failed”）也说清楚原因
     const raw = error instanceof Error ? error.message : String(error);
-    const message = raw === 'fetch failed' ? networkMessage(instanceOrigin() || '服务器', error) : raw;
-    process.stderr.write(`cloudssh: ${message}\n`);
+    const message = raw === 'fetch failed' ? networkMessage(instanceOrigin() || 'the server', error) : raw;
+    process.stderr.write(`cloudssh: ${english(message)}\n`);
     return error instanceof UsageError ? 2 : 1;
   })
   .then((code) => {

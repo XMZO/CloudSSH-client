@@ -105,8 +105,8 @@ export function readCommandFile(file: string): string {
   try {
     size = fs.statSync(file).size;
   } catch {
-    throw new UsageError(`读不到命令文件 ${file}`);
+    throw new UsageError(`Cannot read command file ${file}`);
   }
-  if (size > MAX_COMMAND_FILE) throw new UsageError(`命令文件太大（${size} 字节，最多 1MB）：大文件请用 upload 传上去再执行`);
+  if (size > MAX_COMMAND_FILE) throw new UsageError(`Command file too large (${size} bytes, max 1 MB): upload it and run it on the server instead`);
   return fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
 }

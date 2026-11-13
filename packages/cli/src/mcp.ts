@@ -28,6 +28,7 @@ import { CLIENT_VERSION } from '@cloudssh/core';
 import os from 'node:os';
 import { closeRemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
 import { HeadlessSftp } from '../../ui-web/overrides/shared/ai-remote/sftp';
+import { english } from './english';
 import { loadConfig, OUTPUT_LIMIT_KB, UsageError, type CliConfig } from './config';
 import { commandVerdict, outcomeOk, outcomeStatus, runExec, type ExecOutcome } from './exec';
 import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes, localPath, progressText, shellPath, upload, type Progress } from './files';
@@ -71,14 +72,17 @@ export function outputLimitOf(config: CliConfig | null): number {
 }
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** 写文件时建议每段最多这么多 KB：AI 客户端对单次工具调用的长度有上限，大脚本一次写不下 */
 const PART_HINT_KB = 8;
 /** read_file 把图片交给模型看的大小上限 */
-const IMAGE_MAX_MB = 5;
+const IMAGE_MAX_MB = 20;
+/** 图片大时让模型先在服务器上缩小再看：Claude 看图前会把长边缩到 1568 像素，再大只是多花流量与时间 */
+const SHRINK_HINT = "e.g. convert IN -resize '1568x1568>' -quality 85 /tmp/OUT.jpg";
 /** read_file 用 base64 时每次最多读多少字节：base64 之后连同说明放得进一次结果 */
 const base64ChunkMax = () => Math.max(3, Math.floor((outputLimit - 1024) / 4) * 3);
 /** 命令输出被截断时，告诉模型怎么拿到完整的 */
-const FULL_OUTPUT_HINT = '要看完整输出：在命令后加 > /tmp/out.log 2>&1，再用 read_file 分段读（offset / limit），或用 grep / tail / head 过滤';
+const FULL_OUTPUT_HINT = 'For the full output, redirect it (> /tmp/out.log 2>&1) and page through the file with read_file (offset / limit), or filter it with grep / tail / head';
 const SERVER_CACHE_MS = 15_000;
 /** 一条消息最长 8MB（没有换行就一直攒着的输入直接丢掉） */
 const MAX_LINE = 8 * 1024 * 1024;
@@ -148,7 +152,7 @@ export function shareBudget(sizes: number[], budget: number): number[] {
 /** 带行号的文件内容：超过上限时在整行处截断，提示用 offset / limit 分段读；more 是没超时附在末尾的说明 */
 function boundedLines(text: string, more: string, limit = outputLimit): string {
   if (byteLength(text + more) <= limit) return text + more;
-  const note = `\n（超过 ${kb(limit)}，后面的行省略了：用 offset 从下一行接着读，或把 limit 调小）`;
+  const note = `\n[Capped at ${kb(limit)}; later lines omitted. Continue with offset = last shown line + 1, or lower limit.]`;
   const clipped = clipBytes(text, limit - byteLength(note), 'head');
   return clipped.slice(0, Math.max(0, clipped.lastIndexOf('\n'))) + note;
 }
@@ -156,7 +160,7 @@ function boundedLines(text: string, more: string, limit = outputLimit): string {
 /** 超过上限时只留开头（列表、说明之类） */
 function bounded(text: string, limit = outputLimit): string {
   if (byteLength(text) <= limit) return text;
-  const note = `\n（结果超过 ${kb(limit)}，后面的省略了）`;
+  const note = `\n[Result capped at ${kb(limit)}; the rest is omitted.]`;
   return clipBytes(text, limit - byteLength(note), 'head') + note;
 }
 
@@ -180,24 +184,24 @@ const lineCount = (text: string): number => (text ? text.split('\n').length : 0)
  */
 function clipOutput(output: string, budget: number, headLost: boolean): string {
   if (headLost) {
-    return `（输出超过 ${kb(REMOTE_OUTPUT_LIMIT)}，开头已经丢了，这里只保留最后一段。${FULL_OUTPUT_HINT}）\n${clipLines(output, budget, 'tail')}`;
+    return `[Output exceeded ${kb(REMOTE_OUTPUT_LIMIT)}; only the end was kept. ${FULL_OUTPUT_HINT}.]\n${clipLines(output, budget, 'tail')}`;
   }
   if (byteLength(output) <= budget) return output;
   const head = clipLines(output, Math.floor(budget * 0.3), 'head');
   const tail = clipLines(output, budget - byteLength(head), 'tail');
   const omitted = Math.max(0, lineCount(output) - lineCount(head) - lineCount(tail));
   const omittedBytes = Math.max(0, byteLength(output) - byteLength(head) - byteLength(tail));
-  return `${head}\n…（输出太长，中间省略了 ${omitted} 行、约 ${formatBytes(omittedBytes)}。${FULL_OUTPUT_HINT}）…\n${tail}`;
+  return `${head}\n…[${omitted} lines (~${formatBytes(omittedBytes)}) omitted from the middle. ${FULL_OUTPUT_HINT}.]…\n${tail}`;
 }
 
 /** exec 的结果：每台一段（标题带状态与耗时），总长不超过 limit；超出时每台按份额留开头和末尾（见 clipOutput） */
 export function formatExec(results: ExecOutcome[], limit = outputLimit): string {
   const heads = results.map(
     (item) =>
-      `===== ${item.server.id} ${item.server.name} · ${outcomeStatus(item)}${item.timedOut ? '，命令已被结束' : ''}${item.error ? '' : ` · ${(item.durationMs / 1000).toFixed(1)} 秒`} =====`
+      `===== ${item.server.id} ${item.server.name} · ${outcomeStatus(item)}${item.timedOut ? ' (killed)' : ''}${item.error ? '' : ` · ${(item.durationMs / 1000).toFixed(1)}s`} =====`
   );
   const notes = results.map((item) =>
-    item.timedOut ? '（要等更久就把 timeout 调大（最多 3600 秒），或用 start_job 放到后台跑、再用 job_status 看）' : ''
+    item.timedOut ? '[To wait longer, raise timeout (max 3600 s), or run it with start_job and poll job_status.]' : ''
   );
   // 服务器那边截过的（tail -c）第一行多半只剩半行：去掉
   const outputs = results.map((item) => {
@@ -205,7 +209,7 @@ export function formatExec(results: ExecOutcome[], limit = outputLimit): string 
     return item.truncated && output.includes('\n') ? output.slice(output.indexOf('\n') + 1) : output;
   });
   const ok = results.filter(outcomeOk).length;
-  const summary = results.length > 1 ? `\n${results.length} 台：${ok} 台成功，${results.length - ok} 台失败或未完成` : '';
+  const summary = results.length > 1 ? `\n${results.length} servers: ${ok} succeeded, ${results.length - ok} failed or did not finish` : '';
   // 每段的截断说明（含怎么看完整输出）最多约 360 字节
   const fixed = [...heads, ...notes, summary].reduce((sum, text) => sum + byteLength(text) + 1, 0) + results.length * 360;
   const alloc = shareBudget(outputs.map(byteLength), limit - fixed);
@@ -213,7 +217,7 @@ export function formatExec(results: ExecOutcome[], limit = outputLimit): string 
   results.forEach((item, index) => {
     parts.push(heads[index]);
     const output = outputs[index];
-    if (!output) parts.push(item.error ? '' : '（没有输出）');
+    if (!output) parts.push(item.error ? '' : '(no output)');
     else parts.push(clipOutput(output, alloc[index], item.truncated));
     if (notes[index]) parts.push(notes[index]);
   });
@@ -225,13 +229,13 @@ export function formatExec(results: ExecOutcome[], limit = outputLimit): string 
 function optString(args: Json, name: string): string | undefined {
   const value = args[name];
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') throw new ToolError(`参数 ${name} 要是字符串`);
+  if (typeof value !== 'string') throw new ToolError(`${name} must be a string`);
   return value;
 }
 
 function reqString(args: Json, name: string): string {
   const value = optString(args, name);
-  if (!value?.trim()) throw new ToolError(`缺少参数 ${name}`);
+  if (!value?.trim()) throw new ToolError(`Missing or empty parameter: ${name}`);
   return value;
 }
 
@@ -240,7 +244,7 @@ function optInt(args: Json, name: string, min: number, max: number): number | un
   if (value === undefined || value === null) return undefined;
   const number = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
   if (typeof number !== 'number' || !Number.isInteger(number) || number < min || number > max) {
-    throw new ToolError(`参数 ${name} 要是 ${min}～${max} 之间的整数`);
+    throw new ToolError(`${name} must be an integer from ${min} to ${max}`);
   }
   return number;
 }
@@ -250,7 +254,7 @@ function optBool(args: Json, name: string): boolean {
   if (value === undefined || value === null) return false;
   if (typeof value === 'boolean') return value;
   if (value === 'true' || value === 'false') return value === 'true';
-  throw new ToolError(`参数 ${name} 要是 true 或 false`);
+  throw new ToolError(`${name} must be true or false`);
 }
 
 /** 本机路径：~ 展开成家目录（没有 shell 帮忙展开），Git Bash 写法换成 Windows 路径；相对路径按服务器进程的工作目录 */
@@ -410,7 +414,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
       title: 'Read a file',
       description:
         `Read a file on one server over SFTP (not limited by command output; up to 20 MB). Text comes back with line numbers (like cat -n), at most ${kb(outputLimit)} per call: use offset / limit (lines) for the rest; prefer this over exec cat for files you will edit.` +
-        ` Images (PNG, JPEG, GIF, WebP up to ${IMAGE_MAX_MB} MB) come back as images you can look at.` +
+        ` Images (PNG, JPEG, GIF, WebP, up to ${IMAGE_MAX_MB} MB) come back as images you can view; shrink large ones on the server first while keeping the detail you need legible (${SHRINK_HINT}; PNG or WebP for text and UI), then read the smaller copy.` +
         ` Any file, binary included: encoding base64 returns the raw bytes as base64, and offset / limit then count bytes (at most ${kb(base64ChunkMax())} of file per call); each answer gives the total size, the next offset and the SHA-256 of the whole file to verify what you put together.`,
       inputSchema: {
         type: 'object',
@@ -705,7 +709,7 @@ function instructions(config: CliConfig | null, origin: string | null, remote?: 
     `Commands run in a non-interactive shell; each tool result is capped at ${kb(outputLimit)}, so filter output (grep, tail, head) or redirect it to a file and page through it with read_file. ` + 'Ask the user before risky commands and pass confirm: true only after they agree.',
     `For files on a server use read_file / list_dir / write_file / edit_file (no shell quoting or heredocs; edit_file replaces exact text; long content, more than about ${PART_HINT_KB} KB, goes in pieces with part / parts; read_file shows images, encoding: base64 handles any binary); upload / download move files between this computer and a server; for anything that runs longer than a minute or two use start_job and check it with job_status.`,
     'CloudSSH itself: add_server / update_server / delete_server manage the saved servers, snippets the saved command snippets, server_notes the per-server knowledge and work log that CloudSSH\'s own AI assistant also uses.',
-    'If a tool reports that the login expired or no instance is signed in, ask the user to run `cloudssh login` in a terminal, or to turn on "同步登录给命令行" in the CloudSSH desktop app.',
+    'If a tool reports that the login expired or no instance is signed in, ask the user to run `cloudssh login` in a terminal, or to turn on the CloudSSH desktop app setting "同步登录给命令行" (sync sign-in to the CLI).',
   ].join('\n');
   return base + (config ? userGuidance(config, '`confirm: true`') : '');
 }
@@ -865,7 +869,7 @@ export class McpServer {
       if (error instanceof ApiError && error.status === 401) this.cache = null;
       const known = error instanceof ToolError || error instanceof UsageError || error instanceof ApiError;
       if (!known) log(`${params.name} 出错：${(error as Error)?.stack ?? String(error)}`);
-      return toolResult((error as Error)?.message ?? String(error), true);
+      return toolResult(english((error as Error)?.message ?? String(error)), true);
     } finally {
       state.done = true;
       this.inflight.delete(key);
@@ -900,15 +904,15 @@ export class McpServer {
       const check = blocked.action === 'refuse' ? { ok: false as const, reason: blocked.reason } : readOnlyCheck(command);
       if (!check.ok) {
         this.audit(`${tool} 拒绝 ${where}：${check.reason}｜${summary}`);
-        throw new ToolError(`只读模式，没有执行（${check.reason}）。只能执行查看类命令；需要改动服务器时请用户自己操作`);
+        throw new ToolError(`Not run: read-only mode (${check.reason}). Only read-only commands are allowed; changes must be made by the user.`);
       }
     }
     const verdict = commandVerdict(command, confirm, confirmMode(config, this.remote));
     this.audit(`${tool} ${verdict.action === 'run' ? '执行' : '拒绝'} ${where}：${summary}`);
-    if (verdict.action === 'refuse') throw new ToolError(`拒绝执行（${verdict.reason}）：拦截级命令一律拒绝，没有执行`);
+    if (verdict.action === 'refuse') throw new ToolError(`Refused, not run (${verdict.reason}): this command is always blocked.`);
     if (verdict.action === 'confirm') {
-      const names = targets.map((server) => `${hostId(server)} ${server.name}`).join('、');
-      throw new ToolError(`危险命令（${verdict.reason}），没有执行：先告诉用户要在 ${names} 上执行什么，用户同意后带 confirm: true 再调用`);
+      const names = targets.map((server) => `${hostId(server)} ${server.name}`).join(', ');
+      throw new ToolError(`Risky command (${verdict.reason}), not run. Tell the user what will run on ${names}; call again with confirm: true only after they agree.`);
     }
   }
 
@@ -916,7 +920,7 @@ export class McpServer {
   private mayChange(config: CliConfig, confirm: boolean, server: ServerConfig): (path: string) => boolean {
     return (path) => {
       if (confirm || confirmMode(config, this.remote) === 'never') return true;
-      throw new ToolError(`${hostId(server)} ${server.name} 上已有 ${path}，没有改动：先告诉用户要改什么，用户同意后带 confirm: true 再调用`);
+      throw new ToolError(`${path} already exists on ${hostId(server)} ${server.name}; not changed. Tell the user what will change; call again with confirm: true only after they agree.`);
     };
   }
 
@@ -927,13 +931,13 @@ export class McpServer {
       const details = optBool(args, 'details');
       const { servers } = await this.prepare(true);
       const rows = filterServers(servers, query, tag);
-      if (!rows.length) return { text: servers.length ? '（没有匹配的服务器）' : '（还没有保存任何服务器）' };
+      if (!rows.length) return { text: servers.length ? '(no matching servers)' : '(no servers saved yet)' };
       if (details) {
         const byId = new Map(servers.map((server) => [hostId(server), server]));
         const blocks = rows.map((row) => describeServer(byId.get(row.id)!, servers));
-        return { text: bounded(`共 ${rows.length} 台（主机 ID、名称；用户@地址、认证方式、线路；标签、系统、区域、最近连接）\n${blocks.join('\n')}`) };
+        return { text: bounded(`${plural(rows.length, 'server')} (host ID, name; user@address, auth, route; tags, OS, region, last connected)\n${blocks.join('\n')}`) };
       }
-      return { text: bounded(`共 ${rows.length} 台（主机 ID、名称、[标签]、系统、线路）\n${rows.map(formatServerRow).join('\n')}`) };
+      return { text: bounded(`${plural(rows.length, 'server')} (host ID, name, [tags], OS, route)\n${rows.map(formatServerRow).join('\n')}`) };
     },
 
     exec: async (args, context) => {
@@ -951,7 +955,7 @@ export class McpServer {
       const full = cwd?.trim() ? `cd -- ${shellPath(cwd.trim())} || exit 1; ${command}` : command;
       const started = Date.now();
       const heartbeat = context.progress
-        ? setInterval(() => context.progress!(`执行中，已 ${Math.round((Date.now() - started) / 1000)} 秒`), HEARTBEAT_MS)
+        ? setInterval(() => context.progress!(`Running, ${Math.round((Date.now() - started) / 1000)}s elapsed`), HEARTBEAT_MS)
         : null;
       try {
         const results = await runExec(targets, full, timeout, config.concurrency);
@@ -965,7 +969,7 @@ export class McpServer {
       const target = reqString(args, 'target');
       const path = reqString(args, 'path');
       const encoding = optString(args, 'encoding') ?? 'text';
-      if (encoding !== 'text' && encoding !== 'base64') throw new ToolError('encoding 只能是 text 或 base64');
+      if (encoding !== 'text' && encoding !== 'base64') throw new ToolError('encoding must be text or base64');
       const offsetArg = optInt(args, 'offset', 0, Number.MAX_SAFE_INTEGER);
       const limitArg = optInt(args, 'limit', 1, 1048576);
       const { config, servers } = await this.prepare();
@@ -979,29 +983,29 @@ export class McpServer {
         const from = Math.min(offsetArg ?? 0, size);
         const to = Math.min(size, from + Math.min(limitArg ?? Number.MAX_SAFE_INTEGER, base64ChunkMax()));
         const data = Buffer.from(file.bytes.subarray(from, to)).toString('base64');
-        const next = to < size ? `还有 ${size - to} 字节：offset: ${to}` : '已到末尾';
-        return { text: `${where}（${size} 字节，整个文件的 SHA-256 ${file.sha256}）第 ${from}–${to} 字节的 base64（${next}）：\n${data}` };
+        const next = to < size ? `${size - to} bytes left; next offset: ${to}` : 'end of file';
+        return { text: `${where} (${size} bytes, whole-file SHA-256 ${file.sha256}): base64 of bytes [${from}, ${to}) (${next}):\n${data}` };
       }
       const image = imageType(file.bytes);
       if (image) {
         if (file.bytes.length > IMAGE_MAX_MB * 1024 * 1024) {
-          throw new ToolError(`${where} 是图片（${formatBytes(file.bytes.length)}），超过 ${IMAGE_MAX_MB}MB 不直接给你看：先在服务器上缩小（convert -resize），或用 encoding: base64 分段取`);
+          throw new ToolError(`${where} is a ${formatBytes(file.bytes.length)} image, over the ${IMAGE_MAX_MB} MB view limit: shrink it on the server first (${SHRINK_HINT}) and read the copy, or fetch the raw bytes with encoding: base64`);
         }
         return {
-          text: `${where}（${image.replace('image/', '').toUpperCase()} 图片，${formatBytes(file.bytes.length)}）`,
+          text: `${where} (${image.replace('image/', '').toUpperCase()} image, ${formatBytes(file.bytes.length)})`,
           images: [{ data: Buffer.from(file.bytes).toString('base64'), mimeType: image }],
         };
       }
       if (file.bytes.subarray(0, 8192).includes(0)) {
-        throw new ToolError(`${where} 是二进制文件（${file.bytes.length} 字节）：要原样拿到内容用 encoding: base64（每次最多 ${kb(base64ChunkMax())}）；只想看看是什么用 exec 配合 file、strings、xxd`);
+        throw new ToolError(`${where} is binary (${file.bytes.length} bytes). For the raw bytes use encoding: base64 (max ${kb(base64ChunkMax())} per call); to identify it, exec file / strings / xxd.`);
       }
       const text = decoder.decode(file.bytes);
       const offset = Math.max(1, offsetArg ?? 1);
       const limit = Math.min(limitArg ?? 2000, 20000);
       const { body, total, from, to } = numberLines(text, offset, limit);
-      const head = `${where}（${formatBytes(file.info.size)}，共 ${total} 行${total ? `，第 ${from}–${to} 行` : ''}）`;
-      const more = to < total ? `\n（还有第 ${to + 1}–${total} 行：offset: ${to + 1}）` : '';
-      return { text: boundedLines(`${head}\n${body || '（空文件）'}`, more) };
+      const head = `${where} (${formatBytes(file.info.size)}, ${plural(total, 'line')}${total ? `, showing ${from}–${to}` : ''})`;
+      const more = to < total ? `\n[Lines ${to + 1}–${total} not shown; next offset: ${to + 1}]` : '';
+      return { text: boundedLines(`${head}\n${body || '(empty file)'}`, more) };
     },
 
     list_dir: async (args, context) => {
@@ -1013,7 +1017,7 @@ export class McpServer {
       context.use([server]);
       const listing = (await listDir(server, path, all)).replace(/\n+$/, '');
       const lines = listing.split('\n');
-      const note = lines.length > 1002 ? '\n（超过 1000 项，后面的省略了：用 exec 配合 find / grep 筛选）' : '';
+      const note = lines.length > 1002 ? '\n[Over 1000 entries; the rest are omitted. Filter with exec find / grep.]' : '';
       return { text: bounded(`${hostId(server)} ${server.name}:${lines[0]}\n${lines.slice(1, 1002).join('\n')}${note}`) };
     },
 
@@ -1021,16 +1025,16 @@ export class McpServer {
       const target = reqString(args, 'target');
       const path = reqString(args, 'path');
       const content = optString(args, 'content');
-      if (content === undefined) throw new ToolError('缺少参数 content');
+      if (content === undefined) throw new ToolError('Missing parameter: content');
       const mode = (optString(args, 'mode') ?? 'overwrite') as WriteMode;
-      if (!['overwrite', 'append', 'create'].includes(mode)) throw new ToolError('mode 只能是 overwrite、append、create');
+      if (!['overwrite', 'append', 'create'].includes(mode)) throw new ToolError('mode must be overwrite, append or create');
       const encoding = optString(args, 'encoding') ?? 'utf8';
-      if (encoding !== 'utf8' && encoding !== 'base64') throw new ToolError('encoding 只能是 utf8 或 base64');
+      if (encoding !== 'utf8' && encoding !== 'base64') throw new ToolError('encoding must be utf8 or base64');
       const confirm = optBool(args, 'confirm');
       const part = optInt(args, 'part', 1, 1000);
       const parts = optInt(args, 'parts', 1, 1000);
-      if ((part === undefined) !== (parts === undefined)) throw new ToolError('part 和 parts 要一起给');
-      if (part !== undefined && parts !== undefined && part > parts) throw new ToolError(`part（${part}）不能大于 parts（${parts}）`);
+      if ((part === undefined) !== (parts === undefined)) throw new ToolError('part and parts must be given together');
+      if (part !== undefined && parts !== undefined && part > parts) throw new ToolError(`part (${part}) must not exceed parts (${parts})`);
       const { config, servers } = await this.prepare();
       const server = this.one(target, servers, config);
       context.use([server]);
@@ -1038,17 +1042,17 @@ export class McpServer {
         // 要不要确认只在第 1 段判断，后面的段接着写
         const piece = await writeTextPart(server, path, content, part, parts, mode, { mayOverwrite: this.mayChange(config, confirm, server), encoding });
         if (!piece.done) {
-          return { text: `已收到 ${hostId(server)} ${server.name}:${piece.path} 的第 ${piece.received}/${parts} 段（共 ${formatBytes(piece.bytes)}），接着发第 ${piece.received + 1} 段；最后一段到了才写进文件` };
+          return { text: `Received part ${piece.received}/${parts} for ${hostId(server)} ${server.name}:${piece.path} (${formatBytes(piece.bytes)} so far). Send part ${piece.received + 1}; the file is written when the last part arrives.` };
         }
         this.audit(`write_file ${hostId(server)}:${piece.path}（${mode}，${parts} 段，${piece.bytes} 字节）`);
-        const verb = mode === 'append' && !piece.created ? '追加到' : piece.created ? '新建' : '覆盖';
-        return { text: `已${verb} ${hostId(server)} ${server.name}:${piece.path}（${parts} 段，共 ${formatBytes(piece.bytes)}）` };
+        const verb = mode === 'append' && !piece.created ? 'Appended to' : piece.created ? 'Created' : 'Overwrote';
+        return { text: `${verb} ${hostId(server)} ${server.name}:${piece.path} (${parts} parts, ${formatBytes(piece.bytes)} written)` };
       }
       const data = encoding === 'base64' ? decodeBase64(content).bytes : content;
       const result = await writeText(server, path, data, mode, { mayOverwrite: this.mayChange(config, confirm, server) });
       this.audit(`write_file ${hostId(server)}:${result.path}（${mode}，${result.bytes} 字节${encoding === 'base64' ? '，base64' : ''}）`);
-      const action = mode === 'append' && !result.created ? '追加到' : result.created ? '新建' : '覆盖';
-      return { text: `已${action} ${hostId(server)} ${server.name}:${result.path}（${formatBytes(result.bytes)}）` };
+      const action = mode === 'append' && !result.created ? 'Appended to' : result.created ? 'Created' : 'Overwrote';
+      return { text: `${action} ${hostId(server)} ${server.name}:${result.path} (${formatBytes(result.bytes)} written)` };
     },
 
     edit_file: async (args, context) => {
@@ -1056,7 +1060,7 @@ export class McpServer {
       const path = reqString(args, 'path');
       const oldText = optString(args, 'old_string');
       const newText = optString(args, 'new_string');
-      if (oldText === undefined || newText === undefined) throw new ToolError('缺少参数 old_string 或 new_string');
+      if (oldText === undefined || newText === undefined) throw new ToolError('Missing parameter: old_string or new_string');
       const replaceAll = optBool(args, 'replace_all');
       const confirm = optBool(args, 'confirm');
       const { config, servers } = await this.prepare();
@@ -1064,7 +1068,7 @@ export class McpServer {
       context.use([server]);
       const result = await editText(server, path, oldText, newText, replaceAll, this.mayChange(config, confirm, server));
       this.audit(`edit_file ${hostId(server)}:${result.path}（替换 ${result.replaced} 处）`);
-      return { text: bounded(`已修改 ${hostId(server)} ${server.name}:${result.path}（替换 ${result.replaced} 处）。改后第一处附近：\n${result.snippet}`) };
+      return { text: bounded(`Edited ${hostId(server)} ${server.name}:${result.path} (${plural(result.replaced, 'replacement')}). Around the first change:\n${result.snippet}`) };
     },
 
     start_job: async (args, context) => {
@@ -1077,7 +1081,7 @@ export class McpServer {
       this.allowCommand('start_job', command, confirm, config, [server]);
       context.use([server]);
       const id = await startJob(server, command, cwd);
-      return { text: `已在 ${hostId(server)} ${server.name} 上启动后台任务 ${id}。用 job_status（target: ${hostId(server)}，job_id: ${id}）查看进度与输出` };
+      return { text: `Started background job ${id} on ${hostId(server)} ${server.name}. Check progress and output with job_status (target: ${hostId(server)}, job_id: ${id}).` };
     },
 
     job_status: async (args, context) => {
@@ -1090,7 +1094,7 @@ export class McpServer {
       context.use([server]);
       if (stop) this.audit(`job_status 结束任务 ${hostId(server)} ${id ?? ''}`);
       const text = (await jobStatus(server, id, tail, stop && !!id)).replace(/\n+$/, '');
-      return { text: bounded(`${hostId(server)} ${server.name}${id ? ` 任务 ${id}` : ' 最近的后台任务'}\n${text}`) };
+      return { text: bounded(`${hostId(server)} ${server.name}${id ? ` job ${id}` : ': recent background jobs'}\n${text}`) };
     },
 
     upload: async (args, context) => {
@@ -1101,7 +1105,7 @@ export class McpServer {
       const server = this.one(target, servers, config);
       context.use([server]);
       const result = await upload(server, localArg(local), remote, progressOf(context));
-      return { text: `已上传到 ${hostId(server)} ${server.name}：${describeTransfer(result)}` };
+      return { text: `Uploaded to ${hostId(server)} ${server.name}: ${describeTransfer(result)}` };
     },
 
     download: async (args, context) => {
@@ -1113,7 +1117,7 @@ export class McpServer {
       const server = this.one(target, servers, config);
       context.use([server]);
       const result = await download(server, remote, localArg(local), maxMb ? maxMb * 1024 * 1024 : DEFAULT_MAX_BYTES, progressOf(context));
-      return { text: `已从 ${hostId(server)} ${server.name} 下载：${describeTransfer(result)}` };
+      return { text: `Downloaded from ${hostId(server)} ${server.name}: ${describeTransfer(result)}` };
     },
 
     copy: async (args, context) => {
@@ -1130,10 +1134,10 @@ export class McpServer {
       const allowed = confirm || confirmMode(config, this.remote) === 'never';
       const overwrite = async (dest: string) => {
         if (allowed) return true;
-        throw new ToolError(`${hostId(target)} ${target.name} 上已有 ${dest}，没有覆盖：先问用户，同意后带 confirm: true 再调用`);
+        throw new ToolError(`${dest} already exists on ${hostId(target)} ${target.name}; not overwritten. Ask the user; call again with confirm: true only after they agree.`);
       };
       const result = await copyBetween(source, fromPath, target, toPath, overwrite, progressOf(context));
-      return { text: `已从 ${hostId(source)} ${source.name} 传到 ${hostId(target)} ${target.name}：${describeTransfer(result)}` };
+      return { text: `Copied from ${hostId(source)} ${source.name} to ${hostId(target)} ${target.name}: ${describeTransfer(result)}` };
     },
 
     add_server: async (args) => {
@@ -1142,7 +1146,7 @@ export class McpServer {
       this.cache = null;
       this.audit(`add_server ${hostId(created)} ${created.name}（${created.username}@${created.host}:${created.port}）`);
       const all = [...servers, created];
-      return { text: `已添加 ${hostId(created)} ${created.name}：\n${describeServer(created, all)}\n用 exec（target: ${hostId(created)}）试一下能不能连上，例如 uname -a` };
+      return { text: `Added ${hostId(created)} ${created.name}:\n${describeServer(created, all)}\nTest the connection with exec (target: ${hostId(created)}), e.g. uname -a.` };
     },
 
     update_server: async (args) => {
@@ -1152,13 +1156,13 @@ export class McpServer {
       const server = this.one(target, servers, config);
       const input = this.serverInput(args, servers, config);
       if (!confirm && confirmMode(config, this.remote) !== 'never') {
-        throw new ToolError(`要改 CloudSSH 里保存的 ${hostId(server)} ${server.name}，没有改动：先告诉用户要改什么，用户同意后带 confirm: true 再调用`);
+        throw new ToolError(`Not changed: this edits the saved CloudSSH entry ${hostId(server)} ${server.name}. Tell the user what will change; call again with confirm: true only after they agree.`);
       }
       await updateServer(server, input);
       this.audit(`update_server ${hostId(server)} ${server.name}：${changedFields(args).join('、')}`);
       const { servers: fresh } = await this.prepare(true);
       const updated = fresh.find((item) => item.id === server.id);
-      return { text: updated ? `已修改 ${hostId(server)}：\n${describeServer(updated, fresh)}` : `已修改 ${hostId(server)} ${server.name}` };
+      return { text: updated ? `Updated ${hostId(server)}:\n${describeServer(updated, fresh)}` : `Updated ${hostId(server)} ${server.name}` };
     },
 
     delete_server: async (args) => {
@@ -1166,16 +1170,16 @@ export class McpServer {
       const { config, servers } = await this.prepare(true);
       const server = this.one(target, servers, config);
       if (!optBool(args, 'confirm')) {
-        throw new ToolError(`没有删除 ${hostId(server)} ${server.name}：删除连同保存的凭据和笔记一起删掉、不能恢复，只有用户明确要求删这台时才带 confirm: true 调用`);
+        throw new ToolError(`Not deleted: ${hostId(server)} ${server.name}. Deleting also removes its saved credentials and notes and cannot be undone; pass confirm: true only if the user explicitly asked to delete this server.`);
       }
       const users = servers.filter((item) => item.jump_server_id === server.id);
       if (users.length) {
-        throw new ToolError(`${hostId(server)} ${server.name} 还是 ${users.map((item) => `${hostId(item)} ${item.name}`).join('、')} 的跳板机：先用 update_server 给它们换掉跳板（jump: ""）再删`);
+        throw new ToolError(`${hostId(server)} ${server.name} is the jump host of ${users.map((item) => `${hostId(item)} ${item.name}`).join(', ')}: change their jump with update_server first (jump: "" for direct), then delete it.`);
       }
       await deleteServer(server);
       this.cache = null;
       this.audit(`delete_server ${hostId(server)} ${server.name}（${server.username}@${server.host}:${server.port}）`);
-      return { text: `已从 CloudSSH 删除 ${hostId(server)} ${server.name}（${server.username}@${server.host}:${server.port}）` };
+      return { text: `Deleted ${hostId(server)} ${server.name} (${server.username}@${server.host}:${server.port}) from CloudSSH` };
     },
 
     snippets: async (args) => {
@@ -1185,26 +1189,26 @@ export class McpServer {
         const query = optString(args, 'query')?.trim().toLowerCase();
         const all = await listSnippets();
         const list = query ? all.filter((item) => [item.name, item.command, item.category ?? ''].some((text) => text.toLowerCase().includes(query))) : all;
-        if (!list.length) return { text: all.length ? '（没有匹配的命令片段）' : '（还没有命令片段）' };
-        return { text: bounded(`共 ${list.length} 条命令片段（#编号  名称  [分类]，下一行是命令）\n${list.map(formatSnippet).join('\n')}`) };
+        if (!list.length) return { text: all.length ? '(no matching snippets)' : '(no snippets saved yet)' };
+        return { text: bounded(`${plural(list.length, 'snippet')} (#id  name  [category]; command on the next line)\n${list.map(formatSnippet).join('\n')}`) };
       }
-      if (this.remote?.access === 'read-only') throw new ToolError('只读模式：命令片段只能查看（action: list）');
+      if (this.remote?.access === 'read-only') throw new ToolError('Read-only mode: snippets can only be listed (action: list)');
       if (action === 'save') {
         const id = optString(args, 'id')?.trim() || undefined;
         const saved = await saveSnippet({ id, name: reqString(args, 'name'), command: reqString(args, 'command'), category: optString(args, 'category') });
         this.audit(`snippets ${id ? '修改' : '新建'} #${saved.id} ${saved.name}`);
-        return { text: `已${id ? '修改' : '新建'}命令片段：\n${formatSnippet(saved)}` };
+        return { text: `${id ? 'Updated' : 'Created'} snippet:\n${formatSnippet(saved)}` };
       }
       if (action === 'delete') {
         const id = reqString(args, 'id').trim();
         if (!optBool(args, 'confirm') && confirmMode(config, this.remote) !== 'never') {
-          throw new ToolError(`没有删除命令片段 #${id}：先问用户，同意后带 confirm: true 再调用`);
+          throw new ToolError(`Snippet #${id} not deleted. Ask the user; call again with confirm: true only after they agree.`);
         }
         await deleteSnippet(id);
         this.audit(`snippets 删除 #${id}`);
-        return { text: `已删除命令片段 #${id}` };
+        return { text: `Deleted snippet #${id}` };
       }
-      throw new ToolError('action 只能是 list、save、delete');
+      throw new ToolError('action must be list, save or delete');
     },
 
     server_notes: async (args) => {
@@ -1213,43 +1217,43 @@ export class McpServer {
       const { config, servers } = await this.prepare();
       const server = this.one(target, servers, config);
       if (action === 'read') return { text: bounded(formatNotes(server, await readNotes(server))) };
-      if (this.remote?.access === 'read-only') throw new ToolError('只读模式：笔记只能查看（action: read）');
+      if (this.remote?.access === 'read-only') throw new ToolError('Read-only mode: notes can only be read (action: read)');
       if (action === 'set') {
         const category = (optString(args, 'category') ?? 'note') as NoteCategory;
-        if (!NOTE_CATEGORIES.includes(category)) throw new ToolError(`category 只能是 ${NOTE_CATEGORIES.join('、')}`);
+        if (!NOTE_CATEGORIES.includes(category)) throw new ToolError(`category must be one of: ${NOTE_CATEGORIES.join(', ')}`);
         const key = reqString(args, 'key');
         const value = optString(args, 'value');
-        if (value === undefined) throw new ToolError('缺少参数 value');
+        if (value === undefined) throw new ToolError('Missing parameter: value');
         const saved = await setNote(server, category, key, value);
         this.audit(`server_notes 记下 ${hostId(server)}：[${category}] ${saved}`);
-        return { text: `已记下 ${hostId(server)} ${server.name} 的 [${category}] ${saved}${saved !== key.trim() ? `（CloudSSH 把键名规范成小写、空格与连字符换成下划线）` : ''}` };
+        return { text: `Saved [${category}] ${saved} for ${hostId(server)} ${server.name}${saved !== key.trim() ? ' (CloudSSH normalizes keys: lowercase, spaces and hyphens become underscores)' : ''}` };
       }
       if (action === 'delete') {
         const key = reqString(args, 'key');
         if (!optBool(args, 'confirm') && confirmMode(config, this.remote) !== 'never') {
-          throw new ToolError(`没有删除 ${hostId(server)} 的笔记“${key}”：先问用户，同意后带 confirm: true 再调用`);
+          throw new ToolError(`Note "${key}" on ${hostId(server)} not deleted. Ask the user; call again with confirm: true only after they agree.`);
         }
         const removed = await deleteNote(server, key);
         this.audit(`server_notes 删除 ${hostId(server)}：${removed}`);
-        return { text: `已删除 ${hostId(server)} ${server.name} 的笔记“${removed}”` };
+        return { text: `Deleted note "${removed}" from ${hostId(server)} ${server.name}` };
       }
       if (action === 'log') {
         const title = reqString(args, 'title');
         const summary = reqString(args, 'summary');
         await addWorkLog(server, title, summary);
         this.audit(`server_notes 工作历程 ${hostId(server)}：${title.trim()}`);
-        return { text: `已在 ${hostId(server)} ${server.name} 的工作历程里记下“${title.trim()}”` };
+        return { text: `Logged "${title.trim()}" in the work log of ${hostId(server)} ${server.name}` };
       }
-      throw new ToolError('action 只能是 read、set、delete、log');
+      throw new ToolError('action must be read, set, delete or log');
     },
   };
 
   /** add_server / update_server 的参数 → 要写进 CloudSSH 的字段（跳板按名称或主机 ID 找） */
   private serverInput(args: Json, servers: ServerConfig[], config: CliConfig): ServerInput {
     const auth = optString(args, 'auth');
-    if (auth !== undefined && !['password', 'key', 'none'].includes(auth)) throw new ToolError('auth 只能是 password、key、none');
+    if (auth !== undefined && !['password', 'key', 'none'].includes(auth)) throw new ToolError('auth must be password, key or none');
     const region = optString(args, 'region');
-    if (region !== undefined && !(REGIONS as readonly string[]).includes(region)) throw new ToolError(`region 只能是 ${REGIONS.join('、')}`);
+    if (region !== undefined && !(REGIONS as readonly string[]).includes(region)) throw new ToolError(`region must be one of: ${REGIONS.join(', ')}`);
     const jump = optString(args, 'jump');
     let jumpId: number | null | undefined;
     if (jump !== undefined) {
@@ -1297,7 +1301,7 @@ export class McpServer {
       try {
         const hit = resolveSingle(part, this.excluded, config);
         return new ToolError(
-          `${hostId(hit)} ${hit.name} 是运行这个连接器的机器，部署时设成了不提供（EXCLUDE）：它上面存着 CloudSSH 的登录。要在它上面操作，请用户自己处理，或在连接器的 .env 里去掉 EXCLUDE`
+          `${hostId(hit)} ${hit.name} runs this connector and is excluded (EXCLUDE) because it stores the CloudSSH login. Ask the user to handle it themselves, or to remove it from EXCLUDE in the connector's .env.`
         );
       } catch {
         // 不是排除的那台
@@ -1351,7 +1355,7 @@ function optStrings(args: Json, name: string): string[] | undefined {
   const value = args[name];
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new ToolError(`参数 ${name} 要是字符串数组`);
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new ToolError(`${name} must be an array of strings`);
   return value as string[];
 }
 

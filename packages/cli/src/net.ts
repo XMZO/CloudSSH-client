@@ -70,14 +70,14 @@ export function networkMessage(target: string, error: unknown): string {
   const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
   const code = cause?.code ?? '';
   let reason: string;
-  if (code === 'ENOTFOUND') reason = '找不到这个域名，检查一下地址';
-  else if (code === 'EAI_AGAIN') reason = '域名解析失败（没联网，或 DNS 有问题）';
-  else if (code === 'ECONNREFUSED') reason = '连接被拒绝';
-  else if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') reason = '连接超时';
-  else if (code === 'ECONNRESET') reason = '连接被重置';
-  else if (/CERT|SSL|TLS/i.test(code)) reason = `证书有问题（${code}）`;
+  if (code === 'ENOTFOUND') reason = 'domain not found; check the address';
+  else if (code === 'EAI_AGAIN') reason = 'DNS lookup failed (offline or DNS problem)';
+  else if (code === 'ECONNREFUSED') reason = 'connection refused';
+  else if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') reason = 'connection timed out';
+  else if (code === 'ECONNRESET') reason = 'connection reset';
+  else if (/CERT|SSL|TLS/i.test(code)) reason = `certificate problem (${code})`;
   else reason = cause?.message || (error instanceof Error ? error.message : String(error));
-  return `连不上 ${target}：${reason}`;
+  return `Cannot reach ${target}: ${reason}`;
 }
 
 /** 调 CloudSSH 接口，返回 JSON；401 时提示重新登录 */
@@ -96,7 +96,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     body = null;
   }
   if (response.status === 401) {
-    throw new ApiError(`登录已失效（${origin}）：运行 cloudssh login，或打开开启了“同步登录给命令行”的桌面客户端`, 401);
+    throw new ApiError(`Login expired (${origin}): run cloudssh login, or open the CloudSSH desktop app with "同步登录给命令行" turned on`, 401);
   }
   if (!response.ok) {
     const message = (body as { error?: unknown } | null)?.error;

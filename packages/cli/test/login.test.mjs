@@ -68,14 +68,14 @@ describe('login', { timeout: 120_000 }, () => {
     const started = Date.now();
     const result = runCli(['servers', '--json'], env);
     assert.equal(result.code, 2);
-    assert.match(result.stderr, /还没有登录/);
+    assert.match(result.stderr, /Not signed in/);
     assert.ok(Date.now() - started < 5000);
   });
 
   test('连不上实例时说清原因（不是 “fetch failed”）', () => {
     const result = runCli(['login', 'https://cloudssh-test.invalid', '--no-browser'], env);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /连不上 https:\/\/cloudssh-test\.invalid：/);
+    assert.match(result.stderr, /Cannot reach https:\/\/cloudssh-test\.invalid: /);
     assert.doesNotMatch(result.stderr, /fetch failed/);
   });
   /** 从标准输入喂一行给命令行 */

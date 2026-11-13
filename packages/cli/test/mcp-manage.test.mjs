@@ -49,26 +49,26 @@ describe('MCP 管理 CloudSSH', { timeout: 120_000 }, () => {
     assert.equal(added.isError, false, added.text);
     const id = idOf(added.text);
     assert.ok(id, added.text);
-    assert.match(added.text, /admin@192\.0\.2\.50:2222  密码/);
+    assert.match(added.text, /admin@192\.0\.2\.50:2222  password/);
     assert.doesNotMatch(added.text, /p@ss/);
 
     const details = await full.callTool('list_servers', { query: 'MCP 新机', details: true });
-    assert.match(details.text, /admin@192\.0\.2\.50:2222  密码  direct/);
-    assert.match(details.text, /标签 \[测试\]/);
+    assert.match(details.text, /admin@192\.0\.2\.50:2222  password  direct/);
+    assert.match(details.text, /tags \[测试\]/);
     const echo = await full.callTool('exec', { target: id, command: 'echo 新机能用' });
     assert.equal(echo.isError, false, echo.text);
     assert.match(echo.text, /新机能用/);
 
     const viaKey = await full.callTool('add_server', { name: 'MCP 私钥机', host: '192.0.2.51', private_key: KEY, jump: id });
     assert.equal(viaKey.isError, false, viaKey.text);
-    assert.match(viaKey.text, new RegExp(`私钥  via ${id}`));
+    assert.match(viaKey.text, new RegExp(`key  via ${id}`));
 
     const encrypted = await full.callTool('add_server', { name: 'x', host: '192.0.2.52', private_key: LOCKED_KEY });
     assert.equal(encrypted.isError, true);
-    assert.match(encrypted.text, /带密码/);
+    assert.match(encrypted.text, /passphrase-protected/);
     const noCredential = await full.callTool('add_server', { name: 'x', host: '192.0.2.53' });
     assert.equal(noCredential.isError, true);
-    assert.match(noCredential.text, /要给凭据/);
+    assert.match(noCredential.text, /Credentials required/);
   });
 
   test('update_server：只改给了的字段，标签增减，跳板改掉；默认要 confirm', async () => {
@@ -81,15 +81,15 @@ describe('MCP 管理 CloudSSH', { timeout: 120_000 }, () => {
     const renamed = await ask.callTool('update_server', { target: id, name: 'MCP 私钥机2', add_tags: ['甲', '乙'], jump: '', confirm: true });
     assert.equal(renamed.isError, false, renamed.text);
     assert.match(renamed.text, /MCP 私钥机2/);
-    assert.match(renamed.text, /私钥  direct/);
-    assert.match(renamed.text, /标签 \[甲, 乙\]/);
+    assert.match(renamed.text, /key  direct/);
+    assert.match(renamed.text, /tags \[甲, 乙\]/);
     const fewer = await full.callTool('update_server', { target: id, remove_tags: ['甲'], port: 2200 });
     assert.equal(fewer.isError, false, fewer.text);
     assert.match(fewer.text, /:2200/);
-    assert.match(fewer.text, /标签 \[乙\]/);
+    assert.match(fewer.text, /tags \[乙\]/);
     const switchAuth = await full.callTool('update_server', { target: id, auth: 'password' });
     assert.equal(switchAuth.isError, true);
-    assert.match(switchAuth.text, /要给 password/);
+    assert.match(switchAuth.text, /requires password/);
   });
 
   test('delete_server：没有 confirm 不删；被当跳板时先说明；删了之后找不到', async () => {
@@ -101,10 +101,10 @@ describe('MCP 管理 CloudSSH', { timeout: 120_000 }, () => {
     assert.match(noConfirm.text, /confirm: true/);
     const inUse = await full.callTool('delete_server', { target: jumpHost, confirm: true });
     assert.equal(inUse.isError, true);
-    assert.match(inUse.text, new RegExp(`还是 ${userId} .*的跳板机`));
+    assert.match(inUse.text, new RegExp(`is the jump host of ${userId} `));
     const deleted = await full.callTool('delete_server', { target: userId, confirm: true });
     assert.equal(deleted.isError, false, deleted.text);
-    assert.match((await full.callTool('exec', { target: userId, command: 'echo hi' })).text, /没有主机 ID/);
+    assert.match((await full.callTool('exec', { target: userId, command: 'echo hi' })).text, /No server with host ID/);
   });
 
   test('snippets：列出、新建、修改、删除（默认删除要 confirm）', async () => {
@@ -115,25 +115,25 @@ describe('MCP 管理 CloudSSH', { timeout: 120_000 }, () => {
     const listed = await full.callTool('snippets', { action: 'list', query: 'mcp 片段' });
     assert.match(listed.text, /MCP 片段  \[测试\]\n    echo \{\{msg\}\}/);
     const changed = await full.callTool('snippets', { action: 'save', id, name: 'MCP 片段', command: 'echo changed' });
-    assert.match(changed.text, /已修改/);
+    assert.match(changed.text, /Updated/);
     const refused = await ask.callTool('snippets', { action: 'delete', id });
     assert.equal(refused.isError, true);
     const deleted = await ask.callTool('snippets', { action: 'delete', id, confirm: true });
     assert.equal(deleted.isError, false, deleted.text);
-    assert.match((await full.callTool('snippets', { action: 'list', query: 'MCP 片段' })).text, /没有匹配/);
+    assert.match((await full.callTool('snippets', { action: 'list', query: 'MCP 片段' })).text, /no matching/);
   });
 
   test('server_notes：记下知识、记工作历程、读出来、删掉', async () => {
     const set = await full.callTool('server_notes', { target: 'JP-A', action: 'set', category: 'credential', key: 'mysql_root', value: 'S3cret pass' });
     assert.equal(set.isError, false, set.text);
     const spaced = await full.callTool('server_notes', { target: 'JP-A', action: 'set', key: 'Nginx 配置', value: '/etc/nginx/conf.d/site.conf' });
-    assert.match(spaced.text, /\[note\] nginx_配置（CloudSSH 把键名规范成/);
+    assert.match(spaced.text, /\[note\] nginx_配置 for .*\(CloudSSH normalizes keys/);
     const log = await full.callTool('server_notes', { target: 'JP-A', action: 'log', title: '升级 nginx', summary: '1.24 → 1.26，配置不用改' });
     assert.equal(log.isError, false, log.text);
     const read = await full.callTool('server_notes', { target: 'JP-A', action: 'read' });
-    assert.match(read.text, /\[凭据\] mysql_root = S3cret pass/);
-    assert.match(read.text, /\[备注\] nginx_配置 = \/etc\/nginx\/conf\.d\/site\.conf/);
-    assert.match(read.text, /升级 nginx：1\.24 → 1\.26/);
+    assert.match(read.text, /\[credential\] mysql_root = S3cret pass/);
+    assert.match(read.text, /\[note\] nginx_配置 = \/etc\/nginx\/conf\.d\/site\.conf/);
+    assert.match(read.text, /升级 nginx: 1\.24 → 1\.26/);
     const deleted = await full.callTool('server_notes', { target: 'JP-A', action: 'delete', key: 'mysql_root' });
     assert.equal(deleted.isError, false, deleted.text);
     // 删除时的键名按同样的规则规范：写成当初给的样子也能删

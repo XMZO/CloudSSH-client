@@ -8,6 +8,7 @@
 import type { ServerConfig } from '@cloudssh/core';
 import { isBlockedCommand, needsConfirmation } from '../../ui-web/overrides/shared/ai-remote/safety';
 import { remoteExec, RemoteError, type ExecResult } from '../../ui-web/overrides/shared/ai-remote/session';
+import { english, safetyReason } from './english';
 import { UsageError, type ConfirmMode } from './config';
 import { confirm, interactive } from './prompt';
 import { eachLimited, hostId } from './targets';
@@ -27,19 +28,19 @@ export type CommandVerdict = { action: 'run' } | { action: 'refuse'; reason: str
 /** 危险命令规则（命令行与 MCP 共用）：拦截级一律拒绝；危险命令在 yes 或完全权限（confirm never）时放行，否则要确认 */
 export function commandVerdict(command: string, yes: boolean, mode: ConfirmMode): CommandVerdict {
   const blocked = isBlockedCommand(command);
-  if (blocked.blocked) return { action: 'refuse', reason: blocked.reason ?? '拦截级命令' };
+  if (blocked.blocked) return { action: 'refuse', reason: safetyReason(blocked.reason) ?? 'blocked command' };
   const risky = needsConfirmation(command);
   if (!risky.required || yes || mode === 'never') return { action: 'run' };
-  return { action: 'confirm', reason: risky.reason ?? '需要确认' };
+  return { action: 'confirm', reason: safetyReason(risky.reason) ?? 'needs confirmation' };
 }
 
 /** 危险命令的确认：可以执行就返回，否则抛出拒绝的原因（终端里会直接问） */
 export async function checkCommand(command: string, yes: boolean, mode: ConfirmMode, what: string): Promise<void> {
   const verdict = commandVerdict(command, yes, mode);
   if (verdict.action === 'run') return;
-  if (verdict.action === 'refuse') throw new UsageError(`拒绝执行（${verdict.reason}）：${command}`);
+  if (verdict.action === 'refuse') throw new UsageError(`Refused (${verdict.reason}): ${command}`);
   if (interactive() && (await confirm(`危险命令（${verdict.reason}）将在 ${what} 上执行：\n  ${command}\n确定执行？`))) return;
-  throw new UsageError(`危险命令（${verdict.reason}）：确认后加 --yes 再执行`);
+  throw new UsageError(`Risky command (${verdict.reason}): rerun with --yes after the user confirms`);
 }
 
 /** 在一台服务器上执行（用哪条会话由调用方决定） */
@@ -59,7 +60,7 @@ async function runOne(server: ServerConfig, command: string, timeout: number, ex
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const unknown = error instanceof RemoteError && error.code === 'closed';
-    return { ...base, exitCode: null, output: '', timedOut: false, truncated: false, durationMs: 0, error: unknown ? `连接中断，执行状态未知：${message}` : message };
+    return { ...base, exitCode: null, output: '', timedOut: false, truncated: false, durationMs: 0, error: unknown ? `connection lost; whether the command ran is unknown: ${english(message)}` : english(message) };
   }
 }
 
@@ -70,7 +71,7 @@ export function runExec(servers: ServerConfig[], command: string, timeout: numbe
 
 /** 一台的结果：错误 / 超时 / 退出码 */
 export function outcomeStatus(item: ExecOutcome): string {
-  return item.error ? `错误：${item.error}` : item.timedOut ? '超时' : `退出码 ${item.exitCode ?? '?'}`;
+  return item.error ? `error: ${item.error}` : item.timedOut ? 'timed out' : `exit ${item.exitCode ?? '?'}`;
 }
 
 /** 远端正常跑完且退出码为 0 */
@@ -83,12 +84,12 @@ export function printOutcomes(results: ExecOutcome[], json: boolean): number {
   } else if (results.length === 1) {
     const [only] = results;
     if (only.output) process.stdout.write(only.output.endsWith('\n') ? only.output : `${only.output}\n`);
-    if (only.error) process.stderr.write(`cloudssh: ${only.server.id} ${only.server.name}：${only.error}\n`);
-    else if (only.timedOut) process.stderr.write(`cloudssh: 超时，命令已被结束\n`);
-    if (only.truncated) process.stderr.write('cloudssh: 输出超过 64KB，只保留了最后一段\n');
+    if (only.error) process.stderr.write(`cloudssh: ${only.server.id} ${only.server.name}: ${only.error}\n`);
+    else if (only.timedOut) process.stderr.write(`cloudssh: timed out; the command was killed\n`);
+    if (only.truncated) process.stderr.write('cloudssh: output exceeded 64KB; only the end was kept\n');
   } else {
     for (const item of results) {
-      process.stdout.write(`===== ${item.server.id} ${item.server.name} · ${outcomeStatus(item)}${item.truncated ? ' · 输出已截断' : ''} =====\n`);
+      process.stdout.write(`===== ${item.server.id} ${item.server.name} · ${outcomeStatus(item)}${item.truncated ? ' · output truncated' : ''} =====\n`);
       if (item.output) process.stdout.write(item.output.endsWith('\n') ? item.output : `${item.output}\n`);
     }
   }

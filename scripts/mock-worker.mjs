@@ -1243,9 +1243,9 @@ function tarExtract(archive, dest, strip = 0) {
 /** MCP 后台任务（start_job / job_status） */
 const mockJobs = new Map();
 function jobState(job) {
-  if (job.state === 'running') return '运行中（进程 4242）';
-  if (job.state === 'stopped') return '已被 job_status 停止';
-  return '已结束，退出码 0';
+  if (job.state === 'running') return 'running (pid 4242)';
+  if (job.state === 'stopped') return 'stopped by job_status';
+  return 'finished, exit 0';
 }
 
 function mockExec(cmd) {
@@ -1399,11 +1399,11 @@ function mockExec(cmd) {
     const current = sftpTree.get(dest);
     if (expected && crypto.createHash('sha256').update(current?.data ?? Buffer.alloc(0)).digest('hex') !== expected) {
       sftpTree.delete(temp);
-      return { output: '文件在读取之后被改过，没有写入', rc: 9 };
+      return { output: 'modified since read; not written', rc: 9 };
     }
-    if (cmd.includes('已存在，没有写入') && current) {
+    if (cmd.includes('already exists; not written') && current) {
       sftpTree.delete(temp);
-      return { output: '已存在，没有写入', rc: 8 };
+      return { output: 'already exists; not written', rc: 8 };
     }
     if (cmd.includes('cat "$t" >> "$f"')) {
       const data = Buffer.concat([current?.data ?? Buffer.alloc(0), part.data ?? Buffer.alloc(0)]);
@@ -1417,7 +1417,7 @@ function mockExec(cmd) {
   // list_dir
   if ((m = new RegExp(`^p=(${word}); cd -- "\\$p"`).exec(cmd))) {
     const path = shellWord(m[1]).replace(/\/+$/, '') || '/';
-    if (sftpTree.get(path)?.type !== 'dir') return { output: `没有这个目录：${path}`, rc: 3 };
+    if (sftpTree.get(path)?.type !== 'dir') return { output: `no such directory: ${path}`, rc: 3 };
     const hidden = /ls -lA/.test(cmd);
     const rows = [...sftpTree.entries()]
       .filter(([p]) => sftpParent(p) === path && p !== path)
@@ -1430,21 +1430,21 @@ function mockExec(cmd) {
   // start_job / job_status：任务直接记成结束（命令里有 sleep 的记成运行中，直到被停止）
   if ((m = /^d="\$HOME\/\.cloudssh-jobs"; mkdir -p .*? id='(j[a-z0-9]+)'; printf '%s' '([A-Za-z0-9+/=]*)' \| base64 -d/.exec(cmd))) {
     const cwd = new RegExp(`cd -- (${word}) \\|\\|`).exec(cmd);
-    if (cwd && sftpTree.get(shellWord(cwd[1]).replace(/\/+$/, ''))?.type !== 'dir') return { output: `没有这个目录：${shellWord(cwd[1])}`, rc: 3 };
+    if (cwd && sftpTree.get(shellWord(cwd[1]).replace(/\/+$/, ''))?.type !== 'dir') return { output: `no such directory: ${shellWord(cwd[1])}`, rc: 3 };
     const command = Buffer.from(m[2], 'base64').toString('utf8');
     mockJobs.set(m[1], { command, state: /\bsleep\b/.test(command) ? 'running' : 'done', log: `mock job: ${command}\nfinished` });
     return ok(`started ${m[1]}`);
   }
   if (cmd.startsWith('d="$HOME/.cloudssh-jobs"; n=0; for c in')) {
     const rows = [...mockJobs.entries()].reverse().map(([id, job]) => `${id}  ${jobState(job)}  ${job.command.slice(0, 100)}`);
-    return ok(rows.length ? rows.join('\n') : '（没有后台任务）');
+    return ok(rows.length ? rows.join('\n') : '(no background jobs)');
   }
   if ((m = /^d="\$HOME\/\.cloudssh-jobs"; id='(j[a-z0-9]+)'; \[ -f/.exec(cmd))) {
     const job = mockJobs.get(m[1]);
-    if (!job) return { output: '没有这个任务', rc: 3 };
+    if (!job) return { output: 'no such job', rc: 3 };
     if (cmd.includes('kill -TERM') && job.state === 'running') job.state = 'stopped';
-    const tail = Number(/最后 (\d+) 行/.exec(cmd)?.[1] ?? 50);
-    return ok(`状态：${jobState(job)}\n== 命令\n${job.command}\n== 输出（最后 ${tail} 行）\n${job.state === 'running' ? '' : job.log}`);
+    const tail = Number(/last (\d+) lines/.exec(cmd)?.[1] ?? 50);
+    return ok(`state: ${jobState(job)}\n== command\n${job.command}\n== output (last ${tail} lines)\n${job.state === 'running' ? '' : job.log}`);
   }
   return { output: `sh: ${cmd.split(/\s+/)[0]}: command not found (mock)`, rc: 127 };
 }

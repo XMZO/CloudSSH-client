@@ -77,7 +77,7 @@ describe('后台会话进程', { timeout: 180_000 }, () => {
     // 目标写错照样是用法错误（退出码 2）
     const missing = runCli(['exec', 'srv-99999', 'echo x'], env);
     assert.equal(missing.code, 2);
-    assert.match(missing.stderr, /没有主机 ID 为 srv-99999/);
+    assert.match(missing.stderr, /No server with host ID srv-\d+/);
   });
 
   test('同一台同时跑两条不互相排队（再开一条会话）', async () => {

@@ -19,6 +19,7 @@ import { pipeline } from 'node:stream/promises';
 import { readySession, remoteExec } from '../../ui-web/overrides/shared/ai-remote/session';
 import { HeadlessSftp } from '../../ui-web/overrides/shared/ai-remote/sftp';
 import { planCopy, runCopy, type CopyResult } from '../../ui-web/overrides/shared/ai-remote/transfer';
+import { english } from './english';
 import { UsageError } from './config';
 
 export const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024;
@@ -39,17 +40,17 @@ export function shellPath(value: string): string {
 
 export async function run(server: ServerConfig, command: string, timeout = 60): Promise<string> {
   const result = await remoteExec(server.id, command, timeout);
-  if (result.timedOut) throw new Error(`${server.name}: 超时`);
+  if (result.timedOut) throw new Error(`${server.name}: timed out`);
   if (result.exitCode !== 0) {
     const tail = result.output.trim().split('\n').slice(-3).join(' ').slice(0, 300);
-    throw new Error(`${server.name}: ${tail || `退出码 ${result.exitCode ?? '?'}`}`);
+    throw new Error(`${server.name}: ${tail || `exit ${result.exitCode ?? '?'}`}`);
   }
   return result.output;
 }
 
 export async function openSftp(server: ServerConfig): Promise<HeadlessSftp> {
   const session = await readySession(server.id);
-  if (!session.sftpUrl) throw new Error(`${server.name}: 没有 SFTP 通道`);
+  if (!session.sftpUrl) throw new Error(`${server.name}: no SFTP channel`);
   return HeadlessSftp.open(session.sftpUrl);
 }
 
@@ -62,8 +63,8 @@ function tarProgram(): string {
 
 function tar(args: string[]): void {
   const result = spawnSync(tarProgram(), args, { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
-  if (result.error) throw new Error(`本机没有 tar：${result.error.message}`);
-  if (result.status !== 0) throw new Error(`tar 失败：${(result.stderr || '').trim().slice(0, 300)}`);
+  if (result.error) throw new Error(`tar is not available on this computer: ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`tar failed: ${(result.stderr || '').trim().slice(0, 300)}`);
 }
 
 const tempName = () => `cloudssh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -91,34 +92,34 @@ export function formatBytes(bytes: number): string {
 }
 
 const STEP_NAMES: Record<string, string> = {
-  pack: '打包',
-  unpack: '解包',
-  upload: '上传',
-  download: '下载',
-  'direct-prepare': '准备直连',
-  'direct-copy': '服务器直连传输',
-  'relay-pack': '打包',
-  'relay-download': '中转：下载',
-  'relay-upload': '中转：上传',
+  pack: 'packing',
+  unpack: 'unpacking',
+  upload: 'uploading',
+  download: 'downloading',
+  'direct-prepare': 'preparing direct transfer',
+  'direct-copy': 'copying server to server',
+  'relay-pack': 'packing',
+  'relay-download': 'relay: downloading',
+  'relay-upload': 'relay: uploading',
 };
 
-/** 进度一行：“上传 45%（1.2 MB / 2.7 MB）”；copy 的进度只有百分比（total 为 100） */
+/** 进度一行：“uploading 45% (1.2 MB / 2.7 MB)”；copy 的进度只有百分比（total 为 100） */
 export function progressText(step: string, loaded?: number, total?: number): string {
   const pct = total && loaded !== undefined ? ` ${Math.round((loaded / total) * 100)}%` : '';
-  const size = total && total !== 100 && loaded !== undefined ? `（${formatBytes(loaded)} / ${formatBytes(total)}）` : '';
+  const size = total && total !== 100 && loaded !== undefined ? ` (${formatBytes(loaded)} / ${formatBytes(total)})` : '';
   return `${STEP_NAMES[step] ?? step}${pct}${size}`;
 }
 
 export function describeTransfer(result: TransferResult): string {
   const how =
     result.method === 'direct'
-      ? `，服务器之间直连${result.hops ? `（经 ${result.hops} 个跳板）` : ''}`
+      ? `, direct server to server${result.hops ? ` (via ${result.hops} jump host${result.hops === 1 ? '' : 's'})` : ''}`
       : result.method === 'relay'
-        ? '，经本机中转'
+        ? ', relayed through this computer'
         : result.method === 'local'
-          ? '，同一台服务器'
+          ? ', same server'
           : '';
-  return `${result.kind === 'dir' ? '目录' : '文件'} → ${result.dest}（${formatBytes(result.bytes)}${how}）${result.note ? `\n说明：${result.note}` : ''}`;
+  return `${result.kind === 'dir' ? 'directory' : 'file'} → ${result.dest} (${formatBytes(result.bytes)}${how})${result.note ? `\nNote: ${english(result.note)}` : ''}`;
 }
 
 /** 本机 → 服务器 */
@@ -128,7 +129,7 @@ export async function upload(server: ServerConfig, localPath: string, remotePath
   try {
     stat = fs.statSync(source);
   } catch {
-    throw new UsageError(`本机没有 ${localPath}`);
+    throw new UsageError(`${localPath} does not exist on this computer`);
   }
   const kind = stat.isDirectory() ? 'dir' : 'file';
   const name = path.basename(source);
@@ -188,7 +189,7 @@ export async function download(
     `p=${shellPath(remotePath)}; if [ -d "$p" ]; then echo dir; elif [ -f "$p" ]; then echo file; else echo missing; exit 3; fi;` +
       ` d=$(cd "$(dirname -- "$p")" && pwd -P) && printf '%s/%s\\n' "$d" "$(basename -- "$p")"`
   ).catch((error: Error) => {
-    throw new UsageError(/missing|退出码 3/.test(error.message) ? `${server.name} 上没有 ${remotePath}` : error.message);
+    throw new UsageError(/missing|exit 3\b/.test(error.message) ? `${remotePath} does not exist on ${server.name}` : error.message);
   });
   const lines = info.trim().split('\n').map((line) => line.trim());
   const kindText = lines[0];
@@ -246,7 +247,7 @@ export async function copyBetween(
   progress: Progress
 ): Promise<TransferResult> {
   const plan = await planCopy({ source, srcPath, target, dstPath });
-  if (plan.destExists && !(await overwrite(plan.dest))) throw new UsageError(`${target.name} 上已有 ${plan.dest}：确认覆盖后加 --yes`);
+  if (plan.destExists && !(await overwrite(plan.dest))) throw new UsageError(`${plan.dest} already exists on ${target.name}: rerun with --yes to overwrite (after the user confirms)`);
   const result = await runCopy(plan, (step, percent) => progress(step, percent, percent === undefined ? undefined : 100));
   return { kind: plan.kind, bytes: result.bytes, dest: result.dest, method: result.method, hops: result.hops, note: result.note };
 }

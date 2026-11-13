@@ -91,37 +91,37 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
   test('list_servers：主机 ID、名称、标签、系统、线路，可按关键字与标签筛', async () => {
     const all = await mcp.callTool('list_servers', {});
     assert.equal(all.isError, false);
-    assert.match(all.text, /^共 \d+ 台/);
+    assert.match(all.text, /^\d+ servers /);
     const jp = await mcp.callTool('list_servers', { query: 'JP' });
     assert.match(jp.text, /srv-\d+\s+JP-A 东京\s+\[日本 🇯🇵\]\s+centos\s+direct/);
     assert.match(jp.text, /JP-D 福冈.*via srv-\d+/);
     const none = await mcp.callTool('list_servers', { query: 'no-such-server' });
-    assert.match(none.text, /没有匹配/);
+    assert.match(none.text, /no matching/);
   });
 
   test('exec：单台、按标签批量、非零退出码是 isError', async () => {
     const one = await mcp.callTool('exec', { target: 'JP-A', command: 'echo hello' });
     assert.equal(one.isError, false);
-    assert.match(one.text, /^===== srv-\d+ JP-A 东京 · 退出码 0/);
+    assert.match(one.text, /^===== srv-\d+ JP-A 东京 · exit 0/);
     assert.match(one.text, /\nhello$/);
 
     const many = await mcp.callTool('exec', { target: 'tag:日本', command: 'hostname' });
     assert.equal(many.isError, false);
     assert.equal(many.text.match(/^===== /gm).length, 4);
-    assert.match(many.text, /4 台：4 台成功/);
+    assert.match(many.text, /4 servers: 4 succeeded/);
 
     const failed = await mcp.callTool('exec', { target: 'JP-B', command: 'exit 3' });
     assert.equal(failed.isError, true);
-    assert.match(failed.text, /退出码 3/);
+    assert.match(failed.text, /exit 3/);
   });
 
   test('exec：目标与参数出错返回 isError，进程照常', async () => {
     const missing = await mcp.callTool('exec', { target: 'no-such-server', command: 'uptime' });
     assert.equal(missing.isError, true);
-    assert.match(missing.text, /没有叫“no-such-server”的服务器/);
+    assert.match(missing.text, /No server named "no-such-server"/);
     const ambiguous = await mcp.callTool('exec', { target: 'JP', command: 'uptime' });
     assert.equal(ambiguous.isError, true);
-    assert.match(ambiguous.text, /匹配到 4 台/);
+    assert.match(ambiguous.text, /matches 4 servers/);
     const badTimeout = await mcp.callTool('exec', { target: 'JP-A', command: 'uptime', timeout: 0 });
     assert.equal(badTimeout.isError, true);
     assert.match(badTimeout.text, /timeout/);
@@ -133,11 +133,11 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
   test('exec：拦截级命令一律拒绝，危险命令要 confirm', async () => {
     const blocked = await mcp.callTool('exec', { target: 'JP-A', command: 'rm -rf /', confirm: true });
     assert.equal(blocked.isError, true);
-    assert.match(blocked.text, /^拒绝执行/);
+    assert.match(blocked.text, /^Refused/);
 
     const risky = await mcp.callTool('exec', { target: 'JP-A', command: 'rm -rf /tmp/old-logs' });
     assert.equal(risky.isError, true);
-    assert.match(risky.text, /危险命令.*没有执行.*confirm: true/);
+    assert.match(risky.text, /Risky command.*not run.*confirm: true/);
 
     const confirmed = await mcp.callTool('exec', { target: 'JP-A', command: 'rm -rf /tmp/old-logs', confirm: true });
     assert.doesNotMatch(confirmed.text, /没有执行/);
@@ -150,7 +150,7 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     fs.writeFileSync(file, 'hello from mcp\n');
     const up = await mcp.callTool('upload', { target: 'JP-A', local_path: file, remote_path: '/tmp/' });
     assert.equal(up.isError, false, up.text);
-    assert.match(up.text, /已上传到 srv-\d+ JP-A 东京：文件 → \/tmp\/hello\.txt/);
+    assert.match(up.text, /Uploaded to srv-\d+ JP-A 东京: file → \/tmp\/hello\.txt/);
     const cat = await mcp.callTool('exec', { target: 'JP-A', command: 'cat /tmp/hello.txt' });
     assert.match(cat.text, /hello from mcp/);
 
@@ -165,16 +165,16 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
 
     const missing = await mcp.callTool('download', { target: 'JP-A', remote_path: '/root/nope.txt', local_path: local });
     assert.equal(missing.isError, true);
-    assert.match(missing.text, /没有 \/root\/nope\.txt/);
+    assert.match(missing.text, /\/root\/nope\.txt does not exist/);
   });
 
   test('copy：已存在的目标不 confirm 不覆盖', async () => {
     const first = await mcp.callTool('copy', { from_target: 'JP-A', from_path: '/root/deploy.sh', to_target: 'JP-B', to_path: '/tmp/deploy-copy.sh' });
     assert.equal(first.isError, false, first.text);
-    assert.match(first.text, /已从 srv-\d+ JP-A 东京 传到 srv-\d+ JP-B 大阪：文件 → \/tmp\/deploy-copy\.sh/);
+    assert.match(first.text, /Copied from srv-\d+ JP-A 东京 to srv-\d+ JP-B 大阪: file → \/tmp\/deploy-copy\.sh/);
     const again = await mcp.callTool('copy', { from_target: 'JP-A', from_path: '/root/deploy.sh', to_target: 'JP-B', to_path: '/tmp/deploy-copy.sh' });
     assert.equal(again.isError, true);
-    assert.match(again.text, /已有 \/tmp\/deploy-copy\.sh，没有覆盖/);
+    assert.match(again.text, /\/tmp\/deploy-copy\.sh already exists on .*not overwritten/);
     const forced = await mcp.callTool('copy', { from_target: 'JP-A', from_path: '/root/deploy.sh', to_target: 'JP-B', to_path: '/tmp/deploy-copy.sh', confirm: true });
     assert.equal(forced.isError, false, forced.text);
   });
@@ -191,8 +191,8 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     assert.equal(result.text.match(/^===== /gm).length, 3);
     // 每台都留了最后一行；超过 64KB 的开头拿不到，只留末尾，而且不会留下被截成半行的一行
     assert.equal(result.text.match(/line 03999 x+/g).length, 3);
-    assert.match(result.text, /只保留最后/);
-    assert.match(result.text, /要看完整输出/);
+    assert.match(result.text, /only the end was kept/);
+    assert.match(result.text, /For the full output/);
     for (const line of result.text.split('\n').filter((item) => /x{3}/.test(item))) assert.match(line, /^line \d{5} x{40}$/, line);
   });
 
@@ -206,15 +206,15 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     assert.ok(bytes(result.text) <= LIMIT, `结果 ${bytes(result.text)} 字节`);
     assert.match(result.text, /line 00000 x+/);
     assert.match(result.text, /line 00899 x+/);
-    assert.match(result.text, /中间省略了 \d+ 行/);
+    assert.match(result.text, /\d+ lines \(~.*\) omitted from the middle/);
     for (const line of result.text.split('\n').filter((item) => /x{3}/.test(item))) assert.match(line, /^line \d{5} x{40}$/, line);
   });
 
   test('超时：结果里说怎么办（调大 timeout，或用 start_job 放到后台）', async () => {
     const result = await mcp.callTool('exec', { target: 'JP-B', command: 'sleep 5', timeout: 1 });
     assert.equal(result.isError, true);
-    assert.match(result.text, /超时，命令已被结束/);
-    assert.match(result.text, /timeout 调大.*start_job/);
+    assert.match(result.text, /timed out \(killed\)/);
+    assert.match(result.text, /raise timeout.*start_job/);
   });
 
   test('上限可调：环境变量 CLOUDSSH_MCP_OUTPUT_KB 改小后结果跟着变小，工具说明写的是实际上限', async () => {
@@ -229,7 +229,7 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     assert.ok(bytes(result.text) <= 8 * 1024, `exec 结果 ${bytes(result.text)} 字节`);
     assert.match(result.text, /line 03999/);
     assert.ok(bytes(read.text) <= 8 * 1024, `read_file 结果 ${bytes(read.text)} 字节`);
-    assert.match(read.text, /用 offset 从下一行接着读/);
+    assert.match(read.text, /Continue with offset/);
   });
 
   test('取消：不再回复，用到的会话关掉，之后照常可用', async () => {
@@ -248,6 +248,6 @@ describe('cloudssh mcp', { timeout: 120_000 }, () => {
     const result = await other.callTool('list_servers', {});
     await other.close();
     assert.equal(result.isError, true);
-    assert.match(result.text, /还没有登录 http:\/\/127\.0\.0\.1:9/);
+    assert.match(result.text, /Not signed in to http:\/\/127\.0\.0\.1:9/);
   });
 });

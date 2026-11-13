@@ -39,7 +39,7 @@ function tokenize(command: string): Token[] {
     const c = command[i];
     if (c === "'") {
       const end = command.indexOf("'", i + 1);
-      if (end < 0) refuse('引号没有配对');
+      if (end < 0) refuse('unbalanced quotes');
       word += command.slice(i + 1, end);
       inWord = true;
       i = end + 1;
@@ -49,7 +49,7 @@ function tokenize(command: string): Token[] {
       // $'…'：内容按原样（不解转义），只用来判断
       let j = i + 2;
       while (j < n && command[j] !== "'") j += command[j] === '\\' ? 2 : 1;
-      if (j >= n) refuse('引号没有配对');
+      if (j >= n) refuse('unbalanced quotes');
       word += command.slice(i + 2, j);
       inWord = true;
       i = j + 1;
@@ -64,11 +64,11 @@ function tokenize(command: string): Token[] {
           j += 2;
           continue;
         }
-        if (d === '`' || (d === '$' && command[j + 1] === '(')) refuse('不允许命令替换（`…` 或 $(…)）');
+        if (d === '`' || (d === '$' && command[j + 1] === '(')) refuse('command substitution (`…` or $(…)) is not allowed');
         word += d;
         j++;
       }
-      if (j >= n) refuse('引号没有配对');
+      if (j >= n) refuse('unbalanced quotes');
       inWord = true;
       i = j + 1;
       continue;
@@ -83,7 +83,7 @@ function tokenize(command: string): Token[] {
       i += 2;
       continue;
     }
-    if (c === '`' || (c === '$' && command[i + 1] === '(')) refuse('不允许命令替换（`…` 或 $(…)）');
+    if (c === '`' || (c === '$' && command[i + 1] === '(')) refuse('command substitution (`…` or $(…)) is not allowed');
     if (c === '#' && !inWord) {
       while (i < n && command[i] !== '\n') i++;
       continue;
@@ -100,7 +100,7 @@ function tokenize(command: string): Token[] {
       continue;
     }
     if (';&|()<>'.includes(c)) {
-      if ((c === '<' || c === '>') && command[i + 1] === '(') refuse('不允许进程替换（<(…) 或 >(…)）');
+      if ((c === '<' || c === '>') && command[i + 1] === '(') refuse('process substitution (<(…) or >(…)) is not allowed');
       const three = command.slice(i, i + 3);
       const two = command.slice(i, i + 2);
       const op = OPS_3.includes(three) ? three : OPS_2.includes(two) ? two : c;
@@ -127,7 +127,7 @@ function segments(tokens: Token[]): string[][] {
   let current: string[] = [];
   const next = (index: number): string => {
     const token = tokens[index];
-    if (!token || !('word' in token)) refuse('重定向后面缺少目标');
+    if (!token || !('word' in token)) refuse('redirection without a target');
     return (token as { word: string }).word;
   };
   for (let k = 0; k < tokens.length; k++) {
@@ -141,26 +141,26 @@ function segments(tokens: Token[]): string[][] {
       if (current.length) result.push(current);
       current = [];
     } else if (op === '(' || op === ')') {
-      refuse('不支持子 Shell 与分组 ( … )');
+      refuse('subshells and grouping ( … ) are not supported');
     } else if (op === ';;') {
-      refuse('不支持 case 语句');
+      refuse('case statements are not supported');
     } else if (op === '>&' || op === '<&') {
       // 2>&1、>&2：复制文件描述符
-      if (!/^(\d+|-)$/.test(next(k + 1))) refuse('不允许写文件（重定向）');
+      if (!/^(\d+|-)$/.test(next(k + 1))) refuse('writing files (redirection) is not allowed');
       k++;
     } else if (['>', '>>', '>|', '&>', '&>>'].includes(op)) {
       const target = next(k + 1);
-      if (!['/dev/null', '/dev/stdout', '/dev/stderr'].includes(target)) refuse(`不允许写文件（重定向到 ${target}）`);
+      if (!['/dev/null', '/dev/stdout', '/dev/stderr'].includes(target)) refuse(`writing files is not allowed (redirection to ${target})`);
       k++;
     } else if (op === '<' || op === '<<<') {
       next(k + 1);
       k++;
     } else if (op === '<<' || op === '<<-') {
-      refuse('不支持 heredoc');
+      refuse('heredocs are not supported');
     } else if (op === '<>') {
-      refuse('不允许以读写方式打开文件');
+      refuse('opening files read-write is not allowed');
     } else {
-      refuse(`不支持 ${op}`);
+      refuse(`${op} is not supported`);
     }
   }
   if (current.length) result.push(current);
@@ -174,16 +174,16 @@ type Rule = (args: string[]) => void;
 const any: Rule = () => undefined;
 
 /** 有这些参数（或短参数里带这些字母）就拒绝 */
-function denyFlags(long: string[], shortLetters = '', what = '会改动服务器或一直不退出的参数'): Rule {
+function denyFlags(long: string[], shortLetters = '', what = 'option that changes the server or never exits'): Rule {
   return (args) => {
     for (const arg of args) {
       if (arg === '--') break;
       const name = arg.split('=')[0];
-      if (long.includes(name)) refuse(`${what}：${arg}`);
+      if (long.includes(name)) refuse(`${what}: ${arg}`);
       if (shortLetters && /^-[A-Za-z]/.test(arg) && !arg.startsWith('--')) {
         // -fn100 这类组合：数字之前的字母都是开关
         const letters = /^-([A-Za-z]+)/.exec(arg)?.[1] ?? '';
-        for (const letter of letters) if (shortLetters.includes(letter)) refuse(`${what}：${arg}`);
+        for (const letter of letters) if (shortLetters.includes(letter)) refuse(`${what}: ${arg}`);
       }
     }
   };
@@ -200,49 +200,49 @@ function subcommands(allowed: string[], options: { allowEmpty?: boolean; valueOp
     const sub = args[index];
     if (sub === undefined) {
       if (options.allowEmpty) return;
-      refuse('缺少子命令');
+      refuse('missing subcommand');
     }
-    if (!allowed.includes(sub)) refuse(`只读模式只允许这些子命令：${allowed.join('、')}（不允许 ${sub}）`);
+    if (!allowed.includes(sub)) refuse(`allowed subcommands: ${allowed.join(', ')} (not ${sub})`);
     options.then?.[sub]?.(args.slice(index + 1));
   };
 }
 
 const versionOnly: Rule = (args) => {
   if (args.length === 1 && ['--version', '-v', '-V', 'version', '-version', '--help', '-h'].includes(args[0])) return;
-  refuse('只允许查看版本（--version）');
+  refuse('only --version is allowed');
 };
 
-const noFollow = denyFlags(['--follow', '--retry'], 'fF', '会一直不退出的参数');
+const noFollow = denyFlags(['--follow', '--retry'], 'fF', 'option that never exits');
 
 /** awk：程序（第一个非选项参数）里不能有 system、getline、重定向与管道；不能从文件读程序或加载扩展 */
 const awkRule: Rule = (args) => {
   for (let k = 0; k < args.length; k++) {
     const arg = args[k];
-    if (arg === '-i' || arg.startsWith('--include') || arg === '-f' || arg.startsWith('--file') || arg === '-l' || arg.startsWith('--load')) refuse(`不允许 awk 的 ${arg}`);
+    if (arg === '-i' || arg.startsWith('--include') || arg === '-f' || arg.startsWith('--file') || arg === '-l' || arg.startsWith('--load')) refuse(`awk ${arg} is not allowed`);
     if (arg === '-F' || arg === '-v') {
       k++;
       continue;
     }
     if (arg.startsWith('-')) continue;
-    if (/system|getline|[>|]/.test(arg)) refuse('awk 程序里不允许 system、getline、重定向与管道');
+    if (/system|getline|[>|]/.test(arg)) refuse('awk programs may not use system, getline, redirection or pipes');
     return;
   }
 };
 
 const sedRule: Rule = (args) => {
   for (const arg of args) {
-    if (/^-[A-Za-z]*i/.test(arg) && !arg.startsWith('--')) refuse('不允许 sed -i（改文件）');
-    if (arg.startsWith('--in-place') || arg === '-f' || arg.startsWith('--file')) refuse(`不允许 sed 的 ${arg}`);
+    if (/^-[A-Za-z]*i/.test(arg) && !arg.startsWith('--')) refuse('sed -i (edits files) is not allowed');
+    if (arg.startsWith('--in-place') || arg === '-f' || arg.startsWith('--file')) refuse(`sed ${arg} is not allowed`);
     // w 文件、e 命令：写文件或执行命令
-    if (!arg.startsWith('-') && /(^|[;{}\n]|\/[gpiImMe0-9]*)\s*[wWe](\s|$)/.test(arg)) refuse('sed 脚本里不允许 w（写文件）与 e（执行命令）');
+    if (!arg.startsWith('-') && /(^|[;{}\n]|\/[gpiImMe0-9]*)\s*[wWe](\s|$)/.test(arg)) refuse('sed scripts may not use w (write a file) or e (run a command)');
   }
 };
 
-const findRule = denyFlags(['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprint0', '-fprintf', '-fls'], '', '会改动或执行命令的 find 参数');
+const findRule = denyFlags(['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprint0', '-fprintf', '-fls'], '', 'find option that changes files or runs commands');
 
 const topRule: Rule = (args) => {
   const joined = args.join(' ');
-  if (!/(^|\s)-[A-Za-z]*b/.test(joined) || !/(^|\s)-[A-Za-z]*n/.test(joined)) refuse('top 要带 -b -n1（只输出一次）');
+  if (!/(^|\s)-[A-Za-z]*b/.test(joined) || !/(^|\s)-[A-Za-z]*n/.test(joined)) refuse('top requires -b -n1 (one snapshot)');
 };
 
 const curlRule: Rule = (args) => {
@@ -252,17 +252,17 @@ const curlRule: Rule = (args) => {
     const name = arg.split('=')[0];
     if (longDeny.includes(name)) {
       if (name === '--request' && /^(GET|HEAD)$/i.test(arg.includes('=') ? arg.split('=')[1] : (args[k + 1] ?? ''))) continue;
-      refuse(`curl 只读模式不允许 ${name}（写文件或发数据）`);
+      refuse(`curl ${name} is not allowed (writes files or sends data)`);
     }
     if (/^-[A-Za-z]/.test(arg) && !arg.startsWith('--')) {
       const letters = /^-([A-Za-z]+)/.exec(arg)?.[1] ?? '';
       for (const letter of letters) {
         if (letter === 'X') {
           const method = letters.endsWith('X') ? (arg.length > letters.length + 1 ? arg.slice(letters.length + 1) : args[k + 1] ?? '') : '';
-          if (!/^(GET|HEAD)$/i.test(method)) refuse('curl 只读模式只允许 GET / HEAD');
+          if (!/^(GET|HEAD)$/i.test(method)) refuse('curl allows only GET / HEAD');
           continue;
         }
-        if ('oOTdFKcDJ'.includes(letter)) refuse(`curl 只读模式不允许 -${letter}（写文件或发数据）`);
+        if ('oOTdFKcDJ'.includes(letter)) refuse(`curl -${letter} is not allowed (writes files or sends data)`);
       }
     }
   }
@@ -270,23 +270,23 @@ const curlRule: Rule = (args) => {
 
 const ipRule: Rule = (args) => {
   const words = ['add', 'del', 'delete', 'change', 'chg', 'replace', 'set', 'flush', 'append', 'prepend', 'save', 'restore', 'monitor', 'exec', 'attach', 'detach', 'update', 'shutdown', 'reset'];
-  for (const arg of args) if (words.includes(arg)) refuse(`ip 只读模式不允许 ${arg}`);
+  for (const arg of args) if (words.includes(arg)) refuse(`ip ${arg} is not allowed`);
 };
 
 const iptablesRule: Rule = (args) => {
   const listing = args.some((arg) => ['-L', '--list', '-S', '--list-rules'].includes(arg) || /^-[A-Za-z]*[LS]/.test(arg));
-  if (!listing) refuse('iptables 只允许查看（-L / -S）');
+  if (!listing) refuse('iptables allows only listing (-L / -S)');
   const deny = ['-A', '--append', '-D', '--delete', '-I', '--insert', '-R', '--replace', '-F', '--flush', '-X', '--delete-chain', '-Z', '--zero', '-P', '--policy', '-N', '--new-chain', '-E', '--rename-chain'];
   for (const arg of args) {
-    if (deny.includes(arg) || (/^-[A-Za-z]{2,}$/.test(arg) && /[ADIRFXZPNE]/.test(arg))) refuse(`iptables 只读模式不允许 ${arg}`);
+    if (deny.includes(arg) || (/^-[A-Za-z]{2,}$/.test(arg) && /[ADIRFXZPNE]/.test(arg))) refuse(`iptables ${arg} is not allowed`);
   }
 };
 
 const dockerValueOptions = ['-H', '--host', '--context', '-c', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey'];
 const composeValueOptions = ['-f', '--file', '-p', '--project-name', '--profile', '--env-file', '--project-directory', '--ansi', '--progress', '--parallel'];
-const dockerFollow = denyFlags(['--follow'], 'f', '会一直不退出的参数');
+const dockerFollow = denyFlags(['--follow'], 'f', 'option that never exits');
 const dockerStats: Rule = (args) => {
-  if (!args.includes('--no-stream')) refuse('docker stats 要带 --no-stream');
+  if (!args.includes('--no-stream')) refuse('docker stats requires --no-stream');
 };
 const dockerListOnly = (allowed: string[]): Rule => subcommands(allowed);
 const dockerRule: Rule = subcommands(
@@ -319,18 +319,18 @@ const systemctlRule: Rule = subcommands(
 const journalctlRule = denyFlags(
   ['--follow', '--vacuum-size', '--vacuum-time', '--vacuum-files', '--rotate', '--flush', '--sync', '--relinquish-var', '--smart-relinquish-var', '--setup-keys', '--update-catalog'],
   'f',
-  '会改动日志或一直不退出的参数'
+  'option that changes logs or never exits'
 );
 
 const statusOnly =
   (allowed: string[]): Rule =>
   (args) => {
     const sub = args.find((arg) => !arg.startsWith('-'));
-    if (sub !== undefined && !allowed.includes(sub)) refuse(`只读模式只允许：${allowed.join('、') || '不带子命令'}（不允许 ${sub}）`);
+    if (sub !== undefined && !allowed.includes(sub)) refuse(`allowed: ${allowed.join(', ') || 'no subcommand'} (not ${sub})`);
   };
 
 const noPositional: Rule = (args) => {
-  if (args.some((arg) => !arg.startsWith('-'))) refuse('只允许不带参数地查看');
+  if (args.some((arg) => !arg.startsWith('-'))) refuse('only allowed without arguments');
 };
 
 const RULES = new Map<string, Rule>();
@@ -354,41 +354,41 @@ simple('top', topRule);
 simple('curl', curlRule);
 simple('ip', ipRule);
 simple('ifconfig', (args) => {
-  if (args.filter((arg) => !arg.startsWith('-')).length > 1) refuse('ifconfig 只允许查看');
+  if (args.filter((arg) => !arg.startsWith('-')).length > 1) refuse('ifconfig allows only viewing');
 });
 simple('iptables ip6tables', iptablesRule);
-simple('iptables-save ip6tables-save', denyFlags(['-f', '--file'], '', '写文件的参数'));
+simple('iptables-save ip6tables-save', denyFlags(['-f', '--file'], '', 'option that writes files'));
 simple('nft', (args) => {
   const sub = args.find((arg) => !arg.startsWith('-'));
-  if (sub !== 'list') refuse('nft 只允许 list');
+  if (sub !== 'list') refuse('nft allows only list');
 });
 simple('ufw', statusOnly(['status', 'show', 'version', 'app']));
 simple('crontab', (args) => {
-  if (!args.includes('-l')) refuse('crontab 只允许 -l');
-  if (args.some((arg) => ['-e', '-r', '-i'].includes(arg))) refuse('crontab 只允许 -l');
+  if (!args.includes('-l')) refuse('crontab allows only -l');
+  if (args.some((arg) => ['-e', '-r', '-i'].includes(arg))) refuse('crontab allows only -l');
 });
 simple('sysctl', (args) => {
   for (const arg of args) {
-    if (['-w', '--write', '-p', '--load', '--system'].includes(arg) || arg.includes('=')) refuse(`sysctl 只读模式不允许 ${arg}`);
+    if (['-w', '--write', '-p', '--load', '--system'].includes(arg) || arg.includes('=')) refuse(`sysctl ${arg} is not allowed`);
   }
 });
-simple('dmesg', denyFlags(['--clear', '--read-clear', '--console-off', '--console-on', '--console-level', '--follow', '--follow-new'], 'cCDEnwW', '会改动内核日志或一直不退出的参数'));
+simple('dmesg', denyFlags(['--clear', '--read-clear', '--console-off', '--console-on', '--console-level', '--follow', '--follow-new'], 'cCDEnwW', 'option that changes the kernel log or never exits'));
 simple('timedatectl hostnamectl localectl', statusOnly(['status', 'show', 'list-timezones', 'timesync-status', 'show-timesync', 'list-locales', 'list-keymaps']));
 simple('swapon', (args) => {
-  if (args.some((arg) => !['--show', '-s', '--summary', '--bytes', '--noheadings', '--raw'].includes(arg) && !arg.startsWith('--show='))) refuse('swapon 只允许 --show');
+  if (args.some((arg) => !['--show', '-s', '--summary', '--bytes', '--noheadings', '--raw'].includes(arg) && !arg.startsWith('--show='))) refuse('swapon allows only --show');
 });
 simple('mount', noPositional);
-simple('smartctl', denyFlags(['-t', '--test', '-s', '--smart', '-o', '--offlineauto', '-S', '--saveauto', '-X', '--abort'], '', '会改动磁盘设置或开始自检的参数'));
+simple('smartctl', denyFlags(['-t', '--test', '-s', '--smart', '-o', '--offlineauto', '-S', '--saveauto', '-X', '--abort'], '', 'option that changes disk settings or starts a self-test'));
 simple('nvidia-smi', (args) => {
   for (const arg of args) {
-    if (!/^(-q|--query.*|-L|--list-gpus|-x|--xml-format|-i|--id.*|-d|--display.*|--format.*|-u|topo|-m)$/.test(arg) && arg.startsWith('-')) refuse(`nvidia-smi 只读模式不允许 ${arg}`);
+    if (!/^(-q|--query.*|-L|--list-gpus|-x|--xml-format|-i|--id.*|-d|--display.*|--format.*|-u|topo|-m)$/.test(arg) && arg.startsWith('-')) refuse(`nvidia-smi ${arg} is not allowed`);
   }
 });
 simple('systemctl', systemctlRule);
 simple('service', (args) => {
   if (args.length === 1 && args[0] === '--status-all') return;
   if (args.length === 2 && args[1] === 'status') return;
-  refuse('service 只允许 --status-all 或 <服务> status');
+  refuse('service allows only --status-all or <service> status');
 });
 simple('journalctl', journalctlRule);
 simple('docker', dockerRule);
@@ -396,30 +396,30 @@ simple('apt', subcommands(['list', 'policy', 'show', 'search', 'depends', 'rdepe
 simple('apt-cache', subcommands(['policy', 'show', 'showpkg', 'showsrc', 'search', 'depends', 'rdepends', 'stats', 'pkgnames', 'madison']));
 simple('dpkg', (args) => {
   const ok = ['-l', '--list', '-L', '--listfiles', '-s', '--status', '-S', '--search', '-p', '--print-avail', '--get-selections', '--print-architecture', '--print-foreign-architectures', '--version'];
-  if (!args.length || !ok.includes(args[0])) refuse('dpkg 只允许查看（-l、-L、-s、-S……）');
+  if (!args.length || !ok.includes(args[0])) refuse('dpkg allows only queries (-l, -L, -s, -S, …)');
 });
 simple('dpkg-query');
 simple('rpm', (args) => {
-  if (!args.length || !/^-q/.test(args[0])) refuse('rpm 只允许查询（-q…）');
+  if (!args.length || !/^-q/.test(args[0])) refuse('rpm allows only queries (-q…)');
 });
 simple('git', (args) => {
-  if (args.some((arg) => arg === '-c' || arg.startsWith('--config-env') || arg.startsWith('--exec-path'))) refuse('git 只读模式不允许 -c 等改配置的参数');
+  if (args.some((arg) => arg === '-c' || arg.startsWith('--config-env') || arg.startsWith('--exec-path'))) refuse('git -c and other config-changing options are not allowed');
   subcommands(['status', 'log', 'diff', 'show', 'branch', 'remote', 'rev-parse', 'describe', 'tag', 'ls-files', 'blame', 'shortlog', 'reflog', 'config', 'worktree', 'stash', 'submodule', 'version', 'ls-remote'], {
     valueOptions: ['-C', '--git-dir', '--work-tree'],
     then: {
       branch: denyFlags(['-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-f', '--force', '--set-upstream-to', '-u', '--unset-upstream', '--edit-description']),
       remote: (rest) => {
-        if (rest.length && !['-v', '--verbose', 'show', 'get-url'].includes(rest[0])) refuse('git remote 只允许查看');
+        if (rest.length && !['-v', '--verbose', 'show', 'get-url'].includes(rest[0])) refuse('git remote allows only viewing');
       },
       tag: (rest) => {
-        if (rest.some((arg) => !arg.startsWith('-')) && !rest.some((arg) => ['-l', '--list'].includes(arg))) refuse('git tag 只允许列出（-l）');
-        if (rest.some((arg) => ['-d', '--delete', '-a', '-s', '-f', '--force'].includes(arg))) refuse('git tag 只允许列出');
+        if (rest.some((arg) => !arg.startsWith('-')) && !rest.some((arg) => ['-l', '--list'].includes(arg))) refuse('git tag allows only listing (-l)');
+        if (rest.some((arg) => ['-d', '--delete', '-a', '-s', '-f', '--force'].includes(arg))) refuse('git tag allows only listing');
       },
       reflog: (rest) => {
-        if (rest.length && !['show'].includes(rest[0]) && !rest[0].startsWith('-')) refuse('git reflog 只允许查看');
+        if (rest.length && !['show'].includes(rest[0]) && !rest[0].startsWith('-')) refuse('git reflog allows only viewing');
       },
       config: (rest) => {
-        if (!rest.some((arg) => ['--get', '--get-all', '--get-regexp', '--list', '-l'].includes(arg))) refuse('git config 只允许 --get / --list');
+        if (!rest.some((arg) => ['--get', '--get-all', '--get-regexp', '--list', '-l'].includes(arg))) refuse('git config allows only --get / --list');
       },
       worktree: subcommands(['list']),
       stash: subcommands(['list', 'show']),
@@ -440,16 +440,16 @@ const orVersion =
 simple('pip pip3', orVersion(subcommands(['list', 'show', 'freeze'])));
 simple('npm', orVersion(subcommands(['ls', 'list', 'view', 'outdated'])));
 simple('nginx', (args) => {
-  if (args.length !== 1 || !['-v', '-V', '-t', '-T'].includes(args[0])) refuse('nginx 只允许 -v、-V、-t、-T');
+  if (args.length !== 1 || !['-v', '-V', '-t', '-T'].includes(args[0])) refuse('nginx allows only -v, -V, -t, -T');
 });
 simple('apache2ctl apachectl', (args) => {
-  if (args.length !== 1 || !['-v', '-V', '-t', '-S', '-M', 'configtest'].includes(args[0])) refuse('apachectl 只允许 -v、-V、-t、-S、-M');
+  if (args.length !== 1 || !['-v', '-V', '-t', '-S', '-M', 'configtest'].includes(args[0])) refuse('apachectl allows only -v, -V, -t, -S, -M');
 });
 simple('openssl', subcommands(['version', 'x509', 's_client', 'ciphers', 'crl', 'verify', 'asn1parse'], {
   allowEmpty: false,
-  then: Object.fromEntries(['x509', 's_client', 'crl', 'verify', 'asn1parse'].map((name) => [name, denyFlags(['-out', '-keyout', '-sess_out', '-msgfile', '-keylogfile'], '', '写文件的参数')])),
+  then: Object.fromEntries(['x509', 's_client', 'crl', 'verify', 'asn1parse'].map((name) => [name, denyFlags(['-out', '-keyout', '-sess_out', '-msgfile', '-keylogfile'], '', 'option that writes files')])),
 }));
-simple('vnstat', denyFlags(['--add', '--remove', '--delete', '--reset', '--rename', '--setalias', '--update', '--create', '--force', '--live', '-l', '-u', '--json-live'], '', '会改动数据或一直不退出的参数'));
+simple('vnstat', denyFlags(['--add', '--remove', '--delete', '--reset', '--rename', '--setalias', '--update', '--create', '--force', '--live', '-l', '-u', '--json-live'], '', 'option that changes data or never exits'));
 simple('python python3 node nodejs php ruby perl java go rustc cargo gcc bash sh zsh dash', versionOnly);
 
 /** 包在前面的命令（sudo、timeout……）：去掉自己的参数后检查后面的命令 */
@@ -462,7 +462,7 @@ const WRAPPERS: Record<string, (args: string[]) => string[]> = {
         k++;
         break;
       }
-      if (['-i', '-s', '-e', '--login', '--shell', '--edit', '-v', '--validate', '-k', '-K'].includes(arg) || /^-[A-Za-z]*[iseD]/.test(arg)) refuse(`不允许 sudo ${arg}`);
+      if (['-i', '-s', '-e', '--login', '--shell', '--edit', '-v', '--validate', '-k', '-K'].includes(arg) || /^-[A-Za-z]*[iseD]/.test(arg)) refuse(`sudo ${arg} is not allowed`);
       k += ['-u', '-g', '-U', '-h', '-p', '-C', '-r', '-t', '--user', '--group'].includes(arg) ? 2 : 1;
     }
     return args.slice(k);
@@ -484,7 +484,7 @@ const WRAPPERS: Record<string, (args: string[]) => string[]> = {
     let k = 0;
     while (k < args.length) {
       const arg = args[k];
-      if (arg === '-S' || arg.startsWith('--split-string')) refuse('不允许 env -S');
+      if (arg === '-S' || arg.startsWith('--split-string')) refuse('env -S is not allowed');
       if (arg === '-u' || arg === '--unset' || arg === '-C' || arg === '--chdir') k += 2;
       else if (arg.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)) k++;
       else break;
@@ -499,10 +499,10 @@ const WRAPPERS: Record<string, (args: string[]) => string[]> = {
 
 function checkCommand(words: string[]): void {
   let name = words[0];
-  if (/[$*?[\]{}~]/.test(name.replace(/^\[$/, ''))) refuse(`不允许用变量或通配符当命令：${name}`);
+  if (/[$*?[\]{}~]/.test(name.replace(/^\[$/, ''))) refuse(`variables or wildcards as the command are not allowed: ${name}`);
   if (name.includes('/')) {
     const slash = name.lastIndexOf('/');
-    if (!STANDARD_DIRS.has(name.slice(0, slash))) refuse(`只允许系统目录里的程序：${name}`);
+    if (!STANDARD_DIRS.has(name.slice(0, slash))) refuse(`only programs in system directories are allowed: ${name}`);
     name = name.slice(slash + 1);
   }
   const args = words.slice(1);
@@ -510,11 +510,11 @@ function checkCommand(words: string[]): void {
   if (wrapper) {
     const rest = wrapper(args);
     if (rest.length) checkSegment(rest);
-    else if (name !== 'env' && name !== 'command') refuse(`${name} 后面缺少命令`);
+    else if (name !== 'env' && name !== 'command') refuse(`missing command after ${name}`);
     return;
   }
   const rule = RULES.get(name);
-  if (!rule) refuse(`只读模式不允许 ${name}（不在只读命令清单里）`);
+  if (!rule) refuse(`${name} is not on the read-only allowlist`);
   rule!(args);
 }
 
@@ -526,11 +526,11 @@ function checkSegment(words: string[]): void {
 
 /** 这条命令在只读模式下能不能执行 */
 export function readOnlyCheck(command: string): ReadOnlyVerdict {
-  if (!command.trim()) return { ok: false, reason: '命令是空的' };
-  if (command.length > MAX_COMMAND) return { ok: false, reason: '命令太长' };
+  if (!command.trim()) return { ok: false, reason: 'empty command' };
+  if (command.length > MAX_COMMAND) return { ok: false, reason: 'command too long' };
   try {
     const parts = segments(tokenize(command));
-    if (!parts.length) return { ok: false, reason: '命令是空的' };
+    if (!parts.length) return { ok: false, reason: 'empty command' };
     for (const words of parts) checkSegment(words);
     return { ok: true };
   } catch (error) {

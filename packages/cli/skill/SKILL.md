@@ -67,7 +67,7 @@ Why: 5.1 strips double quotes inside arguments (`'grep "a b" f'` arrives as two 
   2. Ask the user to authorize in the browser, then copy the full address from the address bar after it returns to their CloudSSH site (the page says "Invalid state parameter"; that is expected) and paste it to you.
   3. Run `cloudssh login --callback "<the pasted address>"` (valid for 10 minutes), then rerun your command.
 
-  Alternatively the user can run `cloudssh login` in their own terminal (it asks for the address there) or turn on "同步登录给命令行" in the CloudSSH desktop app. The login is stored in `~/.cloudssh/` and shared by every terminal and agent, so once it is done your next command works; nothing needs restarting. Never ask for the user's GitHub password.
+  Alternatively the user can run `cloudssh login` in their own terminal (it asks for the address there) or turn on the CloudSSH desktop app setting "同步登录给命令行" (sync sign-in to the CLI). The login is stored in `~/.cloudssh/` and shared by every terminal and agent, so once it is done your next command works; nothing needs restarting. Never ask for the user's GitHub password.
 
 ## Other commands
 

@@ -34,11 +34,11 @@ describe('exec --file', { timeout: 120_000 }, () => {
   test('文件不在、与 --stdin 或参数里的命令同时用时报用法错误', () => {
     const missing = runCli(['exec', '--file', path.join(root, 'nope.sh'), 'JP-A'], env);
     assert.equal(missing.code, 2);
-    assert.match(missing.stderr, /读不到命令文件/);
+    assert.match(missing.stderr, /Cannot read command file/);
     const file = path.join(root, 'command.sh');
     fs.writeFileSync(file, 'uptime');
-    assert.match(runCli(['exec', '--file', file, '--stdin', 'JP-A'], env).stderr, /只能用一个/);
-    assert.match(runCli(['exec', '--file', file, 'JP-A', 'uptime'], env).stderr, /不要再在参数里写命令/);
+    assert.match(runCli(['exec', '--file', file, '--stdin', 'JP-A'], env).stderr, /only one of --stdin and --file/);
+    assert.match(runCli(['exec', '--file', file, 'JP-A', 'uptime'], env).stderr, /do not also pass the command/);
   });
 });
 

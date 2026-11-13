@@ -178,7 +178,7 @@ export async function runAgent(origin: string): Promise<void> {
     const config = loadConfig();
     const instance = resolveInstance(config, origin);
     if (!instance.credential) {
-      throw new UsageError(`还没有登录 ${origin}：运行 cloudssh login ${origin}（或在桌面客户端里打开“同步登录给命令行”）`);
+      throw new UsageError(`Not signed in to ${origin}: run cloudssh login ${origin} (or turn on "同步登录给命令行" in the CloudSSH desktop app)`);
     }
     // 换了登录（可能换了账号）：旧会话、旧列表都不能再用
     if (instance.credential.session !== session) {
@@ -425,7 +425,7 @@ export async function execViaAgent(origin: string, request: { spec: string; comm
   if (!connection) return null;
   const reply = await connection.call({ op: 'exec', ...request });
   connection.socket.end();
-  if (!reply) throw new Error('后台会话进程中断，执行状态未知（CLOUDSSH_AGENT=0 可不用后台进程）');
+  if (!reply) throw new Error('The background session process died; whether the command ran is unknown (CLOUDSSH_AGENT=0 disables the background process)');
   if (typeof reply.error === 'string') throw reply.usage ? new UsageError(reply.error) : new Error(reply.error);
   return reply.results as ExecOutcome[];
 }

@@ -20,7 +20,7 @@ export function activeInstance(requested?: string): { config: CliConfig; origin:
   const config = loadConfig();
   const instance = resolveInstance(config, requested);
   if (!instance.credential) {
-    throw new UsageError(`还没有登录 ${instance.origin}：运行 cloudssh login ${instance.origin}（或在桌面客户端里打开“同步登录给命令行”）`);
+    throw new UsageError(`Not signed in to ${instance.origin}: run cloudssh login ${instance.origin} (or turn on "同步登录给命令行" in the CloudSSH desktop app)`);
   }
   installNetwork(instance.origin, instance.credential.session);
   return { config, origin: instance.origin, session: instance.credential.session };
@@ -82,7 +82,7 @@ function resolveOne(spec: string, servers: ServerConfig[], config: CliConfig, de
   if (!text) return [];
   const alias = config.aliases[text];
   if (alias !== undefined) {
-    if (depth > 5) throw new UsageError(`别名 ${text} 循环引用`);
+    if (depth > 5) throw new UsageError(`Alias ${text} is circular`);
     return resolveTargets(alias, servers, config, depth + 1);
   }
   if (text.toLowerCase() === 'all') return [...servers];
@@ -90,26 +90,26 @@ function resolveOne(spec: string, servers: ServerConfig[], config: CliConfig, de
   if (tag) {
     const want = norm(tag[1]);
     const hit = servers.filter((server) => (server.tags ?? []).some((item) => norm(item) === want || norm(item).replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '').trim() === want));
-    if (!hit.length) throw new UsageError(`没有带标签“${tag[1]}”的服务器`);
+    if (!hit.length) throw new UsageError(`No server has the tag "${tag[1]}"`);
     return hit;
   }
   const id = /^(?:srv-)?(\d+)$/i.exec(text);
   if (id) {
     const server = servers.find((item) => item.id === Number(id[1]));
     if (server) return [server];
-    if (/^srv-/i.test(text)) throw new UsageError(`没有主机 ID 为 ${text} 的服务器（cloudssh servers 查看）`);
+    if (/^srv-/i.test(text)) throw new UsageError(`No server with host ID ${text} (see list_servers or cloudssh servers)`);
   }
   const key = norm(text);
   const exact = servers.filter((server) => norm(server.name) === key);
   if (exact.length === 1) return exact;
   const partial = exact.length ? exact : servers.filter((server) => norm(server.name).includes(key));
   if (partial.length === 1) return partial;
-  if (!partial.length) throw new UsageError(`没有叫“${text}”的服务器（cloudssh servers 查看）`);
+  if (!partial.length) throw new UsageError(`No server named "${text}" (see list_servers or cloudssh servers)`);
   const list = partial
     .slice(0, 10)
     .map((server) => `  ${hostId(server)}  ${server.name}`)
     .join('\n');
-  throw new UsageError(`“${text}”匹配到 ${partial.length} 台，请用主机 ID 指定：\n${list}`);
+  throw new UsageError(`"${text}" matches ${partial.length} servers; use a host ID:\n${list}`);
 }
 
 /**
@@ -143,13 +143,13 @@ export function resolveTargets(spec: string, servers: ServerConfig[], config: Cl
       if (!result.includes(server)) result.push(server);
     }
   }
-  if (!result.length) throw new UsageError('没有指定服务器');
+  if (!result.length) throw new UsageError('No server specified');
   return result;
 }
 
 export function resolveSingle(spec: string, servers: ServerConfig[], config: CliConfig): ServerConfig {
   const list = resolveTargets(spec, servers, config);
-  if (list.length > 1) throw new UsageError(`“${spec}”对应 ${list.length} 台服务器，这里只能指定一台`);
+  if (list.length > 1) throw new UsageError(`"${spec}" matches ${list.length} servers; exactly one is required here`);
   return list[0];
 }
 

@@ -282,7 +282,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     const list = await callTool(server.base, token, 'list_servers', {});
     assert.match(list.text, /JP-A/);
     assert.doesNotMatch(list.text, /JP-B/);
-    assert.match((await callTool(server.base, token, 'exec', { target: `srv-${excluded.id}`, command: 'echo hi' })).text, /不提供（EXCLUDE）/);
+    assert.match((await callTool(server.base, token, 'exec', { target: `srv-${excluded.id}`, command: 'echo hi' })).text, /excluded \(EXCLUDE\)/);
 
     const hello = await callTool(server.base, token, 'exec', { target: 'JP-A', command: 'echo hello' });
     assert.equal(hello.isError, false, hello.text);
@@ -291,7 +291,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
     assert.doesNotMatch(risky.text, /危险命令/);
     const blocked = await callTool(server.base, token, 'exec', { target: 'JP-A', command: 'rm -rf /' });
     assert.equal(blocked.isError, true);
-    assert.match(blocked.text, /拒绝执行/);
+    assert.match(blocked.text, /Refused/);
     assert.match(server.stderr, /exec 执行 srv-\d+：echo hello/);
   });
 
@@ -455,7 +455,7 @@ describe('cloudssh mcp http', { timeout: 180_000 }, () => {
       test(`拒绝：${command.replace(/\n/g, '\\n')}`, async () => {
         const result = await callTool(readonly.base, token, 'exec', { target: 'JP-A', command });
         assert.equal(result.isError, true);
-        assert.match(result.text, /只读模式|拒绝执行/, result.text);
+        assert.match(result.text, /read-only mode|Refused/, result.text);
       });
     }
   });

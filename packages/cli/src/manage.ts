@@ -52,36 +52,36 @@ const cleanTags = (tags: string[]) => [...new Set(tags.map((tag) => tag.trim()).
 
 /** 拼接口要的字段：只放给了的；current 有值时是修改（标签增减按现有的算） */
 export function serverBody(input: ServerInput, current?: ServerConfig): Record<string, unknown> {
-  if (input.password !== undefined && input.privateKey !== undefined) throw new UsageError('password 和 private_key 只能给一个');
+  if (input.password !== undefined && input.privateKey !== undefined) throw new UsageError('Give either password or private_key, not both');
   const auth = input.auth ?? (input.privateKey !== undefined ? 'key' : input.password !== undefined ? 'password' : undefined);
-  if (auth === 'key' && input.password !== undefined) throw new UsageError('auth 是 key 时给 private_key，不是 password');
-  if (auth === 'password' && input.privateKey !== undefined) throw new UsageError('auth 是 password 时给 password，不是 private_key');
-  if (auth === 'none' && (input.password !== undefined || input.privateKey !== undefined)) throw new UsageError('auth 是 none 时不用给凭据');
+  if (auth === 'key' && input.password !== undefined) throw new UsageError('auth key takes private_key, not password');
+  if (auth === 'password' && input.privateKey !== undefined) throw new UsageError('auth password takes password, not private_key');
+  if (auth === 'none' && (input.password !== undefined || input.privateKey !== undefined)) throw new UsageError('auth none takes no credentials');
   const nextAuth = auth ?? current?.auth_method;
   const switching = !!auth && (auth === 'key' ? 'publickey' : auth) !== current?.auth_method;
-  if (switching && auth === 'key' && input.privateKey === undefined) throw new UsageError('用私钥登录要给 private_key（私钥全文）');
-  if (switching && auth === 'password' && input.password === undefined) throw new UsageError('用密码登录要给 password（可以是空串）');
+  if (switching && auth === 'key' && input.privateKey === undefined) throw new UsageError('Key login requires private_key (the full private key text)');
+  if (switching && auth === 'password' && input.password === undefined) throw new UsageError('Password login requires password (an empty string is allowed)');
   if (input.privateKey !== undefined) {
-    if (!/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(input.privateKey)) throw new UsageError('private_key 要是私钥全文（-----BEGIN … PRIVATE KEY----- 开头）');
+    if (!/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(input.privateKey)) throw new UsageError('private_key must be the full private key text, starting with -----BEGIN … PRIVATE KEY-----');
     if (isEncryptedKey(input.privateKey)) {
-      throw new UsageError('这把私钥带密码：CloudSSH 只存解开的私钥。先在本机解开（ssh-keygen -p -N "" -f 文件），或让用户在 CloudSSH 网页的服务器设置里导入（网页会在浏览器里解开）');
+      throw new UsageError('This private key is passphrase-protected and CloudSSH stores only unencrypted keys: remove the passphrase locally first (ssh-keygen -p -N "" -f FILE), or have the user import it in the server settings of the CloudSSH web app (it is decrypted in the browser)');
     }
   }
 
   const body: Record<string, unknown> = {};
   if (input.name !== undefined) {
     const name = input.name.trim();
-    if (!name) throw new UsageError('name 不能是空的');
+    if (!name) throw new UsageError('name must not be empty');
     body.name = name;
   }
   if (input.host !== undefined) {
     const host = input.host.trim();
-    if (!host) throw new UsageError('host 不能是空的');
+    if (!host) throw new UsageError('host must not be empty');
     body.host = host;
   }
   if (input.port !== undefined) body.port = input.port;
   if (input.username !== undefined) {
-    if (!input.username.trim()) throw new UsageError('username 不能是空的');
+    if (!input.username.trim()) throw new UsageError('username must not be empty');
     body.username = input.username.trim();
   }
   if (auth) body.auth_method = auth === 'key' ? 'publickey' : auth;
@@ -99,7 +99,7 @@ export function serverBody(input: ServerInput, current?: ServerConfig): Record<s
   if (input.tunnelHost !== undefined) {
     const tunnel = input.tunnelHost.trim().replace(/^(https?|wss?):\/\//i, '').replace(/\/.*$/, '');
     if (tunnel) {
-      if (input.jumpId) throw new UsageError('Cloudflare 隧道连接不能再用跳板机');
+      if (input.jumpId) throw new UsageError('A Cloudflare tunnel connection cannot use a jump host');
       body.transport_type = 'cf_tunnel';
       body.cf_tunnel_host = tunnel;
       body.jump_server_id = null;
@@ -110,7 +110,7 @@ export function serverBody(input: ServerInput, current?: ServerConfig): Record<s
   }
   if (input.jumpId !== undefined) {
     if (input.jumpId !== null && (body.transport_type ?? current?.transport_type) === 'cf_tunnel') {
-      throw new UsageError('这台走 Cloudflare 隧道，不能再用跳板机：先 tunnel_host 给空串改回直连');
+      throw new UsageError('This server connects through a Cloudflare tunnel and cannot use a jump host: set tunnel_host to "" first to switch it to direct');
     }
     body.jump_server_id = input.jumpId;
   }
@@ -121,10 +121,10 @@ export function serverBody(input: ServerInput, current?: ServerConfig): Record<s
 }
 
 export async function createServer(input: ServerInput): Promise<ServerConfig> {
-  if (!input.name?.trim()) throw new UsageError('缺少 name（显示用的名称）');
-  if (!input.host?.trim() && !input.tunnelHost?.trim()) throw new UsageError('缺少 host（IP 或域名；走 Cloudflare 隧道时给 tunnel_host）');
+  if (!input.name?.trim()) throw new UsageError('Missing name (display name)');
+  if (!input.host?.trim() && !input.tunnelHost?.trim()) throw new UsageError('Missing host (IP or domain; for a Cloudflare tunnel give tunnel_host)');
   const auth = input.auth ?? (input.privateKey !== undefined ? 'key' : input.password !== undefined ? 'password' : undefined);
-  if (!auth) throw new UsageError('要给凭据：password（密码登录）或 private_key（私钥登录）；不需要认证的服务器给 auth: none');
+  if (!auth) throw new UsageError('Credentials required: password (password login) or private_key (key login); for a server without authentication pass auth: none');
   const body = serverBody({ ...input, auth });
   body.port ??= 22;
   body.username ??= 'root';
@@ -135,7 +135,7 @@ export async function createServer(input: ServerInput): Promise<ServerConfig> {
 
 export async function updateServer(server: ServerConfig, input: ServerInput): Promise<void> {
   const body = serverBody(input, server);
-  if (!Object.keys(body).length) throw new UsageError('没有要改的：给出要改的字段（name、host、port、username、password、private_key、tags……）');
+  if (!Object.keys(body).length) throw new UsageError('Nothing to change: give the fields to change (name, host, port, username, password, private_key, tags, …)');
   await api(`/api/servers/${server.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
 
@@ -143,19 +143,19 @@ export async function deleteServer(server: ServerConfig): Promise<void> {
   await api(`/api/servers/${server.id}`, { method: 'DELETE' });
 }
 
-const AUTH_NAMES: Record<string, string> = { password: '密码', publickey: '私钥', none: '无认证' };
+const AUTH_NAMES: Record<string, string> = { password: 'password', publickey: 'key', none: 'none' };
 
 /** 一台服务器的详细信息（不含任何凭据） */
 export function describeServer(server: ServerConfig, servers: ServerConfig[]): string {
   const route = routeOf(server, servers);
-  const address = server.transport_type === 'cf_tunnel' ? `${server.cf_tunnel_host ?? server.host}（Cloudflare 隧道）` : `${server.host}:${server.port}`;
-  const region = server.region ? server.region : server.inferred_hint ? `自动（${server.inferred_hint}）` : '自动';
-  const access = server.cf_access_client_id ? `，Access ${server.cf_access_client_id}${server.has_cf_access_client_secret ? ' + 密钥' : ''}` : '';
-  const last = server.last_connected_at ? new Date(server.last_connected_at).toISOString().replace('T', ' ').slice(0, 16) : '没连过';
+  const address = server.transport_type === 'cf_tunnel' ? `${server.cf_tunnel_host ?? server.host} (Cloudflare tunnel)` : `${server.host}:${server.port}`;
+  const region = server.region ? server.region : server.inferred_hint ? `auto (${server.inferred_hint})` : 'auto';
+  const access = server.cf_access_client_id ? `, Access ${server.cf_access_client_id}${server.has_cf_access_client_secret ? ' + secret' : ''}` : '';
+  const last = server.last_connected_at ? `${new Date(server.last_connected_at).toISOString().replace('T', ' ').slice(0, 16)} UTC` : 'never';
   return (
     `${hostId(server).padEnd(9)} ${server.name}\n` +
     `          ${server.username}@${address}  ${AUTH_NAMES[server.auth_method] ?? server.auth_method}  ${route}${access}\n` +
-    `          标签 [${(server.tags ?? []).join(', ') || '-'}]  系统 ${server.os ?? '?'}  区域 ${region}  最近连接 ${last} UTC`
+    `          tags [${(server.tags ?? []).join(', ') || '-'}]  OS ${server.os ?? '?'}  region ${region}  last connected ${last}`
   );
 }
 
@@ -175,10 +175,10 @@ export async function listSnippets(): Promise<Snippet[]> {
 
 export async function saveSnippet(input: { id?: string; name: string; command: string; category?: string }): Promise<Snippet> {
   const name = input.name.trim();
-  if (!name) throw new UsageError('name 不能是空的');
-  if ([...name].length > 50) throw new UsageError('name 最多 50 个字');
-  if (!input.command.trim()) throw new UsageError('command 不能是空的');
-  if ([...input.command].length > 2000) throw new UsageError('command 最多 2000 个字');
+  if (!name) throw new UsageError('name must not be empty');
+  if ([...name].length > 50) throw new UsageError('name must be at most 50 characters');
+  if (!input.command.trim()) throw new UsageError('command must not be empty');
+  if ([...input.command].length > 2000) throw new UsageError('command must be at most 2000 characters');
   const body = JSON.stringify({ name, command: input.command, category: input.category?.trim() ?? '' });
   const init = { headers: { 'Content-Type': 'application/json' }, body };
   return input.id
@@ -191,7 +191,7 @@ export async function deleteSnippet(id: string): Promise<void> {
 }
 
 export function formatSnippet(snippet: Snippet): string {
-  const command = snippet.command.length > 300 ? `${snippet.command.slice(0, 300)}…（共 ${snippet.command.length} 字）` : snippet.command;
+  const command = snippet.command.length > 300 ? `${snippet.command.slice(0, 300)}…[${snippet.command.length} chars in total]` : snippet.command;
   return `#${snippet.id}  ${snippet.name}${snippet.category ? `  [${snippet.category}]` : ''}\n    ${command.replace(/\n/g, '\n    ')}`;
 }
 
@@ -227,18 +227,17 @@ export async function readNotes(server: ServerConfig): Promise<ServerNotes> {
 }
 
 const time = (ms?: number) => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) : '?');
-const CATEGORY_NAMES: Record<string, string> = { credential: '凭据', config: '配置', rule: '规则', note: '备注' };
 
 export function formatNotes(server: ServerConfig, notes: ServerNotes): string {
-  const lines = [`${hostId(server)} ${server.name} 的笔记（CloudSSH 内置 AI 助手也用这些）`];
-  lines.push(`== 知识（${notes.knowledge.length} 条）`);
-  if (!notes.knowledge.length) lines.push('（没有）');
+  const lines = [`Notes for ${hostId(server)} ${server.name} (shared with CloudSSH's built-in AI assistant)`];
+  lines.push(`== knowledge (${notes.knowledge.length})`);
+  if (!notes.knowledge.length) lines.push('(none)');
   for (const item of notes.knowledge) {
-    lines.push(`[${CATEGORY_NAMES[item.category] ?? item.category}] ${item.key} = ${item.value.replace(/\n/g, '\n    ')}`);
+    lines.push(`[${item.category}] ${item.key} = ${item.value.replace(/\n/g, '\n    ')}`);
   }
-  lines.push(`== 工作历程（最近 ${notes.workLogs.length} 条，UTC）`);
-  if (!notes.workLogs.length) lines.push('（没有）');
-  for (const log of notes.workLogs) lines.push(`${time(log.updated_at ?? log.created_at)}  ${log.title}：${log.summary}`);
+  lines.push(`== work log (latest ${notes.workLogs.length}, UTC)`);
+  if (!notes.workLogs.length) lines.push('(none)');
+  for (const log of notes.workLogs) lines.push(`${time(log.updated_at ?? log.created_at)}  ${log.title}: ${log.summary}`);
   return lines.join('\n');
 }
 
@@ -250,9 +249,9 @@ export function noteKey(key: string): string {
 /** 记下一条知识，返回实际存成的键名 */
 export async function setNote(server: ServerConfig, category: NoteCategory, key: string, value: string): Promise<string> {
   const normalized = noteKey(key);
-  if (!normalized) throw new UsageError('key 不能是空的');
-  if ([...normalized].length > 64) throw new UsageError('key 最多 64 个字');
-  if ([...value].length > 16384) throw new UsageError('value 最多 16384 个字');
+  if (!normalized) throw new UsageError('key must not be empty');
+  if ([...normalized].length > 64) throw new UsageError('key must be at most 64 characters');
+  if ([...value].length > 16384) throw new UsageError('value must be at most 16384 characters');
   await api(`/api/servers/${server.id}/knowledge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -266,16 +265,16 @@ export async function deleteNote(server: ServerConfig, key: string): Promise<str
   const normalized = noteKey(key);
   const notes = await readNotes(server);
   const item = notes.knowledge.find((entry) => entry.key === normalized);
-  if (!item) throw new UsageError(`${hostId(server)} ${server.name} 没有叫“${normalized}”的笔记（server_notes read 查看现有的键名）`);
+  if (!item) throw new UsageError(`${hostId(server)} ${server.name} has no note "${normalized}" (server_notes action: read lists the keys)`);
   await api(`/api/servers/${server.id}/knowledge/${item.id}`, { method: 'DELETE' });
   return normalized;
 }
 
 export async function addWorkLog(server: ServerConfig, title: string, summary: string): Promise<void> {
-  if (!title.trim()) throw new UsageError('title 不能是空的');
-  if ([...title.trim()].length > 64) throw new UsageError('title 最多 64 个字');
-  if (!summary.trim()) throw new UsageError('summary 不能是空的');
-  if ([...summary.trim()].length > 300) throw new UsageError('summary 最多 300 个字');
+  if (!title.trim()) throw new UsageError('title must not be empty');
+  if ([...title.trim()].length > 64) throw new UsageError('title must be at most 64 characters');
+  if (!summary.trim()) throw new UsageError('summary must not be empty');
+  if ([...summary.trim()].length > 300) throw new UsageError('summary must be at most 300 characters');
   await api(`/api/servers/${server.id}/work-logs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

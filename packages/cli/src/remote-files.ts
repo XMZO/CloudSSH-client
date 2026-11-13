@@ -42,7 +42,7 @@ export async function statRemote(server: ServerConfig, path: string): Promise<Re
         ` r=$(readlink -f -- "$p" 2>/dev/null) || r=$(cd "$(dirname -- "$p")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$p")"); printf '%s\\n' "$r"`
     );
   } catch (error) {
-    if (/missing|退出码 3/.test((error as Error).message)) return null;
+    if (/missing|exit 3\b/.test((error as Error).message)) return null;
     throw error;
   }
   const lines = output.trim().split('\n').map((line) => line.trim());
@@ -96,10 +96,10 @@ function rememberBytes(key: string, file: BinaryFile): void {
 /** 读整个文件的字节（任何类型）；同一文件 10 分钟内大小与修改时间都没变时用缓存 */
 export async function readBytes(server: ServerConfig, path: string, maxBytes = READ_MAX_BYTES): Promise<BinaryFile> {
   const info = await statRemote(server, path);
-  if (!info) throw new UsageError(`${server.name} 上没有 ${path}`);
-  if (info.kind === 'dir') throw new UsageError(`${info.path} 是目录：用 list_dir 查看`);
+  if (!info) throw new UsageError(`${path} does not exist on ${server.name}`);
+  if (info.kind === 'dir') throw new UsageError(`${info.path} is a directory; use list_dir`);
   if (info.size > maxBytes) {
-    throw new UsageError(`${info.path} 有 ${info.size} 字节，超过 ${Math.round(maxBytes / 1048576)}MB：大文件用 copy 传到别的服务器，或在服务器上切开（split）再分别读`);
+    throw new UsageError(`${info.path} is ${info.size} bytes, over the ${Math.round(maxBytes / 1048576)} MB limit: move it with copy, or split it on the server (split) and read the pieces`);
   }
   const key = `${server.id}\u0000${info.path}`;
   const cached = bytesCache.get(key);
@@ -121,10 +121,10 @@ function forgetBytes(server: ServerConfig, path: string): void {
 /** base64（也认 base64url，忽略空白），不合法就报错；allowTail 时末尾凑不满 4 个字符的部分不解，留给下一段 */
 export function decodeBase64(text: string, allowTail = false): { bytes: Uint8Array; tail: string } {
   const clean = text.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new UsageError('content 不是合法的 base64');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new UsageError('content is not valid base64');
   const usable = allowTail && !clean.endsWith('=') ? clean.length - (clean.length % 4) : clean.length;
   const head = clean.slice(0, usable);
-  if (head.length % 4 === 1) throw new UsageError('content 不是合法的 base64（长度不对，可能少了一段）');
+  if (head.length % 4 === 1) throw new UsageError('content is not valid base64 (invalid length; part of it may be missing)');
   return { bytes: new Uint8Array(Buffer.from(head, 'base64')), tail: clean.slice(usable) };
 }
 
@@ -137,18 +137,18 @@ export interface TextFile {
 /** 读文本文件（UTF-8）；strict 时内容不是合法 UTF-8 就拒绝（改文件时用，免得写回时把字节改坏） */
 export async function readText(server: ServerConfig, path: string, maxBytes = READ_MAX_BYTES, strict = false): Promise<TextFile> {
   const info = await statRemote(server, path);
-  if (!info) throw new UsageError(`${server.name} 上没有 ${path}`);
-  if (info.kind === 'dir') throw new UsageError(`${info.path} 是目录：用 list_dir 查看`);
+  if (!info) throw new UsageError(`${path} does not exist on ${server.name}`);
+  if (info.kind === 'dir') throw new UsageError(`${info.path} is a directory; use list_dir`);
   if (info.size > maxBytes) {
-    throw new UsageError(`${info.path} 有 ${info.size} 字节，超过 ${Math.round(maxBytes / 1048576)}MB：用 exec 配合 grep / tail / head / sed -n 看需要的部分`);
+    throw new UsageError(`${info.path} is ${info.size} bytes, over the ${Math.round(maxBytes / 1048576)} MB limit: view the parts you need with exec grep / tail / head / sed -n`);
   }
   const bytes = info.size ? await downloadBytes(server, info.path, maxBytes) : new Uint8Array();
-  if (bytes.subarray(0, 8192).includes(0)) throw new UsageError(`${info.path} 是二进制文件（${bytes.length} 字节）：用 exec 配合 file、strings、xxd 查看`);
+  if (bytes.subarray(0, 8192).includes(0)) throw new UsageError(`${info.path} is binary (${bytes.length} bytes); inspect it with exec file / strings / xxd`);
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: strict }).decode(bytes);
   } catch {
-    throw new UsageError(`${info.path} 不是 UTF-8 文本，不能按文字修改：用 exec 处理`);
+    throw new UsageError(`${info.path} is not UTF-8 text and cannot be edited as text; use exec`);
   }
   return { info, text, sha256: sha256Hex(bytes) };
 }
@@ -164,7 +164,7 @@ export function numberLines(text: string, offset: number, limit: number): { body
   const body = lines
     .slice(from - 1, to)
     .map((line, index) => {
-      const shown = line.length > LINE_MAX ? `${line.slice(0, LINE_MAX)}…（这一行有 ${line.length} 个字符，后面省略）` : line;
+      const shown = line.length > LINE_MAX ? `${line.slice(0, LINE_MAX)}…[line is ${line.length} chars; rest omitted]` : line;
       return `${String(from + index).padStart(width)}\t${shown.replace(/\r$/, '')}`;
     })
     .join('\n');
@@ -192,7 +192,7 @@ export async function writeText(
   options: { expectSha256?: string; mayOverwrite?: (path: string) => boolean } = {}
 ): Promise<WriteResult> {
   const bytes = typeof content === 'string' ? encoder.encode(content) : content;
-  if (bytes.length > WRITE_MAX_BYTES) throw new UsageError(`内容有 ${bytes.length} 字节，超过 ${WRITE_MAX_BYTES / 1048576}MB：大文件用 upload 或 copy`);
+  if (bytes.length > WRITE_MAX_BYTES) throw new UsageError(`Content is ${bytes.length} bytes, over the ${WRITE_MAX_BYTES / 1048576} MB limit: use upload or copy for large files`);
   let where: string;
   try {
     where = await run(
@@ -202,14 +202,14 @@ export async function writeText(
         ` r=$(readlink -f -- "$p" 2>/dev/null) || r="$p"; printf '%s\\n' "$r"`
     );
   } catch (error) {
-    if (/\bdir\b|退出码 4/.test((error as Error).message)) throw new UsageError(`${path} 是目录`);
+    if (/\bdir\b|exit 4\b/.test((error as Error).message)) throw new UsageError(`${path} is a directory`);
     throw error;
   }
   const lines = where.trim().split('\n').map((line) => line.trim());
   const exists = lines[0] === 'exists';
   const dest = lines[lines.length - 1];
-  if (exists && mode === 'create') throw new UsageError(`${server.name} 上已有 ${dest}，没有写入（mode: create 只建新文件）`);
-  if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${server.name} 上已有 ${dest}，没有写入`);
+  if (exists && mode === 'create') throw new UsageError(`${dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
+  if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${dest} already exists on ${server.name}; not written`);
 
   const temp = `${dest}.cs-part-${randomBytes(4).toString('hex')}`;
   const sftp = await openSftp(server);
@@ -219,9 +219,9 @@ export async function writeText(
     sftp.close();
   }
   const check = options.expectSha256
-    ? `[ -f "$f" ] && [ "$(sha256sum < "$f" | cut -c1-64)" = ${quote(options.expectSha256)} ] || { rm -f "$t"; echo "文件在读取之后被改过，没有写入"; exit 9; };`
+    ? `[ -f "$f" ] && [ "$(sha256sum < "$f" | cut -c1-64)" = ${quote(options.expectSha256)} ] || { rm -f "$t"; echo "modified since read; not written"; exit 9; };`
     : '';
-  const guard = mode === 'create' ? `if [ -e "$f" ]; then rm -f "$t"; echo "已存在，没有写入"; exit 8; fi;` : '';
+  const guard = mode === 'create' ? `if [ -e "$f" ]; then rm -f "$t"; echo "already exists; not written"; exit 8; fi;` : '';
   const finish =
     mode === 'append'
       ? `cat "$t" >> "$f"; rc=$?; rm -f "$t"; exit $rc`
@@ -231,8 +231,8 @@ export async function writeText(
   } catch (error) {
     await run(server, `rm -f ${quote(temp)}`).catch(() => undefined);
     const message = (error as Error).message;
-    if (/被改过|退出码 9/.test(message)) throw new UsageError(`${dest} 在读取之后被改过，没有写入：重新读一遍再改`);
-    if (/已存在|退出码 8/.test(message)) throw new UsageError(`${server.name} 上已有 ${dest}，没有写入（mode: create 只建新文件）`);
+    if (/modified since read|exit 9\b/.test(message)) throw new UsageError(`${dest} changed after it was read; not written. Read it again, then edit.`);
+    if (/already exists|exit 8\b/.test(message)) throw new UsageError(`${dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
     throw error;
   } finally {
     forgetBytes(server, dest);
@@ -297,20 +297,20 @@ export async function writeTextPart(
         ` mkdir -p -- "$(dirname -- "$p")" || exit 5; if [ -e "$p" ]; then echo exists; else echo new; fi;` +
         ` r=$(readlink -f -- "$p" 2>/dev/null) || r="$p"; printf '%s\\n' "$r"`
     ).catch((error: Error) => {
-      if (/\bdir\b|退出码 4/.test(error.message)) throw new UsageError(`${path} 是目录`);
+      if (/\bdir\b|exit 4\b/.test(error.message)) throw new UsageError(`${path} is a directory`);
       throw error;
     });
     const lines = where.trim().split('\n').map((line) => line.trim());
     const exists = lines[0] === 'exists';
     const dest = lines[lines.length - 1];
-    if (exists && mode === 'create') throw new UsageError(`${server.name} 上已有 ${dest}，没有写入（mode: create 只建新文件）`);
-    if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${server.name} 上已有 ${dest}，没有写入`);
+    if (exists && mode === 'create') throw new UsageError(`${dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
+    if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${dest} already exists on ${server.name}; not written`);
     state = { dest, stage: `${dest}.cs-upload`, mode, parts, next: 1, bytes: 0, created: !exists, at: Date.now(), encoding, carry: '' };
   } else if (!state) {
-    throw new UsageError(`没有正在写的 ${path}（第 1 段没写过、超过 30 分钟或连接器重启过）：从 part 1 重新开始`);
+    throw new UsageError(`No multi-part write in progress for ${path} (part 1 was never sent, it expired after 30 minutes, or the connector restarted): start again from part 1`);
   } else if (part !== state.next || parts !== state.parts || mode !== state.mode || encoding !== state.encoding) {
     throw new UsageError(
-      `${path} 应该写第 ${state.next}/${state.parts} 段（mode ${state.mode}、encoding ${state.encoding}），收到的是第 ${part}/${parts} 段：按顺序发，或从 part 1 重新开始`
+      `${path} expects part ${state.next}/${state.parts} (mode ${state.mode}, encoding ${state.encoding}) but got part ${part}/${parts}: send the parts in order, or start again from part 1`
     );
   }
   // base64 的段可以在任意位置切开：凑不满 4 个字符的尾巴接到下一段前面再解
@@ -325,7 +325,7 @@ export async function writeTextPart(
   if (state.bytes + bytes.length > WRITE_MAX_BYTES) {
     partStates.delete(key);
     await run(server, `rm -f ${quote(state.stage)}`).catch(() => undefined);
-    throw new UsageError(`合起来超过 ${WRITE_MAX_BYTES / 1048576}MB：大文件用 upload 或 copy`);
+    throw new UsageError(`The parts together exceed ${WRITE_MAX_BYTES / 1048576} MB: use upload or copy for large files`);
   }
 
   // 这一段先传到临时文件，再接到 .cs-upload 后面（第 1 段直接成为 .cs-upload）
@@ -353,7 +353,7 @@ export async function writeTextPart(
     return { path: state.dest, bytes: state.bytes, created: state.created, done: false, received: part };
   }
   partStates.delete(key);
-  const guard = state.mode === 'create' ? `if [ -e "$f" ]; then rm -f "$t"; echo "已存在，没有写入"; exit 8; fi;` : '';
+  const guard = state.mode === 'create' ? `if [ -e "$f" ]; then rm -f "$t"; echo "already exists; not written"; exit 8; fi;` : '';
   const finish =
     state.mode === 'append'
       ? `cat "$t" >> "$f"; rc=$?; rm -f "$t"; exit $rc`
@@ -362,7 +362,7 @@ export async function writeTextPart(
     await run(server, `t=${stage}; f=${quote(state.dest)}; ${guard}${finish}`);
   } catch (error) {
     await run(server, `rm -f ${stage}`).catch(() => undefined);
-    if (/已存在|退出码 8/.test((error as Error).message)) throw new UsageError(`${server.name} 上已有 ${state.dest}，没有写入（mode: create 只建新文件）`);
+    if (/already exists|exit 8\b/.test((error as Error).message)) throw new UsageError(`${state.dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
     throw error;
   } finally {
     forgetBytes(server, state.dest);
@@ -386,12 +386,12 @@ export async function editText(
   replaceAll: boolean,
   mayOverwrite?: (path: string) => boolean
 ): Promise<EditResult> {
-  if (!oldText) throw new UsageError('old_string 不能是空的');
-  if (oldText === newText) throw new UsageError('old_string 与 new_string 一样，不用改');
+  if (!oldText) throw new UsageError('old_string must not be empty');
+  if (oldText === newText) throw new UsageError('old_string and new_string are identical; nothing to change');
   const file = await readText(server, path, WRITE_MAX_BYTES, true);
   const count = file.text.split(oldText).length - 1;
-  if (!count) throw new UsageError(`${file.info.path} 里没有找到 old_string（空格、缩进、换行都要完全一致；先用 read_file 看原文）`);
-  if (count > 1 && !replaceAll) throw new UsageError(`${file.info.path} 里有 ${count} 处 old_string：多带几行上下文让它唯一，或者 replace_all: true 全部替换`);
+  if (!count) throw new UsageError(`old_string not found in ${file.info.path} (spaces, indentation and line breaks must match exactly; check the text with read_file)`);
+  if (count > 1 && !replaceAll) throw new UsageError(`old_string occurs ${count} times in ${file.info.path}: include more surrounding lines to make it unique, or set replace_all: true`);
   const first = file.text.indexOf(oldText);
   // 不用 String.replace：new_string 里的 $& 之类会被当成替换模式
   const updated = replaceAll ? file.text.split(oldText).join(newText) : file.text.slice(0, first) + newText + file.text.slice(first + oldText.length);
@@ -408,11 +408,11 @@ export async function listDir(server: ServerConfig, path: string, all: boolean):
   try {
     return await run(
       server,
-      `p=${shellPath(path)}; cd -- "$p" 2>/dev/null || { echo "没有这个目录：$p"; exit 3; }; pwd -P;` +
+      `p=${shellPath(path)}; cd -- "$p" 2>/dev/null || { echo "no such directory: $p"; exit 3; }; pwd -P;` +
         ` { ls ${flags} --time-style=long-iso --group-directories-first 2>/dev/null || ls ${flags}; } | head -n 1001`
     );
   } catch (error) {
-    if (/没有这个目录|退出码 3/.test((error as Error).message)) throw new UsageError(`${server.name} 上没有目录 ${path}`);
+    if (/no such directory|exit 3\b/.test((error as Error).message)) throw new UsageError(`Directory ${path} does not exist on ${server.name}`);
     throw error;
   }
 }
@@ -434,32 +434,32 @@ export async function startJob(server: ServerConfig, command: string, cwd?: stri
     server,
     `d=${JOBS}; mkdir -p "$d" && chmod 700 "$d" || exit 5; id=${quote(id)};` +
       ` printf '%s' ${quote(encoded)} | base64 -d > "$d/$id.cmd" || exit 5;` +
-      (cwd ? ` cd -- ${shellPath(cwd)} || { echo "没有这个目录：${cwd.replace(/["$`\\]/g, '')}"; exit 3; };` : ' cd;') +
+      (cwd ? ` cd -- ${shellPath(cwd)} || { echo "no such directory: ${cwd.replace(/["$`\\]/g, '')}"; exit 3; };` : ' cd;') +
       ` sh_=$(command -v bash || command -v sh); s=; command -v setsid >/dev/null 2>&1 && s=setsid;` +
       ` $s nohup "$sh_" -c 'echo $$ > "$1/$2.pid"; "$0" "$1/$2.cmd" > "$1/$2.log" 2>&1; echo $? > "$1/$2.exit"' "$sh_" "$d" "$id" > /dev/null 2>&1 < /dev/null &` +
       ` sleep 0.3; find "$d" -maxdepth 1 -type f -mtime +7 -delete 2>/dev/null; printf 'started %s\\n' "$id"`
   ).catch((error: Error) => {
-    if (/没有这个目录|退出码 3/.test(error.message)) throw new UsageError(`${server.name} 上没有目录 ${cwd}`);
+    if (/no such directory|exit 3\b/.test(error.message)) throw new UsageError(`Directory ${cwd} does not exist on ${server.name}`);
     throw error;
   });
-  if (!output.includes(`started ${id}`)) throw new Error(`${server.name}: 没能启动后台任务`);
+  if (!output.includes(`started ${id}`)) throw new Error(`${server.name}: the background job did not start`);
   return id;
 }
 
 /** 任务状态与输出末尾；stop 时先结束整个进程组。没有任务号时列出最近 20 个任务 */
 export async function jobStatus(server: ServerConfig, id: string | undefined, tail: number, stop: boolean): Promise<string> {
   const state =
-    `if [ -f "$d/$id.exit" ]; then e=$(cat "$d/$id.exit"); if [ "$e" = stopped ]; then echo "状态：已被 job_status 停止"; else echo "状态：已结束，退出码 $e"; fi;` +
-    ` elif kill -0 "$(cat "$d/$id.pid" 2>/dev/null)" 2>/dev/null; then echo "状态：运行中（进程 $(cat "$d/$id.pid")）";` +
-    ` else echo "状态：进程已不在，没有退出码（可能被结束或服务器重启过）"; fi`;
+    `if [ -f "$d/$id.exit" ]; then e=$(cat "$d/$id.exit"); if [ "$e" = stopped ]; then echo "state: stopped by job_status"; else echo "state: finished, exit $e"; fi;` +
+    ` elif kill -0 "$(cat "$d/$id.pid" 2>/dev/null)" 2>/dev/null; then echo "state: running (pid $(cat "$d/$id.pid"))";` +
+    ` else echo "state: process gone without an exit code (killed, or the server rebooted)"; fi`;
   if (!id) {
     return run(
       server,
       `d=${JOBS}; n=0; for c in $(ls -t "$d"/*.cmd 2>/dev/null | head -n 20); do id=$(basename "$c" .cmd); n=$((n+1));` +
-        ` s=$( ${state} ); printf '%s  %s  %s\\n' "$id" "\${s#状态：}" "$(head -c 100 "$c" | tr '\\n' ' ')"; done; [ "$n" = 0 ] && echo "（没有后台任务）"; true`
+        ` s=$( ${state} ); printf '%s  %s  %s\\n' "$id" "\${s#state: }" "$(head -c 100 "$c" | tr '\\n' ' ')"; done; [ "$n" = 0 ] && echo "(no background jobs)"; true`
     );
   }
-  if (!JOB_ID.test(id)) throw new UsageError(`任务号不对：${id}（start_job 返回的 j 开头的编号）`);
+  if (!JOB_ID.test(id)) throw new UsageError(`Invalid job_id ${id}: use the ID start_job returned (starts with j)`);
   // 停止：先 TERM 整个进程组，1 秒后还在就 KILL；结束后记成 stopped（被结束的进程来不及写退出码）
   const stopping = stop
     ? ` if [ ! -f "$d/$id.exit" ]; then p=$(cat "$d/$id.pid" 2>/dev/null); if [ -n "$p" ]; then kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null; sleep 1;` +
@@ -468,11 +468,11 @@ export async function jobStatus(server: ServerConfig, id: string | undefined, ta
   try {
     return await run(
       server,
-      `d=${JOBS}; id=${quote(id)}; [ -f "$d/$id.cmd" ] || { echo "没有这个任务"; exit 3; };${stopping} ${state};` +
-        ` echo "== 命令"; head -c 500 "$d/$id.cmd"; echo; echo "== 输出（最后 ${tail} 行）"; tail -n ${tail} "$d/$id.log" 2>/dev/null`
+      `d=${JOBS}; id=${quote(id)}; [ -f "$d/$id.cmd" ] || { echo "no such job"; exit 3; };${stopping} ${state};` +
+        ` echo "== command"; head -c 500 "$d/$id.cmd"; echo; echo "== output (last ${tail} lines)"; tail -n ${tail} "$d/$id.log" 2>/dev/null`
     );
   } catch (error) {
-    if (/没有这个任务|退出码 3/.test((error as Error).message)) throw new UsageError(`${server.name} 上没有任务 ${id}（任务文件 7 天后清理）`);
+    if (/no such job|exit 3\b/.test((error as Error).message)) throw new UsageError(`No job ${id} on ${server.name} (job files are deleted after 7 days)`);
     throw error;
   }
 }

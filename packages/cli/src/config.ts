@@ -73,9 +73,9 @@ function readJson<T>(file: string): T | null {
     if (code === 'ENOENT') return null;
     // 在 AI 工具的沙箱里（另一个系统账户）运行时可能读不了用户目录
     if (code === 'EACCES' || code === 'EPERM') {
-      throw new Error(`没有权限读 ${file}：在 AI 工具的沙箱里运行时，请让 cloudssh 在沙箱外运行`);
+      throw new Error(`No permission to read ${file}: inside an AI tool's sandbox, run cloudssh outside the sandbox`);
     }
-    throw new Error(`${file} 不是有效的 JSON：${(error as Error).message}`);
+    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`);
   }
 }
 
@@ -91,7 +91,7 @@ export function normalizeOrigin(input: string): string {
   const text = input.trim();
   const url = new URL(/^[a-z]+:\/\//i.test(text) ? text : `https://${text}`);
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) throw new Error(`只支持 https 地址：${input}`);
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) throw new Error(`Only https:// addresses are supported (http:// only for localhost): ${input}`);
   return url.origin;
 }
 
@@ -172,7 +172,7 @@ export function resolveInstance(config: CliConfig, requested?: string): ActiveIn
     const known = Object.keys(credentials);
     if (known.length === 1) origin = known[0];
   }
-  if (!origin) throw new UsageError('还没有登录任何 CloudSSH 实例：运行 cloudssh login https://你的域名（或在桌面客户端里打开“同步登录给命令行”）');
+  if (!origin) throw new UsageError('Not signed in to any CloudSSH instance: run cloudssh login https://<your-domain> (or turn on "同步登录给命令行" in the CloudSSH desktop app)');
   const name = config.instances.find((item) => item.url === origin)?.name ?? new URL(origin).host;
   return { origin, name, credential: credentials[origin] ?? null };
 }
