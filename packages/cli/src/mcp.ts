@@ -608,7 +608,7 @@ function localToolDefinitions(config: CliConfig | null, remote?: RemoteOptions):
           target: one,
           action: { type: 'string', enum: ['read', 'set', 'delete', 'log'] },
           category: { type: 'string', enum: [...NOTE_CATEGORIES], description: 'set: kind of knowledge (default note)' },
-          key: { type: 'string', description: 'set / delete: the knowledge key' },
+          key: { type: 'string', description: 'set / delete: the knowledge key (CloudSSH stores it lower-case with spaces and dashes turned into _)' },
           value: { type: 'string', description: 'set: the value' },
           title: { type: 'string', description: 'log: what was done, in a few words' },
           summary: { type: 'string', description: 'log: the result and anything worth knowing next time' },
@@ -1220,18 +1220,18 @@ export class McpServer {
         const key = reqString(args, 'key');
         const value = optString(args, 'value');
         if (value === undefined) throw new ToolError('缺少参数 value');
-        await setNote(server, category, key, value);
-        this.audit(`server_notes 记下 ${hostId(server)}：[${category}] ${key.trim()}`);
-        return { text: `已记下 ${hostId(server)} ${server.name} 的 [${category}] ${key.trim()}` };
+        const saved = await setNote(server, category, key, value);
+        this.audit(`server_notes 记下 ${hostId(server)}：[${category}] ${saved}`);
+        return { text: `已记下 ${hostId(server)} ${server.name} 的 [${category}] ${saved}${saved !== key.trim() ? `（CloudSSH 把键名规范成小写、空格与连字符换成下划线）` : ''}` };
       }
       if (action === 'delete') {
         const key = reqString(args, 'key');
         if (!optBool(args, 'confirm') && confirmMode(config, this.remote) !== 'never') {
           throw new ToolError(`没有删除 ${hostId(server)} 的笔记“${key}”：先问用户，同意后带 confirm: true 再调用`);
         }
-        await deleteNote(server, key);
-        this.audit(`server_notes 删除 ${hostId(server)}：${key.trim()}`);
-        return { text: `已删除 ${hostId(server)} ${server.name} 的笔记“${key.trim()}”` };
+        const removed = await deleteNote(server, key);
+        this.audit(`server_notes 删除 ${hostId(server)}：${removed}`);
+        return { text: `已删除 ${hostId(server)} ${server.name} 的笔记“${removed}”` };
       }
       if (action === 'log') {
         const title = reqString(args, 'title');

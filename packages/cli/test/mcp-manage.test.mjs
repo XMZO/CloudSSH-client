@@ -126,16 +126,21 @@ describe('MCP 管理 CloudSSH', { timeout: 120_000 }, () => {
   test('server_notes：记下知识、记工作历程、读出来、删掉', async () => {
     const set = await full.callTool('server_notes', { target: 'JP-A', action: 'set', category: 'credential', key: 'mysql_root', value: 'S3cret pass' });
     assert.equal(set.isError, false, set.text);
-    await full.callTool('server_notes', { target: 'JP-A', action: 'set', key: 'nginx 配置', value: '/etc/nginx/conf.d/site.conf' });
+    const spaced = await full.callTool('server_notes', { target: 'JP-A', action: 'set', key: 'Nginx 配置', value: '/etc/nginx/conf.d/site.conf' });
+    assert.match(spaced.text, /\[note\] nginx_配置（CloudSSH 把键名规范成/);
     const log = await full.callTool('server_notes', { target: 'JP-A', action: 'log', title: '升级 nginx', summary: '1.24 → 1.26，配置不用改' });
     assert.equal(log.isError, false, log.text);
     const read = await full.callTool('server_notes', { target: 'JP-A', action: 'read' });
     assert.match(read.text, /\[凭据\] mysql_root = S3cret pass/);
-    assert.match(read.text, /\[备注\] nginx 配置 = \/etc\/nginx\/conf\.d\/site\.conf/);
+    assert.match(read.text, /\[备注\] nginx_配置 = \/etc\/nginx\/conf\.d\/site\.conf/);
     assert.match(read.text, /升级 nginx：1\.24 → 1\.26/);
     const deleted = await full.callTool('server_notes', { target: 'JP-A', action: 'delete', key: 'mysql_root' });
     assert.equal(deleted.isError, false, deleted.text);
-    assert.doesNotMatch((await full.callTool('server_notes', { target: 'JP-A', action: 'read' })).text, /mysql_root/);
+    // 删除时的键名按同样的规则规范：写成当初给的样子也能删
+    const deletedSpaced = await full.callTool('server_notes', { target: 'JP-A', action: 'delete', key: 'Nginx 配置' });
+    assert.equal(deletedSpaced.isError, false, deletedSpaced.text);
+    const after = (await full.callTool('server_notes', { target: 'JP-A', action: 'read' })).text;
+    assert.doesNotMatch(after, /mysql_root|nginx_配置/);
     const missing = await full.callTool('server_notes', { target: 'JP-A', action: 'delete', key: '不存在' });
     assert.equal(missing.isError, true);
   });

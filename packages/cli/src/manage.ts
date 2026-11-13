@@ -242,22 +242,33 @@ export function formatNotes(server: ServerConfig, notes: ServerNotes): string {
   return lines.join('\n');
 }
 
-export async function setNote(server: ServerConfig, category: NoteCategory, key: string, value: string): Promise<void> {
-  if (!key.trim()) throw new UsageError('key 不能是空的');
-  if ([...key.trim()].length > 64) throw new UsageError('key 最多 64 个字');
+/** CloudSSH 存知识时规范键名：去首尾空白、小写、空白与连字符换成下划线（同名即同一条） */
+export function noteKey(key: string): string {
+  return key.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+/** 记下一条知识，返回实际存成的键名 */
+export async function setNote(server: ServerConfig, category: NoteCategory, key: string, value: string): Promise<string> {
+  const normalized = noteKey(key);
+  if (!normalized) throw new UsageError('key 不能是空的');
+  if ([...normalized].length > 64) throw new UsageError('key 最多 64 个字');
   if ([...value].length > 16384) throw new UsageError('value 最多 16384 个字');
   await api(`/api/servers/${server.id}/knowledge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ category, key: key.trim(), value }),
+    body: JSON.stringify({ category, key: normalized, value }),
   });
+  return normalized;
 }
 
-export async function deleteNote(server: ServerConfig, key: string): Promise<void> {
+/** 按键名删一条知识（键名按 CloudSSH 的规则规范后再找），返回删掉的键名 */
+export async function deleteNote(server: ServerConfig, key: string): Promise<string> {
+  const normalized = noteKey(key);
   const notes = await readNotes(server);
-  const item = notes.knowledge.find((entry) => entry.key === key.trim());
-  if (!item) throw new UsageError(`${hostId(server)} ${server.name} 没有叫“${key}”的笔记`);
+  const item = notes.knowledge.find((entry) => entry.key === normalized);
+  if (!item) throw new UsageError(`${hostId(server)} ${server.name} 没有叫“${normalized}”的笔记（server_notes read 查看现有的键名）`);
   await api(`/api/servers/${server.id}/knowledge/${item.id}`, { method: 'DELETE' });
+  return normalized;
 }
 
 export async function addWorkLog(server: ServerConfig, title: string, summary: string): Promise<void> {

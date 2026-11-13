@@ -383,10 +383,12 @@ async function handleHttp(req, res) {
     if (memory[2] === 'knowledge' && method === 'POST' && !memory[3]) {
       const body = await readBody(req);
       if (!['credential', 'config', 'rule', 'note'].includes(body.category)) return json(res, 400, { error: 'invalidCategory' });
-      if (!String(body.key ?? '').trim()) return json(res, 400, { error: 'keyRequired' });
-      const existing = store.knowledge.find((item) => item.key === body.key);
+      // 像 Worker：键名去首尾空白、小写、空白与连字符换成下划线
+      const key = String(body.key ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+      if (!key) return json(res, 400, { error: 'keyRequired' });
+      const existing = store.knowledge.find((item) => item.key === key);
       const item = existing ?? { id: store.next++, server_id: id, created_at: Date.now() };
-      Object.assign(item, { category: body.category, key: body.key, value: String(body.value ?? ''), updated_at: Date.now() });
+      Object.assign(item, { category: body.category, key, value: String(body.value ?? ''), updated_at: Date.now() });
       if (!existing) store.knowledge.push(item);
       return json(res, 201, item);
     }
