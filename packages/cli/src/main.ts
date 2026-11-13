@@ -21,8 +21,10 @@ import {
   type CliConfig,
 } from './config';
 import { checkCommand, commandVerdict, oneShot, printOutcomes, runExec } from './exec';
-import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, localPath, progressText, splitRemote, upload, type Progress } from './files';
-import { agentStatus, execViaAgent, runAgent, stopAgent } from './agent';
+import { copyBetween, DEFAULT_MAX_BYTES, describeTransfer, download, formatBytes, localPath, progressText, splitRemote, upload, type Progress } from './files';
+import { agentStatus, execViaAgent, fileViaAgent, runAgent, stopAgent } from './agent';
+import { ConfirmNeeded, READ_LINES, readLocalText, runFileOp, unixText, type FileRequest, type FileResult, type ReadResult } from './file-commands';
+import { useCliTerms, type WriteMode } from './remote-files';
 import { install, installStatus, mcpLaunch, refresh, skillTargets, syncSkills, uninstall } from './install';
 import { login } from './login';
 import { REMOTE_ACCESS, serveStdio, type RemoteAccess } from './mcp';
@@ -51,6 +53,10 @@ const HELP = `cloudssh ${CLIENT_VERSION}（${CLIENT_CODENAME.zh} ${CLIENT_CODENA
   upload <目标> <本机路径> <远程路径>      上传文件或目录
   download <目标> <远程路径> <本机路径>    下载文件或目录（--max-size MB，默认 2048）
   copy <目标:路径> <目标:路径>  服务器之间传文件或目录（能直连就直连）；覆盖已有的要 --yes
+  read <目标> <路径>            读文本文件（原样输出，最大 20MB，一次 2000 行：--offset 起始行、--limit 行数）
+  write <目标> <路径>           写文件（最大 10MB）：内容来自 --stdin 或 --file <本机文件>；--append 追加、--create 只建新文件
+  edit <目标> <路径> --old <原文> --new <新文>   精确替换（原文要唯一，--all 全部替换；--old-file / --new-file 从文件读）
+                                write、edit 改动已有文件要 --yes；都走 SFTP，不经过远端 shell 的引号
 
 设置
   alias [set <名字> <目标> | rm <名字>]   目标的别名
@@ -196,6 +202,109 @@ async function cmdCopy(argv: string[]): Promise<number> {
   const result = await copyBetween(source, from.path, target, to.path, overwrite, progress).finally(() => progress.end());
   out({ from: hostId(source), to: hostId(target), ...result }, bool(parsed, 'json'), () =>
     `Copied from ${hostId(source)} ${source.name} to ${hostId(target)} ${target.name}: ${describeTransfer(result)}`
+  );
+  return 0;
+}
+
+/** 命令行这边给的请求：allowed（能不能改已有文件）由 fileCommand 按 --yes 与设置填 */
+type FileInput =
+  | Extract<FileRequest, { action: 'read' }>
+  | Omit<Extract<FileRequest, { action: 'write' }>, 'allowed'>
+  | Omit<Extract<FileRequest, { action: 'edit' }>, 'allowed'>;
+
+/**
+ * read / write / edit：先交给后台会话进程（复用到服务器的会话），用不了时在本进程做。
+ * 改已有文件没有 --yes 时：终端里直接问，否则报错（让 AI 先问用户）
+ */
+async function fileCommand(parsed: Parsed, input: FileInput): Promise<FileResult> {
+  useCliTerms();
+  const { config, origin } = activeInstance(str(parsed, 'instance'));
+  let allowed = bool(parsed, 'yes') || config.confirm === 'never';
+  for (;;) {
+    const request = (input.action === 'read' ? input : { ...input, allowed }) as FileRequest;
+    try {
+      const viaAgent = await fileViaAgent(origin, request);
+      if (viaAgent) return viaAgent;
+      // 目标是主机 ID 时，先开始连服务器，同时取服务器列表
+      const [id] = hostIdsOf(request.spec, config) ?? [];
+      if (id !== undefined) remoteSession(id);
+      return await runFileOp(resolveSingle(request.spec, await loadServers(), config), request);
+    } catch (error) {
+      if (!(error instanceof ConfirmNeeded) || allowed) throw error;
+      if (!interactive() || !(await confirm(`要改动 ${error.server} 上已有的 ${error.dest}，确定？`))) throw new UsageError(error.message);
+      allowed = true;
+    }
+  }
+}
+
+function twoPositionals(parsed: Parsed, usage: string): [string, string] {
+  const [spec, path, extra] = parsed.positionals;
+  if (!spec || !path || extra !== undefined) throw new UsageError(usage);
+  return [spec, path];
+}
+
+async function cmdRead(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv, flagsWith({ offset: { type: 'string' }, limit: { type: 'string' } }));
+  const [spec, path] = twoPositionals(parsed, 'Usage: cloudssh read <target> <path> [--offset <first line>] [--limit <lines>]');
+  const offset = int(parsed, 'offset', 1, Number.MAX_SAFE_INTEGER) ?? 1;
+  const limit = int(parsed, 'limit', 1, 100_000_000) ?? READ_LINES;
+  const result = (await fileCommand(parsed, { action: 'read', spec, path, offset, limit })) as ReadResult;
+  if (bool(parsed, 'json')) {
+    out(result, true, () => '');
+    return 0;
+  }
+  process.stdout.write(result.content);
+  // 没给全时在 stderr 说明（stdout 只有文件原文）
+  const where = `${result.server} ${result.name}:${result.path}`;
+  if (!result.lines) log(`cloudssh: ${where} is empty`);
+  else if (!result.to) log(`cloudssh: ${where} has only ${result.lines} lines`);
+  else if (result.from > 1 || result.to < result.lines) {
+    log(`cloudssh: lines ${result.from}–${result.to} of ${result.lines} (${where})${result.to < result.lines ? `; next: --offset ${result.to + 1}` : ''}`);
+  }
+  return 0;
+}
+
+async function cmdWrite(argv: string[]): Promise<number> {
+  const parsed = parseArgs(
+    argv,
+    flagsWith({ stdin: { type: 'boolean' }, file: { type: 'string' }, append: { type: 'boolean' }, create: { type: 'boolean' }, yes: { type: 'boolean', short: 'y' } })
+  );
+  const [spec, path] = twoPositionals(parsed, 'Usage: cloudssh write <target> <path> --stdin | --file <local-file> [--append | --create] [--yes]');
+  const file = str(parsed, 'file');
+  if (!file === !bool(parsed, 'stdin')) throw new UsageError('Give the content with exactly one of --stdin and --file <local-file>');
+  if (bool(parsed, 'append') && bool(parsed, 'create')) throw new UsageError('Use only one of --append and --create');
+  const content = unixText(file ? readLocalText(localPath(file)) : await readStdin());
+  const mode: WriteMode = bool(parsed, 'append') ? 'append' : bool(parsed, 'create') ? 'create' : 'overwrite';
+  const result = await fileCommand(parsed, { action: 'write', spec, path, content, mode });
+  if (result.action !== 'write') throw new Error('unexpected reply');
+  const verb = result.mode === 'append' && !result.created ? 'Appended to' : result.created ? 'Created' : 'Overwrote';
+  out(result, bool(parsed, 'json'), () => `${verb} ${result.server} ${result.name}:${result.path} (${formatBytes(result.bytes)} written)`);
+  return 0;
+}
+
+async function cmdEdit(argv: string[]): Promise<number> {
+  const parsed = parseArgs(
+    argv,
+    flagsWith({
+      old: { type: 'string' },
+      new: { type: 'string' },
+      'old-file': { type: 'string' },
+      'new-file': { type: 'string' },
+      all: { type: 'boolean' },
+      yes: { type: 'boolean', short: 'y' },
+    })
+  );
+  const [spec, path] = twoPositionals(parsed, 'Usage: cloudssh edit <target> <path> --old <text> --new <text> [--all] [--yes] (or --old-file / --new-file <local-file>)');
+  const text = (name: 'old' | 'new'): string => {
+    const value = str(parsed, name);
+    const file = str(parsed, `${name}-file`);
+    if ((value === undefined) === (file === undefined)) throw new UsageError(`Give exactly one of --${name} and --${name}-file`);
+    return unixText(value ?? readLocalText(localPath(file!)));
+  };
+  const result = await fileCommand(parsed, { action: 'edit', spec, path, old: text('old'), new: text('new'), all: bool(parsed, 'all') });
+  if (result.action !== 'edit') throw new Error('unexpected reply');
+  out(result, bool(parsed, 'json'), () =>
+    `Edited ${result.server} ${result.name}:${result.path} (${result.replaced} replacement${result.replaced === 1 ? '' : 's'}). Around the first change:\n${result.snippet}`
   );
   return 0;
 }
@@ -506,8 +615,8 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${CLIENT_VERSION}\n`);
     return 0;
   }
-  // exec 的命令里可能有 --help / -h（ls --help、df -h）：只看紧跟在子命令后面的
-  const execLike = command === 'exec' || command === 'run';
+  // exec 的命令、edit 的原文与新文里可能有 --help / -h（ls --help、df -h）：只看紧跟在子命令后面的
+  const execLike = command === 'exec' || command === 'run' || command === 'edit';
   if (rest[0] === '--help' || rest[0] === '-h' || (!execLike && rest.includes('--help'))) {
     process.stdout.write(`${HELP}\n`);
     return 0;
@@ -542,6 +651,13 @@ async function main(argv: string[]): Promise<number> {
     case 'copy':
     case 'cp':
       return cmdCopy(rest);
+    case 'read':
+    case 'cat':
+      return cmdRead(rest);
+    case 'write':
+      return cmdWrite(rest);
+    case 'edit':
+      return cmdEdit(rest);
     case 'alias':
       return cmdAlias(rest);
     case 'skill':

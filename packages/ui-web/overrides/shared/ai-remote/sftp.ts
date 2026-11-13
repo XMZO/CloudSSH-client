@@ -24,6 +24,8 @@ const PING_MS = 20_000;
 const queues = new Map<string, Promise<void>>();
 /** close 之后留着等下一个 open 接着用的通道 */
 const parked = new Map<string, { sftp: HeadlessSftp; timer: ReturnType<typeof setTimeout> }>();
+/** 常驻进程（MCP、命令行的后台会话进程）里通道用完留多久：AI 两次调用之间常常隔几十秒（想、写内容） */
+export const SFTP_KEEP_MS = 120_000;
 
 export class HeadlessSftp {
   private ws: WebSocket | null = null;

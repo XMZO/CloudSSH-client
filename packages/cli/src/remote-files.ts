@@ -19,6 +19,32 @@ export const WRITE_MAX_BYTES = 10 * 1024 * 1024;
 /** 一行最多显示多少字符（超长的行截断） */
 const LINE_MAX = 2000;
 
+/**
+ * 报错里提到的参数与下一步：默认是 MCP 工具的（old_string、read_file……）；命令行（cloudssh read / write / edit 与
+ * 后台会话进程）启动时调 useCliTerms 换成命令行的选项，免得给出用不了的建议
+ */
+const TERMS = {
+  old: 'old_string',
+  new: 'new_string',
+  all: 'set replace_all: true',
+  create: 'mode: create',
+  read: 'read_file',
+  dir: '; use list_dir',
+  big: 'move it with copy, or split it on the server (split) and read the pieces',
+};
+
+export function useCliTerms(): void {
+  Object.assign(TERMS, {
+    old: '--old',
+    new: '--new',
+    all: 'pass --all',
+    create: '--create',
+    read: 'cloudssh read',
+    dir: '',
+    big: 'download it, or view parts with exec grep / tail / head / sed -n',
+  });
+}
+
 const encoder = new TextEncoder();
 
 export interface RemoteFileInfo {
@@ -94,12 +120,17 @@ function rememberBytes(key: string, file: BinaryFile): void {
 }
 
 /** 读整个文件的字节（任何类型）；同一文件 10 分钟内大小与修改时间都没变时用缓存 */
-export async function readBytes(server: ServerConfig, path: string, maxBytes = READ_MAX_BYTES): Promise<BinaryFile> {
+export function readBytes(server: ServerConfig, path: string, maxBytes = READ_MAX_BYTES): Promise<BinaryFile> {
+  return fetchBytes(server, path, maxBytes, TERMS.big);
+}
+
+/** readBytes 与 readText 共用：tooBig 是文件超过 maxBytes 时给的建议 */
+async function fetchBytes(server: ServerConfig, path: string, maxBytes: number, tooBig: string): Promise<BinaryFile> {
   const info = await statRemote(server, path);
   if (!info) throw new UsageError(`${path} does not exist on ${server.name}`);
-  if (info.kind === 'dir') throw new UsageError(`${info.path} is a directory; use list_dir`);
+  if (info.kind === 'dir') throw new UsageError(`${info.path} is a directory${TERMS.dir}`);
   if (info.size > maxBytes) {
-    throw new UsageError(`${info.path} is ${info.size} bytes, over the ${Math.round(maxBytes / 1048576)} MB limit: move it with copy, or split it on the server (split) and read the pieces`);
+    throw new UsageError(`${info.path} is ${info.size} bytes, over the ${Math.round(maxBytes / 1048576)} MB limit: ${tooBig}`);
   }
   const key = `${server.id}\u0000${info.path}`;
   const cached = bytesCache.get(key);
@@ -134,15 +165,12 @@ export interface TextFile {
   sha256: string;
 }
 
-/** 读文本文件（UTF-8）；strict 时内容不是合法 UTF-8 就拒绝（改文件时用，免得写回时把字节改坏） */
+/**
+ * 读文本文件（UTF-8）；strict 时内容不是合法 UTF-8 就拒绝（改文件时用，免得写回时把字节改坏）。
+ * 与 readBytes 共用缓存：刚读过的文件改的时候不用再下载（写回时还会核对 SHA-256，读完之后被改过就不写）
+ */
 export async function readText(server: ServerConfig, path: string, maxBytes = READ_MAX_BYTES, strict = false): Promise<TextFile> {
-  const info = await statRemote(server, path);
-  if (!info) throw new UsageError(`${path} does not exist on ${server.name}`);
-  if (info.kind === 'dir') throw new UsageError(`${info.path} is a directory; use list_dir`);
-  if (info.size > maxBytes) {
-    throw new UsageError(`${info.path} is ${info.size} bytes, over the ${Math.round(maxBytes / 1048576)} MB limit: view the parts you need with exec grep / tail / head / sed -n`);
-  }
-  const bytes = info.size ? await downloadBytes(server, info.path, maxBytes) : new Uint8Array();
+  const { info, bytes, sha256 } = await fetchBytes(server, path, maxBytes, 'view the parts you need with exec grep / tail / head / sed -n');
   if (bytes.subarray(0, 8192).includes(0)) throw new UsageError(`${info.path} is binary (${bytes.length} bytes); inspect it with exec file / strings / xxd`);
   let text: string;
   try {
@@ -150,7 +178,7 @@ export async function readText(server: ServerConfig, path: string, maxBytes = RE
   } catch {
     throw new UsageError(`${info.path} is not UTF-8 text and cannot be edited as text; use exec`);
   }
-  return { info, text, sha256: sha256Hex(bytes) };
+  return { info, text, sha256 };
 }
 
 /** 按行切出 [offset, offset+limit) 并编号（cat -n 的样子），超长的行截断 */
@@ -182,33 +210,38 @@ export interface WriteResult {
 /**
  * 写文件：mode 为 overwrite（覆盖，默认）、append（追加）、create（已存在就不写）；目录不存在时建好。
  * expectSha256：写之前核对现有文件的 SHA-256（改文件时用，读过之后被别人改过就不写）。
- * mayOverwrite：已有文件要被覆盖或追加时问一下（返回 false 就不写）
+ * mayOverwrite：已有文件要被覆盖或追加时问一下（返回 false 就不写）。
+ * existing：调用方刚读过、知道它的真实路径（edit）：省掉写之前查路径、建目录的那一趟
  */
 export async function writeText(
   server: ServerConfig,
   path: string,
   content: string | Uint8Array,
   mode: WriteMode,
-  options: { expectSha256?: string; mayOverwrite?: (path: string) => boolean } = {}
+  options: { expectSha256?: string; mayOverwrite?: (path: string) => boolean; existing?: string } = {}
 ): Promise<WriteResult> {
   const bytes = typeof content === 'string' ? encoder.encode(content) : content;
   if (bytes.length > WRITE_MAX_BYTES) throw new UsageError(`Content is ${bytes.length} bytes, over the ${WRITE_MAX_BYTES / 1048576} MB limit: use upload or copy for large files`);
-  let where: string;
-  try {
-    where = await run(
-      server,
-      `p=${shellPath(path)}; case "$p" in /*) ;; *) p="$PWD/$p";; esac; if [ -d "$p" ]; then echo dir; exit 4; fi;` +
-        ` mkdir -p -- "$(dirname -- "$p")" || exit 5; if [ -e "$p" ]; then echo exists; else echo new; fi;` +
-        ` r=$(readlink -f -- "$p" 2>/dev/null) || r="$p"; printf '%s\\n' "$r"`
-    );
-  } catch (error) {
-    if (/\bdir\b|exit 4\b/.test((error as Error).message)) throw new UsageError(`${path} is a directory`);
-    throw error;
+  let exists = true;
+  let dest = options.existing ?? '';
+  if (!options.existing) {
+    let where: string;
+    try {
+      where = await run(
+        server,
+        `p=${shellPath(path)}; case "$p" in /*) ;; *) p="$PWD/$p";; esac; if [ -d "$p" ]; then echo dir; exit 4; fi;` +
+          ` mkdir -p -- "$(dirname -- "$p")" || exit 5; if [ -e "$p" ]; then echo exists; else echo new; fi;` +
+          ` r=$(readlink -f -- "$p" 2>/dev/null) || r="$p"; printf '%s\\n' "$r"`
+      );
+    } catch (error) {
+      if (/\bdir\b|exit 4\b/.test((error as Error).message)) throw new UsageError(`${path} is a directory`);
+      throw error;
+    }
+    const lines = where.trim().split('\n').map((line) => line.trim());
+    exists = lines[0] === 'exists';
+    dest = lines[lines.length - 1];
   }
-  const lines = where.trim().split('\n').map((line) => line.trim());
-  const exists = lines[0] === 'exists';
-  const dest = lines[lines.length - 1];
-  if (exists && mode === 'create') throw new UsageError(`${dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
+  if (exists && mode === 'create') throw new UsageError(`${dest} already exists on ${server.name}; not written (${TERMS.create} only creates new files)`);
   if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${dest} already exists on ${server.name}; not written`);
 
   const temp = `${dest}.cs-part-${randomBytes(4).toString('hex')}`;
@@ -232,7 +265,7 @@ export async function writeText(
     await run(server, `rm -f ${quote(temp)}`).catch(() => undefined);
     const message = (error as Error).message;
     if (/modified since read|exit 9\b/.test(message)) throw new UsageError(`${dest} changed after it was read; not written. Read it again, then edit.`);
-    if (/already exists|exit 8\b/.test(message)) throw new UsageError(`${dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
+    if (/already exists|exit 8\b/.test(message)) throw new UsageError(`${dest} already exists on ${server.name}; not written (${TERMS.create} only creates new files)`);
     throw error;
   } finally {
     forgetBytes(server, dest);
@@ -303,7 +336,7 @@ export async function writeTextPart(
     const lines = where.trim().split('\n').map((line) => line.trim());
     const exists = lines[0] === 'exists';
     const dest = lines[lines.length - 1];
-    if (exists && mode === 'create') throw new UsageError(`${dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
+    if (exists && mode === 'create') throw new UsageError(`${dest} already exists on ${server.name}; not written (${TERMS.create} only creates new files)`);
     if (exists && options.mayOverwrite && !options.mayOverwrite(dest)) throw new UsageError(`${dest} already exists on ${server.name}; not written`);
     state = { dest, stage: `${dest}.cs-upload`, mode, parts, next: 1, bytes: 0, created: !exists, at: Date.now(), encoding, carry: '' };
   } else if (!state) {
@@ -362,7 +395,7 @@ export async function writeTextPart(
     await run(server, `t=${stage}; f=${quote(state.dest)}; ${guard}${finish}`);
   } catch (error) {
     await run(server, `rm -f ${stage}`).catch(() => undefined);
-    if (/already exists|exit 8\b/.test((error as Error).message)) throw new UsageError(`${state.dest} already exists on ${server.name}; not written (mode: create only creates new files)`);
+    if (/already exists|exit 8\b/.test((error as Error).message)) throw new UsageError(`${state.dest} already exists on ${server.name}; not written (${TERMS.create} only creates new files)`);
     throw error;
   } finally {
     forgetBytes(server, state.dest);
@@ -386,16 +419,16 @@ export async function editText(
   replaceAll: boolean,
   mayOverwrite?: (path: string) => boolean
 ): Promise<EditResult> {
-  if (!oldText) throw new UsageError('old_string must not be empty');
-  if (oldText === newText) throw new UsageError('old_string and new_string are identical; nothing to change');
+  if (!oldText) throw new UsageError(`${TERMS.old} must not be empty`);
+  if (oldText === newText) throw new UsageError(`${TERMS.old} and ${TERMS.new} are identical; nothing to change`);
   const file = await readText(server, path, WRITE_MAX_BYTES, true);
   const count = file.text.split(oldText).length - 1;
-  if (!count) throw new UsageError(`old_string not found in ${file.info.path} (spaces, indentation and line breaks must match exactly; check the text with read_file)`);
-  if (count > 1 && !replaceAll) throw new UsageError(`old_string occurs ${count} times in ${file.info.path}: include more surrounding lines to make it unique, or set replace_all: true`);
+  if (!count) throw new UsageError(`${TERMS.old} not found in ${file.info.path} (spaces, indentation and line breaks must match exactly; check the text with ${TERMS.read})`);
+  if (count > 1 && !replaceAll) throw new UsageError(`${TERMS.old} occurs ${count} times in ${file.info.path}: include more surrounding lines to make it unique, or ${TERMS.all}`);
   const first = file.text.indexOf(oldText);
   // 不用 String.replace：new_string 里的 $& 之类会被当成替换模式
   const updated = replaceAll ? file.text.split(oldText).join(newText) : file.text.slice(0, first) + newText + file.text.slice(first + oldText.length);
-  const result = await writeText(server, file.info.path, updated, 'overwrite', { expectSha256: file.sha256, mayOverwrite });
+  const result = await writeText(server, file.info.path, updated, 'overwrite', { expectSha256: file.sha256, mayOverwrite, existing: file.info.path });
   const line = file.text.slice(0, first).split('\n').length;
   const span = newText.split('\n').length;
   const snippet = numberLines(updated, Math.max(1, line - 2), span + 4).body;

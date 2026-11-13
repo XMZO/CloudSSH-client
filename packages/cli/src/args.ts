@@ -45,14 +45,14 @@ export function parseArgs(argv: string[], spec: FlagSpec, restAfter?: number): P
         flags[name] = long?.[2] === undefined ? true : !/^(false|0|no)$/i.test(long[2]);
       } else {
         const value = long?.[2] ?? argv[++i];
-        if (value === undefined) throw new UsageError(`--${name} 需要一个值`);
+        if (value === undefined) throw new UsageError(`--${name} needs a value`);
         if (item.multiple) flags[name] = [...((flags[name] as string[] | undefined) ?? []), value];
         else flags[name] = value;
       }
       continue;
     }
     if ((long || /^-[a-z]/i.test(arg)) && !inRest && !(restAfter !== undefined && positionals.length >= restAfter)) {
-      throw new UsageError(`不认识的选项 ${arg}`);
+      throw new UsageError(`Unknown option ${arg}`);
     }
     if (restAfter !== undefined && positionals.length >= restAfter) {
       inRest = true;
@@ -75,7 +75,7 @@ export function int(parsed: Parsed, name: string, min: number, max: number): num
   const value = str(parsed, name);
   if (value === undefined) return undefined;
   const number = Number(value);
-  if (!Number.isInteger(number) || number < min || number > max) throw new UsageError(`--${name} 要在 ${min}～${max} 之间`);
+  if (!Number.isInteger(number) || number < min || number > max) throw new UsageError(`--${name} must be an integer from ${min} to ${max}`);
   return number;
 }
 

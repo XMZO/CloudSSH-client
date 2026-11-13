@@ -88,11 +88,11 @@ export interface SkillTarget {
  * 写给 AI 的用户设置与补充说明（skill 与 MCP 的 instructions 共用）；yes 是“确认危险操作”在那边的写法
  * （skill 是 `--yes`，MCP 是 `confirm: true`）
  */
-export function userGuidance(config: CliConfig, yes = '`--yes`'): string {
+export function userGuidance(config: CliConfig, yes = '`--yes`', access = true): string {
   const settings: string[] = [];
-  if (config.confirm === 'never') {
+  if (access && config.confirm === 'never') {
     settings.push(
-      `- Full access is on: risky commands run without ${yes} and \`copy\` overwrites without asking. Still tell the user before deleting data, stopping services or rebooting. Catastrophic commands are still refused.`
+      `- Full access is on: risky commands and file changes run without ${yes}, and \`copy\` overwrites without asking. Still tell the user before deleting data, stopping services or rebooting. Catastrophic commands are still refused.`
     );
   }
   if (config.timeout !== 60) settings.push(`- The default timeout is ${config.timeout} s.`);

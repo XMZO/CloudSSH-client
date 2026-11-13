@@ -13,7 +13,8 @@
  * - 服务器列表缓存 30 秒，按名称找不到时重新取一次；登录换了（换账号、重新登录）就关掉旧会话、清缓存
  * - 空闲 3 分钟（CLOUDSSH_AGENT_IDLE 秒）自动退出，会话一起关掉；CLOUDSSH_AGENT=0 不用后台进程
  * - 运行时：本机有 Node 22 起就用它（命令行由 CloudSSH 客户端运行时也是，内存约 65MB，客户端约 115MB），否则用命令行自己的
- * - 只有不需要确认的 exec 走后台进程；危险命令要在终端里确认、upload / download / copy，仍在本进程里做
+ * - 不需要确认的 exec 与 read / write / edit 走后台进程（文件操作用 ai-remote 的会话池，每台一条，SFTP 也复用）；
+ *   危险命令要在终端里确认、upload / download / copy，仍在本进程里做
  */
 import { CLIENT_VERSION, type ServerConfig } from '@cloudssh/core';
 import { spawn, spawnSync } from 'node:child_process';
@@ -23,11 +24,14 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
-import { homeDir, loadConfig, loadCredentials, resolveInstance, UsageError } from './config';
+import { closeAllRemoteSessions, remoteSession, RemoteSession } from '../../ui-web/overrides/shared/ai-remote/session';
+import { HeadlessSftp, SFTP_KEEP_MS } from '../../ui-web/overrides/shared/ai-remote/sftp';
+import { homeDir, loadConfig, loadCredentials, resolveInstance, UsageError, type CliConfig } from './config';
 import { runExec, type ExecOutcome } from './exec';
+import { ConfirmNeeded, runFileOp, type FileRequest, type FileResult } from './file-commands';
 import { installNetwork } from './net';
-import { hostIdsOf, loadServers, resolveTargets } from './targets';
+import { useCliTerms } from './remote-files';
+import { hostIdsOf, loadServers, resolveSingle, resolveTargets } from './targets';
 
 const IDLE_MS = (() => {
   const seconds = Number(process.env.CLOUDSSH_AGENT_IDLE);
@@ -35,7 +39,8 @@ const IDLE_MS = (() => {
 })();
 const SERVERS_TTL_MS = 30_000;
 const MAX_SESSIONS_PER_SERVER = 3;
-const MAX_LINE = 256 * 1024;
+/** 一条消息最长多少字符：write 的内容（最多 10MB）与 read 的结果（文件最多 20MB）都整条放在一行里 */
+const MAX_LINE = 64 * 1024 * 1024;
 
 export const agentDisabled = (): boolean => /^(0|false|off|no)$/i.test(process.env.CLOUDSSH_AGENT ?? '');
 
@@ -82,24 +87,31 @@ function send(socket: net.Socket, value: unknown): void {
 
 /** 按行读 JSON（一行一条消息） */
 function onLines(socket: net.Socket, handle: (message: Record<string, unknown>) => void): void {
-  let buffer = '';
+  // 只在新到的一块里找换行（大消息分成很多块到达，每块都从头找一遍会很慢）
+  let pending: string[] = [];
+  let size = 0;
   socket.setEncoding('utf8');
   socket.on('data', (chunk: string) => {
-    buffer += chunk;
-    if (buffer.length > MAX_LINE) {
-      socket.destroy();
-      return;
-    }
+    let start = 0;
     let index: number;
-    while ((index = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, index);
-      buffer = buffer.slice(index + 1);
+    while ((index = chunk.indexOf('\n', start)) >= 0) {
+      pending.push(chunk.slice(start, index));
+      const line = pending.join('');
+      pending = [];
+      size = 0;
+      start = index + 1;
       try {
         handle(JSON.parse(line) as Record<string, unknown>);
       } catch {
         socket.destroy();
         return;
       }
+      if (socket.destroyed) return;
+    }
+    if (start < chunk.length) {
+      pending.push(chunk.slice(start));
+      size += chunk.length - start;
+      if (size > MAX_LINE) socket.destroy();
     }
   });
 }
@@ -117,6 +129,9 @@ interface AgentStatus {
 /** cloudssh __agent <实例>：后台进程本体，一直跑到空闲退出或被 stop */
 export async function runAgent(origin: string): Promise<void> {
   process.title = 'cloudssh-agent';
+  useCliTerms();
+  // read / write / edit 接连用同一台时不用每次重新打开 SFTP 通道（每次要几秒）
+  HeadlessSftp.keepAliveMs = SFTP_KEEP_MS;
   const address = agentAddress(origin);
   if (process.platform !== 'win32' && fs.existsSync(address)) {
     // 另一个还活着就退出；没人监听的旧 socket 文件删掉
@@ -136,6 +151,9 @@ export async function runAgent(origin: string): Promise<void> {
   const closeAll = () => {
     for (const item of sessions()) item.close();
     pool.clear();
+    // read / write / edit 用的会话（ai-remote 的会话池）与留着的 SFTP 通道
+    HeadlessSftp.closeIdle();
+    closeAllRemoteSessions();
   };
   const scheduleExit = () => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -152,12 +170,15 @@ export async function runAgent(origin: string): Promise<void> {
     const idle = list.find((item) => !busy.get(item));
     if (idle) return idle;
     if (list.length < MAX_SESSIONS_PER_SERVER) {
-      const created = new RemoteSession(serverId, (closed) => {
-        const rest = (pool.get(serverId) ?? []).filter((item) => item !== closed);
-        if (rest.length) pool.set(serverId, rest);
-        else pool.delete(serverId);
-        busy.delete(closed);
-      });
+      // 第一条就是 ai-remote 会话池里的那条：read / write / edit 也用它，同一台服务器只登录一次（关掉后列表里自然滤掉）
+      const created = list.length
+        ? new RemoteSession(serverId, (closed) => {
+            const rest = (pool.get(serverId) ?? []).filter((item) => item !== closed);
+            if (rest.length) pool.set(serverId, rest);
+            else pool.delete(serverId);
+            busy.delete(closed);
+          })
+        : remoteSession(serverId);
       list.push(created);
       return created;
     }
@@ -171,35 +192,42 @@ export async function runAgent(origin: string): Promise<void> {
     return { list, cached: false };
   };
 
-  const exec = async (message: Record<string, unknown>, client: net.Socket): Promise<ExecOutcome[]> => {
-    const spec = String(message.spec ?? '');
-    const command = String(message.command ?? '');
-    const timeout = Math.max(1, Math.min(3600, Math.round(Number(message.timeout) || 60)));
+  /** 读这个实例现在的登录；换了登录（可能换了账号）时旧会话、旧列表都不能再用 */
+  const signedIn = (): CliConfig => {
     const config = loadConfig();
     const instance = resolveInstance(config, origin);
     if (!instance.credential) {
       throw new UsageError(`Not signed in to ${origin}: run cloudssh login ${origin} (or turn on "同步登录给命令行" in the CloudSSH desktop app)`);
     }
-    // 换了登录（可能换了账号）：旧会话、旧列表都不能再用
     if (instance.credential.session !== session) {
       closeAll();
       servers = null;
       session = instance.credential.session;
       installNetwork(origin, session);
     }
+    return config;
+  };
+
+  /** 在服务器列表里找目标：缓存的列表里找不到（刚改名、刚添加）时重新取一次 */
+  const resolveWith = async <T>(pick: (list: ServerConfig[]) => T): Promise<T> => {
+    const resolved = await serverList(false);
+    try {
+      return pick(resolved.list);
+    } catch (error) {
+      if (!(error instanceof UsageError) || !resolved.cached) throw error;
+      return pick((await serverList(true)).list);
+    }
+  };
+
+  const exec = async (message: Record<string, unknown>, client: net.Socket): Promise<ExecOutcome[]> => {
+    const spec = String(message.spec ?? '');
+    const command = String(message.command ?? '');
+    const timeout = Math.max(1, Math.min(3600, Math.round(Number(message.timeout) || 60)));
+    const config = signedIn();
     // 目标都是主机 ID 且还没有列表时，先开始连接（与取列表同时进行）
     const ids = hostIdsOf(spec, config);
     if (ids && !servers) for (const id of ids.slice(0, config.concurrency)) if (!pool.get(id)?.some((item) => !item.closed)) acquire(id);
-    let resolved = await serverList(false);
-    let targets: ServerConfig[];
-    try {
-      targets = resolveTargets(spec, resolved.list, config);
-    } catch (error) {
-      // 缓存的列表里找不到（刚改名、刚添加）：重新取一次
-      if (!(error instanceof UsageError) || !resolved.cached) throw error;
-      resolved = await serverList(true);
-      targets = resolveTargets(spec, resolved.list, config);
-    }
+    const targets = await resolveWith((list) => resolveTargets(spec, list, config));
     // 命令行断开（Ctrl+C、被调用方结束）：关掉这次用到的会话，远端命令随之结束
     const used = new Set<RemoteSession>();
     let finished = false;
@@ -220,6 +248,15 @@ export async function runAgent(origin: string): Promise<void> {
     } finally {
       finished = true;
     }
+  };
+
+  /** read / write / edit：与本进程里执行的是同一份（file-commands.ts） */
+  const file = async (message: Record<string, unknown>): Promise<FileResult> => {
+    const request = message.request as FileRequest;
+    const config = signedIn();
+    const [id] = hostIdsOf(request.spec, config) ?? [];
+    if (id !== undefined && !servers) remoteSession(id);
+    return runFileOp(await resolveWith((list) => resolveSingle(request.spec, list, config)), request);
   };
 
   const status = (): AgentStatus => {
@@ -258,13 +295,20 @@ export async function runAgent(origin: string): Promise<void> {
         client.end(`${JSON.stringify({ ok: true })}\n`);
         return void setImmediate(shutdown);
       }
-      if (message.op !== 'exec') return void client.destroy();
+      if (message.op !== 'exec' && message.op !== 'file') return void client.destroy();
       active += 1;
       scheduleExit();
-      exec(message, client)
+      const work: Promise<Record<string, unknown>> =
+        message.op === 'exec' ? exec(message, client).then((results) => ({ results })) : file(message).then((result) => ({ result }));
+      work
         .then(
-          (results) => send(client, { results }),
-          (error: unknown) => send(client, { error: error instanceof Error ? error.message : String(error), usage: error instanceof UsageError })
+          (reply) => send(client, reply),
+          (error: unknown) =>
+            send(client, {
+              error: error instanceof Error ? error.message : String(error),
+              usage: error instanceof UsageError,
+              confirm: error instanceof ConfirmNeeded ? { server: error.server, dest: error.dest, action: error.action } : undefined,
+            })
         )
         .finally(() => {
           client.end();
@@ -418,16 +462,44 @@ async function connectRunning(origin: string): Promise<AgentConnection | null> {
  * 已经交出去之后连接断了：命令可能已经执行，不能重试，报错
  */
 export async function execViaAgent(origin: string, request: { spec: string; command: string; timeout: number }): Promise<ExecOutcome[] | null> {
+  const reply = await askAgent(origin, { op: 'exec', ...request });
+  if (reply === null) return null;
+  if (reply === DIED) throw new Error('The background session process died; whether the command ran is unknown (CLOUDSSH_AGENT=0 disables the background process)');
+  return replyValue(reply).results as ExecOutcome[];
+}
+
+/** read / write / edit 交给后台进程；用不了后台进程返回 null。read 中途断了也返回 null（调用方在本进程重读一次） */
+export async function fileViaAgent(origin: string, request: FileRequest): Promise<FileResult | null> {
+  const reply = await askAgent(origin, { op: 'file', request });
+  if (reply === null) return null;
+  if (reply === DIED) {
+    if (request.action === 'read') return null;
+    throw new Error('The background session process died; whether the file was changed is unknown (CLOUDSSH_AGENT=0 disables the background process)');
+  }
+  const confirm = reply.confirm as { server: string; dest: string; action: 'write' | 'edit' } | undefined;
+  if (confirm) throw new ConfirmNeeded(confirm.server, confirm.dest, confirm.action);
+  return replyValue(reply).result as FileResult;
+}
+
+/** 请求已经交出去之后连接断了 */
+const DIED = Symbol('died');
+
+/** 连上（没有就启动）后台进程，发一条请求、等回复；用不了后台进程返回 null */
+async function askAgent(origin: string, message: Record<string, unknown>): Promise<Record<string, unknown> | null | typeof DIED> {
   if (agentDisabled()) return null;
   const existing = await openAgentConnection(agentAddress(origin), 1000, origin);
   if (existing === IMPOSTOR) return null;
   const connection = existing ?? (await startAgent(origin));
   if (!connection) return null;
-  const reply = await connection.call({ op: 'exec', ...request });
+  const reply = await connection.call(message);
   connection.socket.end();
-  if (!reply) throw new Error('The background session process died; whether the command ran is unknown (CLOUDSSH_AGENT=0 disables the background process)');
+  return reply ?? DIED;
+}
+
+/** 回复里带着报错就抛出（报错原样，UsageError 照旧是用法错误） */
+function replyValue(reply: Record<string, unknown>): Record<string, unknown> {
   if (typeof reply.error === 'string') throw reply.usage ? new UsageError(reply.error) : new Error(reply.error);
-  return reply.results as ExecOutcome[];
+  return reply;
 }
 
 /** 正在跑的后台进程的状态；没有在跑返回 null（不会启动新的） */
